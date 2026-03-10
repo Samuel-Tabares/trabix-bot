@@ -103,10 +103,7 @@ pub fn handle_select_quantity(
                 });
                 context.clear_pending_selection();
 
-                Ok((
-                    ConversationState::AddMore,
-                    add_more_actions(context),
-                ))
+                Ok((ConversationState::AddMore, add_more_actions(context)))
             }
             Err(message) => Ok((
                 ConversationState::SelectQuantity {
@@ -221,11 +218,16 @@ pub fn validate_quantity(input: &str) -> Result<u32, String> {
 }
 
 pub fn normalize_flavor(input: &str) -> String {
-    input.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    input
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 fn partial_summary(items: &[OrderItemData]) -> String {
-    items.iter()
+    items
+        .iter()
         .map(|item| {
             format!(
                 "- {} x {} ({})",
@@ -289,6 +291,9 @@ mod tests {
             scheduled_time: None,
             payment_method: None,
             receipt_media_id: None,
+            current_order_id: None,
+            editing_address: false,
+            receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
         }
@@ -296,7 +301,10 @@ mod tests {
 
     #[test]
     fn normalizes_flavor() {
-        assert_eq!(normalize_flavor("  Maracuya   Especial "), "maracuya especial");
+        assert_eq!(
+            normalize_flavor("  Maracuya   Especial "),
+            "maracuya especial"
+        );
     }
 
     #[test]
@@ -307,9 +315,11 @@ mod tests {
     #[test]
     fn select_type_sets_liquor_flag() {
         let mut context = context();
-        let (state, _) =
-            handle_select_type(&UserInput::ButtonPress("with_liquor".to_string()), &mut context)
-                .expect("transition");
+        let (state, _) = handle_select_type(
+            &UserInput::ButtonPress("with_liquor".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::SelectFlavor { has_liquor: true });
         assert_eq!(context.pending_has_liquor, Some(true));
@@ -318,9 +328,12 @@ mod tests {
     #[test]
     fn select_flavor_moves_to_quantity() {
         let mut context = context();
-        let (state, _) =
-            handle_select_flavor(&UserInput::TextMessage("Mora".to_string()), &mut context, false)
-                .expect("transition");
+        let (state, _) = handle_select_flavor(
+            &UserInput::TextMessage("Mora".to_string()),
+            &mut context,
+            false,
+        )
+        .expect("transition");
 
         assert_eq!(
             state,
@@ -357,11 +370,12 @@ mod tests {
             quantity: 2,
         });
 
-        let (state, _) =
-            handle_add_more(&UserInput::ButtonPress("finish_order".to_string()), &mut context)
-                .expect("transition");
+        let (state, _) = handle_add_more(
+            &UserInput::ButtonPress("finish_order".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::ShowSummary);
     }
 }
-

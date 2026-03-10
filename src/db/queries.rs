@@ -5,6 +5,18 @@ use sqlx::{types::Json, PgPool};
 
 use super::models::{Conversation, ConversationStateData, Order, OrderItem};
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ActiveTimerConversation {
+    pub id: i32,
+    pub phone_number: String,
+    pub state: String,
+    pub state_data: Json<ConversationStateData>,
+    pub customer_name: Option<String>,
+    pub customer_phone: Option<String>,
+    pub delivery_address: Option<String>,
+    pub last_message_at: chrono::DateTime<chrono::Utc>,
+}
+
 pub async fn get_conversation(
     pool: &PgPool,
     phone_number: &str,
@@ -135,6 +147,45 @@ pub async fn create_order(
     .await
 }
 
+pub async fn update_order(
+    pool: &PgPool,
+    order_id: i32,
+    delivery_type: &str,
+    scheduled_date: Option<NaiveDate>,
+    scheduled_time: Option<NaiveTime>,
+    payment_method: &str,
+    receipt_media_id: Option<&str>,
+    total_estimated: i32,
+    status: &str,
+) -> Result<Order, sqlx::Error> {
+    sqlx::query_as::<_, Order>(
+        r#"
+        UPDATE orders
+        SET delivery_type = $2,
+            scheduled_date = $3,
+            scheduled_time = $4,
+            payment_method = $5,
+            receipt_media_id = $6,
+            total_estimated = $7,
+            status = $8
+        WHERE id = $1
+        RETURNING id, conversation_id, delivery_type, scheduled_date, scheduled_time,
+                  payment_method, receipt_media_id, delivery_cost, total_estimated,
+                  total_final, status, created_at
+        "#,
+    )
+    .bind(order_id)
+    .bind(delivery_type)
+    .bind(scheduled_date)
+    .bind(scheduled_time)
+    .bind(payment_method)
+    .bind(receipt_media_id)
+    .bind(total_estimated)
+    .bind(status)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn add_order_item(
     pool: &PgPool,
     order_id: i32,
@@ -161,6 +212,40 @@ pub async fn add_order_item(
     .await
 }
 
+pub async fn replace_order_items(
+    pool: &PgPool,
+    order_id: i32,
+    items: &[(String, bool, i32, i32, i32)],
+) -> Result<Vec<OrderItem>, sqlx::Error> {
+    sqlx::query(
+        r#"
+        DELETE FROM order_items
+        WHERE order_id = $1
+        "#,
+    )
+    .bind(order_id)
+    .execute(pool)
+    .await?;
+
+    let mut created = Vec::with_capacity(items.len());
+    for (flavor, has_liquor, quantity, unit_price, subtotal) in items {
+        created.push(
+            add_order_item(
+                pool,
+                order_id,
+                flavor,
+                *has_liquor,
+                *quantity,
+                *unit_price,
+                *subtotal,
+            )
+            .await?,
+        );
+    }
+
+    Ok(created)
+}
+
 pub async fn update_order_status(
     pool: &PgPool,
     order_id: i32,
@@ -175,6 +260,26 @@ pub async fn update_order_status(
     )
     .bind(order_id)
     .bind(status)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn update_order_receipt_media_id(
+    pool: &PgPool,
+    order_id: i32,
+    receipt_media_id: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE orders
+        SET receipt_media_id = $2
+        WHERE id = $1
+        "#,
+    )
+    .bind(order_id)
+    .bind(receipt_media_id)
     .execute(pool)
     .await?;
 
@@ -203,6 +308,51 @@ pub async fn update_order_delivery_cost(
     Ok(())
 }
 
+pub async fn get_order(pool: &PgPool, order_id: i32) -> Result<Option<Order>, sqlx::Error> {
+    sqlx::query_as::<_, Order>(
+        r#"
+        SELECT id, conversation_id, delivery_type, scheduled_date, scheduled_time,
+               payment_method, receipt_media_id, delivery_cost, total_estimated,
+               total_final, status, created_at
+        FROM orders
+        WHERE id = $1
+        "#,
+    )
+    .bind(order_id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn get_order_items(pool: &PgPool, order_id: i32) -> Result<Vec<OrderItem>, sqlx::Error> {
+    sqlx::query_as::<_, OrderItem>(
+        r#"
+        SELECT id, order_id, flavor, has_liquor, quantity, unit_price, subtotal, created_at
+        FROM order_items
+        WHERE order_id = $1
+        ORDER BY id ASC
+        "#,
+    )
+    .bind(order_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn list_active_timer_conversations(
+    pool: &PgPool,
+    states: &[&str],
+) -> Result<Vec<ActiveTimerConversation>, sqlx::Error> {
+    sqlx::query_as::<_, ActiveTimerConversation>(
+        r#"
+        SELECT id, phone_number, state, state_data, customer_name, customer_phone, delivery_address, last_message_at
+        FROM conversations
+        WHERE state = ANY($1)
+        "#,
+    )
+    .bind(states)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn reset_conversation(pool: &PgPool, phone_number: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
@@ -227,8 +377,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL and a reachable PostgreSQL instance"]
     async fn creates_and_loads_conversation() {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set for ignored DB tests");
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .expect("TEST_DATABASE_URL must be set for ignored DB tests");
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect(&database_url)
             .await
@@ -249,8 +399,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL and a reachable PostgreSQL instance"]
     async fn updates_state_data() {
-        let database_url =
-            std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set for ignored DB tests");
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .expect("TEST_DATABASE_URL must be set for ignored DB tests");
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect(&database_url)
             .await
@@ -273,6 +423,9 @@ mod tests {
             .expect("conversation");
 
         assert_eq!(loaded.state, "collect_name");
-        assert_eq!(loaded.state_data.0.delivery_type.as_deref(), Some("immediate"));
+        assert_eq!(
+            loaded.state_data.0.delivery_type.as_deref(),
+            Some("immediate")
+        );
     }
 }

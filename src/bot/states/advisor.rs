@@ -150,4 +150,3 @@ fn wants_menu(input: &UserInput) -> bool {
         _ => false,
     }
 }
-

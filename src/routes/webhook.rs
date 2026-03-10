@@ -1,4 +1,8 @@
-use std::{error::Error, fmt};
+use std::{
+    error::Error,
+    fmt,
+    io::{Error as IoError, ErrorKind},
+};
 
 use axum::{
     body::Bytes,
@@ -10,12 +14,20 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 use crate::{
-    bot::state_machine::{extract_input, transition, BotAction, ConversationContext, ConversationState, UserInput},
+    bot::{
+        pricing::calcular_pedido,
+        state_machine::{
+            extract_input, transition, BotAction, ConversationContext, ConversationState,
+            TimerType, UserInput,
+        },
+        timers::{cancel_timer, expire_receipt_timer, start_timer},
+    },
     db::{
         models::ConversationStateData,
         queries::{
-            create_conversation, get_conversation, reset_conversation, update_customer_data,
-            update_last_message, update_state,
+            create_conversation, create_order, get_conversation, replace_order_items,
+            reset_conversation, update_customer_data, update_last_message, update_order,
+            update_order_status, update_state,
         },
     },
     whatsapp::types::WebhookPayload,
@@ -84,8 +96,8 @@ pub fn verify_signature(
         return Err(SignatureError::InvalidHeaderFormat);
     }
 
-    let mut mac =
-        HmacSha256::new_from_slice(app_secret.as_bytes()).map_err(|_| SignatureError::InvalidHeaderFormat)?;
+    let mut mac = HmacSha256::new_from_slice(app_secret.as_bytes())
+        .map_err(|_| SignatureError::InvalidHeaderFormat)?;
     mac.update(body);
     let expected = to_lower_hex(&mac.finalize().into_bytes());
 
@@ -162,7 +174,7 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
     )
     .await?;
 
-    let execution = execute_actions(&state, &actions).await?;
+    let execution = execute_actions(&state, conversation.id, &mut context, &actions).await?;
 
     if !execution.reset_requested {
         update_state(
@@ -185,6 +197,8 @@ struct ExecutionOutcome {
 
 async fn execute_actions(
     state: &AppState,
+    conversation_id: i32,
+    context: &mut ConversationContext,
     actions: &[BotAction],
 ) -> Result<ExecutionOutcome, Box<dyn Error + Send + Sync>> {
     let mut reset_requested = false;
@@ -221,16 +235,55 @@ async fn execute_actions(
                     .send_image(to, media_id, caption.as_deref())
                     .await?;
             }
+            BotAction::SendTransferInstructions { to } => {
+                state
+                    .wa_client
+                    .send_text(to, &state.config.transfer_payment_text)
+                    .await?;
+            }
             BotAction::ResetConversation { phone } => {
                 reset_conversation(&state.pool, phone).await?;
                 reset_requested = true;
             }
             BotAction::NoOp => {}
-            BotAction::StartTimer { timer_type, phone, .. } => {
-                tracing::info!(?timer_type, phone = %phone, "action not implemented yet");
+            BotAction::StartTimer {
+                timer_type,
+                phone,
+                duration,
+            } => {
+                let timer_type = timer_type.clone();
+                let phone = phone.clone();
+                let app_state = state.clone();
+                start_timer(
+                    state.timers.clone(),
+                    (phone.clone(), timer_type.clone()),
+                    *duration,
+                    move || async move {
+                        match timer_type {
+                            TimerType::ReceiptUpload => {
+                                if let Err(err) = expire_receipt_timer(app_state, phone).await {
+                                    tracing::error!(error = %err, "failed to expire receipt timer");
+                                }
+                            }
+                            _ => {
+                                tracing::info!(
+                                    ?timer_type,
+                                    "timer expiration not implemented in this phase"
+                                );
+                            }
+                        }
+                    },
+                )
+                .await;
             }
             BotAction::CancelTimer { timer_type, phone } => {
-                tracing::info!(?timer_type, phone = %phone, "action not implemented yet");
+                cancel_timer(state.timers.clone(), &(phone.clone(), timer_type.clone())).await;
+            }
+            BotAction::UpsertDraftOrder { status } | BotAction::FinalizeCurrentOrder { status } => {
+                upsert_order_from_context(&state.pool, conversation_id, context, status).await?;
+            }
+            BotAction::CancelCurrentOrder { order_id } => {
+                update_order_status(&state.pool, *order_id, "cancelled").await?;
             }
             BotAction::SaveOrder { .. } => {
                 tracing::info!("action not implemented yet");
@@ -242,6 +295,120 @@ async fn execute_actions(
     }
 
     Ok(ExecutionOutcome { reset_requested })
+}
+
+async fn upsert_order_from_context(
+    pool: &sqlx::PgPool,
+    conversation_id: i32,
+    context: &mut ConversationContext,
+    status: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let delivery_type = required_field(&context.delivery_type, "delivery_type")?;
+    let payment_method = required_field(&context.payment_method, "payment_method")?;
+    let scheduled_date = parse_optional_date(context.scheduled_date.as_deref())?;
+    let scheduled_time = parse_optional_time(context.scheduled_time.as_deref())?;
+    let pedido = calcular_pedido(&context.items);
+    let total_estimated = i32::try_from(pedido.total_estimado)
+        .map_err(|_| IoError::new(ErrorKind::InvalidData, "total_estimated out of range"))?;
+    let receipt_media_id = context.receipt_media_id.as_deref();
+
+    let order = match context.current_order_id {
+        Some(order_id) => {
+            update_order(
+                pool,
+                order_id,
+                delivery_type,
+                scheduled_date,
+                scheduled_time,
+                payment_method,
+                receipt_media_id,
+                total_estimated,
+                status,
+            )
+            .await?
+        }
+        None => {
+            let order = create_order(
+                pool,
+                conversation_id,
+                delivery_type,
+                scheduled_date,
+                scheduled_time,
+                payment_method,
+                receipt_media_id,
+                total_estimated,
+            )
+            .await?;
+            update_order_status(pool, order.id, status).await?;
+            context.current_order_id = Some(order.id);
+            order
+        }
+    };
+
+    let persisted_items = pedido
+        .items_detalle
+        .iter()
+        .flat_map(|item| item.persistence_lines.iter())
+        .map(|line| {
+            Ok((
+                line.flavor.clone(),
+                line.has_liquor,
+                i32::try_from(line.quantity)
+                    .map_err(|_| IoError::new(ErrorKind::InvalidData, "quantity out of range"))?,
+                i32::try_from(line.unit_price)
+                    .map_err(|_| IoError::new(ErrorKind::InvalidData, "unit_price out of range"))?,
+                i32::try_from(line.subtotal)
+                    .map_err(|_| IoError::new(ErrorKind::InvalidData, "subtotal out of range"))?,
+            ))
+        })
+        .collect::<Result<Vec<_>, IoError>>()?;
+
+    replace_order_items(pool, order.id, &persisted_items).await?;
+
+    Ok(())
+}
+
+fn required_field<'a>(
+    value: &'a Option<String>,
+    field: &'static str,
+) -> Result<&'a str, Box<dyn Error + Send + Sync>> {
+    value.as_deref().ok_or_else(|| {
+        IoError::new(
+            ErrorKind::InvalidData,
+            format!("missing required field {field}"),
+        )
+        .into()
+    })
+}
+
+fn parse_optional_date(
+    value: Option<&str>,
+) -> Result<Option<chrono::NaiveDate>, Box<dyn Error + Send + Sync>> {
+    value
+        .map(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d"))
+        .transpose()
+        .map_err(|err| {
+            IoError::new(
+                ErrorKind::InvalidData,
+                format!("invalid scheduled_date: {err}"),
+            )
+            .into()
+        })
+}
+
+fn parse_optional_time(
+    value: Option<&str>,
+) -> Result<Option<chrono::NaiveTime>, Box<dyn Error + Send + Sync>> {
+    value
+        .map(|time| chrono::NaiveTime::parse_from_str(time, "%H:%M"))
+        .transpose()
+        .map_err(|err| {
+            IoError::new(
+                ErrorKind::InvalidData,
+                format!("invalid scheduled_time: {err}"),
+            )
+            .into()
+        })
 }
 
 fn describe_input(input: &UserInput) -> (&'static str, String) {

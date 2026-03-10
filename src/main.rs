@@ -1,7 +1,14 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::Router;
-use granizado_bot::{config::Config, db::init_pool, routes, whatsapp::client::WhatsAppClient, AppState};
+use granizado_bot::{
+    bot::timers::{new_timer_map, restore_pending_timers},
+    config::Config,
+    db::init_pool,
+    routes,
+    whatsapp::client::WhatsAppClient,
+    AppState,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -27,7 +34,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: config.clone(),
         pool,
         wa_client,
+        timers: new_timer_map(),
     };
+
+    restore_pending_timers(app_state.clone()).await?;
 
     let app: Router = routes::router().with_state(app_state);
 

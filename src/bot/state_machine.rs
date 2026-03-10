@@ -7,9 +7,7 @@ use crate::{
     whatsapp::types::{Button, IncomingMessage, ListSection},
 };
 
-use super::states::{
-    advisor, checkout, data_collect, menu, order, relay, scheduling,
-};
+use super::states::{advisor, checkout, data_collect, menu, order, relay, scheduling};
 
 pub type TransitionResult = Result<(ConversationState, Vec<BotAction>), StateMachineError>;
 
@@ -183,9 +181,7 @@ impl<'de> Deserialize<'de> for ConversationState {
             "collect_phone" => Ok(Self::CollectPhone),
             "collect_address" => Ok(Self::CollectAddress),
             "select_type" => Ok(Self::SelectType),
-            "select_flavor" => Ok(Self::SelectFlavor {
-                has_liquor: false,
-            }),
+            "select_flavor" => Ok(Self::SelectFlavor { has_liquor: false }),
             "select_quantity" => Ok(Self::SelectQuantity {
                 has_liquor: false,
                 flavor: String::new(),
@@ -255,6 +251,9 @@ pub enum BotAction {
         media_id: String,
         caption: Option<String>,
     },
+    SendTransferInstructions {
+        to: String,
+    },
     StartTimer {
         timer_type: TimerType,
         phone: String,
@@ -263,6 +262,15 @@ pub enum BotAction {
     CancelTimer {
         timer_type: TimerType,
         phone: String,
+    },
+    UpsertDraftOrder {
+        status: String,
+    },
+    FinalizeCurrentOrder {
+        status: String,
+    },
+    CancelCurrentOrder {
+        order_id: i32,
     },
     SaveOrder {
         order: crate::db::models::Order,
@@ -290,6 +298,9 @@ pub struct ConversationContext {
     pub scheduled_time: Option<String>,
     pub payment_method: Option<String>,
     pub receipt_media_id: Option<String>,
+    pub current_order_id: Option<i32>,
+    pub editing_address: bool,
+    pub receipt_timer_expired: bool,
     pub pending_has_liquor: Option<bool>,
     pub pending_flavor: Option<String>,
 }
@@ -313,6 +324,9 @@ impl ConversationContext {
             scheduled_time: state_data.scheduled_time.clone(),
             payment_method: state_data.payment_method.clone(),
             receipt_media_id: state_data.receipt_media_id.clone(),
+            current_order_id: state_data.current_order_id,
+            editing_address: state_data.editing_address,
+            receipt_timer_expired: state_data.receipt_timer_expired,
             pending_has_liquor: state_data.pending_has_liquor,
             pending_flavor: state_data.pending_flavor.clone(),
         }
@@ -326,6 +340,9 @@ impl ConversationContext {
             scheduled_time: self.scheduled_time.clone(),
             payment_method: self.payment_method.clone(),
             receipt_media_id: self.receipt_media_id.clone(),
+            current_order_id: self.current_order_id,
+            editing_address: self.editing_address,
+            receipt_timer_expired: self.receipt_timer_expired,
             pending_has_liquor: self.pending_has_liquor,
             pending_flavor: self.pending_flavor.clone(),
         }
@@ -383,7 +400,14 @@ pub fn transition(
         }
         ConversationState::AddMore => order::handle_add_more(input, context),
         ConversationState::ShowSummary => checkout::handle_show_summary(input, context),
-        ConversationState::ContactAdvisorName => advisor::handle_contact_advisor_name(input, context),
+        ConversationState::ConfirmAddress => checkout::handle_confirm_address(input, context),
+        ConversationState::WaitReceipt => checkout::handle_wait_receipt(input, context),
+        ConversationState::WaitAdvisorResponse => {
+            checkout::handle_wait_advisor_response(input, context)
+        }
+        ConversationState::ContactAdvisorName => {
+            advisor::handle_contact_advisor_name(input, context)
+        }
         ConversationState::ContactAdvisorPhone => {
             advisor::handle_contact_advisor_phone(input, context)
         }
@@ -391,10 +415,7 @@ pub fn transition(
             advisor::handle_wait_advisor_contact(input, context)
         }
         ConversationState::LeaveMessage => advisor::handle_leave_message(input, context),
-        ConversationState::ConfirmAddress
-        | ConversationState::WaitReceipt
-        | ConversationState::WaitAdvisorResponse
-        | ConversationState::AskDeliveryCost
+        ConversationState::AskDeliveryCost
         | ConversationState::NegotiateHour
         | ConversationState::OfferHourToClient { .. }
         | ConversationState::WaitClientHour
@@ -469,6 +490,9 @@ mod tests {
             scheduled_time: Some("15:30".to_string()),
             payment_method: None,
             receipt_media_id: None,
+            current_order_id: Some(42),
+            editing_address: true,
+            receipt_timer_expired: false,
             pending_has_liquor: Some(true),
             pending_flavor: Some("maracuya".to_string()),
         }
@@ -519,6 +543,8 @@ mod tests {
 
         assert_eq!(loaded.pending_has_liquor, Some(true));
         assert_eq!(loaded.pending_flavor.as_deref(), Some("maracuya"));
+        assert_eq!(loaded.current_order_id, Some(42));
+        assert!(loaded.editing_address);
     }
 
     #[test]
@@ -646,6 +672,7 @@ mod tests {
 
         assert!(context.items.is_empty());
         assert_eq!(context.pending_has_liquor, None);
+        assert_eq!(context.current_order_id, None);
+        assert!(!context.editing_address);
     }
 }
-

@@ -1,5 +1,7 @@
 use granizado_bot::{
-    bot::state_machine::{transition, BotAction, ConversationContext, ConversationState, UserInput},
+    bot::state_machine::{
+        transition, BotAction, ConversationContext, ConversationState, UserInput,
+    },
     db::models::ConversationStateData,
 };
 
@@ -133,11 +135,7 @@ fn validates_programmed_delivery_and_persists_across_restarts() {
     assert_eq!(state, ConversationState::SelectTime);
     assert!(contains_text(&actions, "hora"));
 
-    let (state, context, _) = advance(
-        state,
-        UserInput::TextMessage("3:45pm".to_string()),
-        context,
-    );
+    let (state, context, _) = advance(state, UserInput::TextMessage("3:45pm".to_string()), context);
     assert_eq!(state, ConversationState::ConfirmSchedule);
     assert_eq!(context.scheduled_time.as_deref(), Some("15:45"));
 
@@ -192,11 +190,8 @@ fn collects_customer_data_with_retries() {
     assert_eq!(state, ConversationState::CollectPhone);
     assert_eq!(context.customer_name.as_deref(), Some("Ana Maria"));
 
-    let (state, context, actions) = advance(
-        state,
-        UserInput::TextMessage("abc123".to_string()),
-        context,
-    );
+    let (state, context, actions) =
+        advance(state, UserInput::TextMessage("abc123".to_string()), context);
     assert_eq!(state, ConversationState::CollectPhone);
     assert!(contains_text(&actions, "dígitos"));
 
@@ -208,11 +203,8 @@ fn collects_customer_data_with_retries() {
     assert_eq!(state, ConversationState::CollectAddress);
     assert_eq!(context.customer_phone.as_deref(), Some("3001234567"));
 
-    let (state, context, actions) = advance(
-        state,
-        UserInput::TextMessage("corta".to_string()),
-        context,
-    );
+    let (state, context, actions) =
+        advance(state, UserInput::TextMessage("corta".to_string()), context);
     assert_eq!(state, ConversationState::CollectAddress);
     assert!(contains_text(&actions, "dirección"));
 
@@ -256,19 +248,13 @@ fn supports_mixed_items_loop_and_reaches_show_summary() {
         }
     );
 
-    let (state, context, actions) = advance(
-        state,
-        UserInput::TextMessage("0".to_string()),
-        context,
-    );
+    let (state, context, actions) =
+        advance(state, UserInput::TextMessage("0".to_string()), context);
     assert!(matches!(state, ConversationState::SelectQuantity { .. }));
     assert!(contains_text(&actions, "cantidad"));
 
-    let (state, context, actions) = advance(
-        state,
-        UserInput::TextMessage("2".to_string()),
-        context,
-    );
+    let (state, context, actions) =
+        advance(state, UserInput::TextMessage("2".to_string()), context);
     assert_eq!(state, ConversationState::AddMore);
     assert!(contains_text(&actions, "Resumen parcial"));
 
@@ -284,16 +270,8 @@ fn supports_mixed_items_loop_and_reaches_show_summary() {
         UserInput::ButtonPress("without_liquor".to_string()),
         context,
     );
-    let (state, context, _) = advance(
-        state,
-        UserInput::TextMessage("Mora".to_string()),
-        context,
-    );
-    let (state, context, _) = advance(
-        state,
-        UserInput::TextMessage("1".to_string()),
-        context,
-    );
+    let (state, context, _) = advance(state, UserInput::TextMessage("Mora".to_string()), context);
+    let (state, context, _) = advance(state, UserInput::TextMessage("1".to_string()), context);
     assert_eq!(state, ConversationState::AddMore);
 
     let (state, context, _) = advance(
@@ -306,16 +284,8 @@ fn supports_mixed_items_loop_and_reaches_show_summary() {
         UserInput::ButtonPress("with_liquor".to_string()),
         context,
     );
-    let (state, context, _) = advance(
-        state,
-        UserInput::TextMessage("Fresa".to_string()),
-        context,
-    );
-    let (state, context, _) = advance(
-        state,
-        UserInput::TextMessage("4".to_string()),
-        context,
-    );
+    let (state, context, _) = advance(state, UserInput::TextMessage("Fresa".to_string()), context);
+    let (state, context, _) = advance(state, UserInput::TextMessage("4".to_string()), context);
     assert_eq!(state, ConversationState::AddMore);
     assert_eq!(context.items.len(), 3);
     assert!(context.items.iter().any(|item| item.has_liquor));
@@ -327,20 +297,24 @@ fn supports_mixed_items_loop_and_reaches_show_summary() {
         context,
     );
     assert_eq!(state, ConversationState::ShowSummary);
-    assert!(contains_text(&actions, "Fase 3"));
+    assert!(contains_text(&actions, "Total estimado"));
     assert!(contains_text(&actions, "maracuya"));
     assert!(contains_text(&actions, "mora"));
     assert!(contains_text(&actions, "fresa"));
-
-    let (state, context, actions) = advance(
-        state,
-        UserInput::TextMessage("menu".to_string()),
-        context,
-    );
-    assert_eq!(state, ConversationState::MainMenu);
-    assert!(actions.iter().any(|action| matches!(action, BotAction::ResetConversation { .. })));
     assert_eq!(list_row_count(&actions), Some(4));
 
     let persisted = context.to_state_data();
     assert_eq!(persisted.items.len(), 3);
+
+    let (state, context, actions) = advance(
+        state,
+        UserInput::ListSelection("cancel_order".to_string()),
+        context,
+    );
+    assert_eq!(state, ConversationState::MainMenu);
+    assert!(actions
+        .iter()
+        .any(|action| matches!(action, BotAction::ResetConversation { .. })));
+    assert_eq!(list_row_count(&actions), Some(4));
+    assert!(context.items.is_empty());
 }

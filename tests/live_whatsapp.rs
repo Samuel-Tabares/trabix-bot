@@ -9,7 +9,8 @@ fn load_env() {
 
 fn required_env(name: &str) -> String {
     load_env();
-    std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set for live WhatsApp smoke tests"))
+    std::env::var(name)
+        .unwrap_or_else(|_| panic!("{name} must be set for live WhatsApp smoke tests"))
 }
 
 #[tokio::test]
@@ -19,7 +20,9 @@ async fn sends_text_buttons_and_list_messages() {
     let phone_id = required_env("WHATSAPP_PHONE_ID");
     let recipient = std::env::var("WHATSAPP_TEST_RECIPIENT")
         .or_else(|_| std::env::var("ADVISOR_PHONE"))
-        .expect("WHATSAPP_TEST_RECIPIENT or ADVISOR_PHONE must be set for live WhatsApp smoke tests");
+        .expect(
+            "WHATSAPP_TEST_RECIPIENT or ADVISOR_PHONE must be set for live WhatsApp smoke tests",
+        );
 
     let client = WhatsAppClient::new(token, phone_id);
 

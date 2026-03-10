@@ -37,9 +37,7 @@ pub async fn verify_webhook(
 mod tests {
     use super::{verify_webhook, VerifyQuery};
     use crate::{
-        config::Config,
-        whatsapp::client::WhatsAppClient,
-        AppState,
+        bot::timers::new_timer_map, config::Config, whatsapp::client::WhatsAppClient, AppState,
     };
     use axum::{extract::Query, extract::State, http::StatusCode, response::IntoResponse};
 
@@ -52,12 +50,14 @@ mod tests {
                 whatsapp_app_secret: "secret".into(),
                 database_url: "postgres://db".into(),
                 advisor_phone: "573001234567".into(),
+                transfer_payment_text: "Nequi 3001234567".into(),
                 port: 8080,
             },
             pool: sqlx::postgres::PgPoolOptions::new()
                 .connect_lazy("postgresql://user:pass@localhost/test_db")
                 .expect("lazy pool"),
             wa_client: WhatsAppClient::new("token".into(), "phone".into()),
+            timers: new_timer_map(),
         }
     }
 

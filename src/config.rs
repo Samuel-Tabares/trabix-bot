@@ -8,6 +8,7 @@ pub struct Config {
     pub whatsapp_app_secret: String,
     pub database_url: String,
     pub advisor_phone: String,
+    pub transfer_payment_text: String,
     pub port: u16,
 }
 
@@ -39,6 +40,7 @@ impl Config {
             whatsapp_app_secret: read_required("WHATSAPP_APP_SECRET")?,
             database_url: read_required("DATABASE_URL")?,
             advisor_phone: read_required("ADVISOR_PHONE")?,
+            transfer_payment_text: read_required("TRANSFER_PAYMENT_TEXT")?,
             port: read_port()?,
         })
     }
@@ -83,6 +85,7 @@ mod tests {
             "WHATSAPP_APP_SECRET",
             "DATABASE_URL",
             "ADVISOR_PHONE",
+            "TRANSFER_PAYMENT_TEXT",
             "PORT",
         ] {
             std::env::remove_var(key);
@@ -100,12 +103,14 @@ mod tests {
         std::env::set_var("WHATSAPP_APP_SECRET", "secret");
         std::env::set_var("DATABASE_URL", "postgres://db");
         std::env::set_var("ADVISOR_PHONE", "573001234567");
+        std::env::set_var("TRANSFER_PAYMENT_TEXT", "Nequi 3001234567");
 
         let config = Config::from_env().expect("config should load");
 
         assert_eq!(config.port, 8080);
         assert_eq!(config.whatsapp_token, "token");
         assert_eq!(config.whatsapp_phone_id, "phone-id");
+        assert_eq!(config.transfer_payment_text, "Nequi 3001234567");
     }
 
     #[test]
@@ -129,6 +134,7 @@ mod tests {
         std::env::set_var("WHATSAPP_APP_SECRET", "secret");
         std::env::set_var("DATABASE_URL", "postgres://db");
         std::env::set_var("ADVISOR_PHONE", "573001234567");
+        std::env::set_var("TRANSFER_PAYMENT_TEXT", "Nequi 3001234567");
         std::env::set_var("PORT", "not-a-port");
 
         let err = Config::from_env().expect_err("config should fail");

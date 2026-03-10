@@ -1,10 +1,8 @@
-use crate::{
-    bot::{
-        state_machine::{
-            BotAction, ConversationContext, ConversationState, TransitionResult, UserInput,
-        },
-        states::order,
+use crate::bot::{
+    state_machine::{
+        BotAction, ConversationContext, ConversationState, TransitionResult, UserInput,
     },
+    states::order,
 };
 
 pub fn handle_collect_name(
@@ -22,7 +20,11 @@ pub fn handle_collect_name(
             }
             Err(message) => Ok((
                 ConversationState::CollectName,
-                retry_actions(&context.phone_number, &message, collect_name_actions(&context.phone_number)),
+                retry_actions(
+                    &context.phone_number,
+                    &message,
+                    collect_name_actions(&context.phone_number),
+                ),
             )),
         },
         _ => Ok((
@@ -51,7 +53,11 @@ pub fn handle_collect_phone(
             }
             Err(message) => Ok((
                 ConversationState::CollectPhone,
-                retry_actions(&context.phone_number, &message, collect_phone_actions(&context.phone_number)),
+                retry_actions(
+                    &context.phone_number,
+                    &message,
+                    collect_phone_actions(&context.phone_number),
+                ),
             )),
         },
         _ => Ok((
@@ -183,6 +189,9 @@ mod tests {
             scheduled_time: None,
             payment_method: None,
             receipt_media_id: None,
+            current_order_id: None,
+            editing_address: false,
+            receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
         }
@@ -209,9 +218,11 @@ mod tests {
     #[test]
     fn collect_name_advances_to_phone() {
         let mut context = context();
-        let (state, _) =
-            handle_collect_name(&UserInput::TextMessage("Ana Maria".to_string()), &mut context)
-                .expect("transition");
+        let (state, _) = handle_collect_name(
+            &UserInput::TextMessage("Ana Maria".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::CollectPhone);
         assert_eq!(context.customer_name.as_deref(), Some("Ana Maria"));
@@ -220,9 +231,11 @@ mod tests {
     #[test]
     fn collect_phone_advances_to_address() {
         let mut context = context();
-        let (state, _) =
-            handle_collect_phone(&UserInput::TextMessage("3001234567".to_string()), &mut context)
-                .expect("transition");
+        let (state, _) = handle_collect_phone(
+            &UserInput::TextMessage("3001234567".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::CollectAddress);
         assert_eq!(context.customer_phone.as_deref(), Some("3001234567"));
@@ -244,4 +257,3 @@ mod tests {
         );
     }
 }
-

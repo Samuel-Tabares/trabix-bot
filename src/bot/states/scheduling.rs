@@ -1,6 +1,9 @@
 use std::env;
 
-use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc, Weekday};
+use chrono::{
+    DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+    Weekday,
+};
 
 use crate::{
     bot::{
@@ -108,7 +111,11 @@ pub fn handle_select_date(
             }
             Err(message) => Ok((
                 ConversationState::SelectDate,
-                retry_actions(&context.phone_number, &message, select_date_actions(&context.phone_number)),
+                retry_actions(
+                    &context.phone_number,
+                    &message,
+                    select_date_actions(&context.phone_number),
+                ),
             )),
         },
         _ => Ok((
@@ -137,7 +144,11 @@ pub fn handle_select_time(
             }
             Err(message) => Ok((
                 ConversationState::SelectTime,
-                retry_actions(&context.phone_number, &message, select_time_actions(&context.phone_number)),
+                retry_actions(
+                    &context.phone_number,
+                    &message,
+                    select_time_actions(&context.phone_number),
+                ),
             )),
         },
         _ => Ok((
@@ -257,7 +268,9 @@ pub fn parse_future_date(input: &str, today: NaiveDate) -> Result<NaiveDate, Str
     let parsed = parse_relative_date(&normalized, today)
         .or_else(|| parse_absolute_date(input, &normalized, today))
         .or_else(|| parse_weekday_date(&normalized, today))
-        .ok_or_else(|| "No pude entender la fecha. Prueba con algo como mañana, 24/12 o viernes.".to_string())?;
+        .ok_or_else(|| {
+            "No pude entender la fecha. Prueba con algo como mañana, 24/12 o viernes.".to_string()
+        })?;
 
     if parsed < today {
         return Err("La fecha debe ser hoy o futura.".to_string());
@@ -439,22 +452,43 @@ fn parse_textual_time(normalized: &str) -> Option<NaiveTime> {
     let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
 
     if cleaned.contains(" y media") {
-        let hour = cleaned.split(" y media").next()?.trim().parse::<u32>().ok()?;
+        let hour = cleaned
+            .split(" y media")
+            .next()?
+            .trim()
+            .parse::<u32>()
+            .ok()?;
         return build_time(hour, 30, period);
     }
 
     if cleaned.contains(" y cuarto") {
-        let hour = cleaned.split(" y cuarto").next()?.trim().parse::<u32>().ok()?;
+        let hour = cleaned
+            .split(" y cuarto")
+            .next()?
+            .trim()
+            .parse::<u32>()
+            .ok()?;
         return build_time(hour, 15, period);
     }
 
-    if let Some(base) = cleaned.strip_suffix("pm").or_else(|| cleaned.strip_suffix("am")) {
+    if let Some(base) = cleaned
+        .strip_suffix("pm")
+        .or_else(|| cleaned.strip_suffix("am"))
+    {
         let is_pm = cleaned.ends_with("pm");
         if base.contains(':') {
             return parse_meridian_time(base, is_pm);
         }
         let hour = base.trim().parse::<u32>().ok()?;
-        return build_time(hour, 0, if is_pm { Some(PeriodHint::Pm) } else { Some(PeriodHint::Am) });
+        return build_time(
+            hour,
+            0,
+            if is_pm {
+                Some(PeriodHint::Pm)
+            } else {
+                Some(PeriodHint::Am)
+            },
+        );
     }
 
     if let Some((hour, minute)) = cleaned.split_once(':') {
@@ -488,8 +522,9 @@ fn parse_meridian_compact_time(compact: &str) -> Option<NaiveTime> {
 }
 
 fn build_time_from_hour_only(hour: u32, period: Option<PeriodHint>) -> Result<NaiveTime, String> {
-    build_time(hour, 0, period)
-        .ok_or_else(|| "No pude entender la hora. Prueba con algo como 3pm, 3 y media o 15:30.".to_string())
+    build_time(hour, 0, period).ok_or_else(|| {
+        "No pude entender la hora. Prueba con algo como 3pm, 3 y media o 15:30.".to_string()
+    })
 }
 
 fn build_time(hour: u32, minute: u32, period: Option<PeriodHint>) -> Option<NaiveTime> {
@@ -507,10 +542,18 @@ fn build_time(hour: u32, minute: u32, period: Option<PeriodHint>) -> Option<Naiv
 
     let hour_24 = match period {
         Some(PeriodHint::Am) => {
-            if hour == 12 { 0 } else { hour }
+            if hour == 12 {
+                0
+            } else {
+                hour
+            }
         }
         Some(PeriodHint::Pm) => {
-            if hour == 12 { 12 } else { hour + 12 }
+            if hour == 12 {
+                12
+            } else {
+                hour + 12
+            }
         }
         None => default_meridiem(hour)?,
     };
@@ -535,10 +578,7 @@ fn detect_period_hint(normalized: &str) -> Option<PeriodHint> {
         return Some(PeriodHint::Am);
     }
 
-    if normalized.contains("pm")
-        || normalized.contains("tarde")
-        || normalized.contains("noche")
-    {
+    if normalized.contains("pm") || normalized.contains("tarde") || normalized.contains("noche") {
         return Some(PeriodHint::Pm);
     }
 
@@ -670,6 +710,9 @@ mod tests {
             scheduled_time: None,
             payment_method: None,
             receipt_media_id: None,
+            current_order_id: None,
+            editing_address: false,
+            receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
         }
@@ -698,8 +741,14 @@ mod tests {
 
     #[test]
     fn parses_time_formats() {
-        assert_eq!(parse_time("15:30").unwrap(), NaiveTime::from_hms_opt(15, 30, 0).unwrap());
-        assert_eq!(parse_time("3pm").unwrap(), NaiveTime::from_hms_opt(15, 0, 0).unwrap());
+        assert_eq!(
+            parse_time("15:30").unwrap(),
+            NaiveTime::from_hms_opt(15, 30, 0).unwrap()
+        );
+        assert_eq!(
+            parse_time("3pm").unwrap(),
+            NaiveTime::from_hms_opt(15, 0, 0).unwrap()
+        );
         assert_eq!(
             parse_time("3:45pm").unwrap(),
             NaiveTime::from_hms_opt(15, 45, 0).unwrap()
@@ -722,7 +771,10 @@ mod tests {
     fn parses_natural_date_formats() {
         let today = NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
 
-        assert_eq!(parse_future_date("manana", today).unwrap(), today.succ_opt().unwrap());
+        assert_eq!(
+            parse_future_date("manana", today).unwrap(),
+            today.succ_opt().unwrap()
+        );
         assert_eq!(
             parse_future_date("24/12", today).unwrap(),
             NaiveDate::from_ymd_opt(2026, 12, 24).unwrap()
@@ -746,7 +798,10 @@ mod tests {
 
         std::env::remove_var("FORCE_BOGOTA_NOW");
 
-        assert_eq!(now.date_naive(), NaiveDate::from_ymd_opt(2026, 3, 10).unwrap());
+        assert_eq!(
+            now.date_naive(),
+            NaiveDate::from_ymd_opt(2026, 3, 10).unwrap()
+        );
         assert_eq!(now.time(), NaiveTime::from_hms_opt(23, 30, 0).unwrap());
     }
 
@@ -788,9 +843,11 @@ mod tests {
     #[test]
     fn select_date_accepts_valid_text() {
         let mut context = context();
-        let (state, _) =
-            handle_select_date(&UserInput::TextMessage("2026-03-20".to_string()), &mut context)
-                .expect("transition");
+        let (state, _) = handle_select_date(
+            &UserInput::TextMessage("2026-03-20".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::SelectTime);
         assert_eq!(context.scheduled_date.as_deref(), Some("2026-03-20"));

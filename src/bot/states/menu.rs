@@ -216,6 +216,9 @@ mod tests {
             scheduled_time: None,
             payment_method: None,
             receipt_media_id: None,
+            current_order_id: None,
+            editing_address: false,
+            receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
         }
@@ -235,9 +238,11 @@ mod tests {
     #[test]
     fn main_menu_make_order_moves_forward() {
         let mut context = context();
-        let (state, _) =
-            handle_main_menu(&UserInput::ListSelection("make_order".to_string()), &mut context)
-                .expect("transition");
+        let (state, _) = handle_main_menu(
+            &UserInput::ListSelection("make_order".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::WhenDelivery);
     }
@@ -245,9 +250,11 @@ mod tests {
     #[test]
     fn view_menu_back_returns_to_main_menu() {
         let mut context = context();
-        let (state, _) =
-            handle_view_menu(&UserInput::ButtonPress("back_main_menu".to_string()), &mut context)
-                .expect("transition");
+        let (state, _) = handle_view_menu(
+            &UserInput::ButtonPress("back_main_menu".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::MainMenu);
     }
@@ -255,11 +262,12 @@ mod tests {
     #[test]
     fn view_schedule_make_order_moves_forward() {
         let mut context = context();
-        let (state, _) =
-            handle_view_schedule(&UserInput::ButtonPress("make_order".to_string()), &mut context)
-                .expect("transition");
+        let (state, _) = handle_view_schedule(
+            &UserInput::ButtonPress("make_order".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::WhenDelivery);
     }
 }
-

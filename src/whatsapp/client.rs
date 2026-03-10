@@ -152,7 +152,10 @@ impl WhatsAppClient {
 
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_else(|_| "<unable to read body>".into());
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unable to read body>".into());
             tracing::error!(to = %to, message_type = %message_type, %status, body = %body, "meta api returned an error");
             return Err(WhatsAppError::Api { status, body });
         }

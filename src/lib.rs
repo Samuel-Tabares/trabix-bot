@@ -9,4 +9,5 @@ pub struct AppState {
     pub config: config::Config,
     pub pool: sqlx::PgPool,
     pub wa_client: whatsapp::client::WhatsAppClient,
+    pub timers: bot::timers::TimerMap,
 }
