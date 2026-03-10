@@ -34,6 +34,8 @@ Nota:
 
 - Los tests live ahora intentan cargar `.env` automaticamente con `dotenvy`.
 - Si ejecutas fuera de la raiz del repo o sin `.env`, exporta variables manualmente.
+- Para probar fuera de horario sin esperar la noche, puedes usar localmente `FORCE_BOGOTA_NOW=2026-03-10 23:30`.
+- No uses `FORCE_BOGOTA_NOW` en Railway o produccion.
 
 ### Matriz de aceptacion
 
