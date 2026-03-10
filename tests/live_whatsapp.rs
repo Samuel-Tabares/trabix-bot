@@ -3,7 +3,12 @@ use granizado_bot::whatsapp::{
     types::{Button, ButtonReplyPayload, ListRow, ListSection},
 };
 
+fn load_env() {
+    let _ = dotenvy::dotenv();
+}
+
 fn required_env(name: &str) -> String {
+    load_env();
     std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set for live WhatsApp smoke tests"))
 }
 
