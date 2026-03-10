@@ -3,6 +3,7 @@
 ## Project Structure & Module Organization
 This repository is documentation-first. The current source of truth lives in:
 
+- `AGENTS.md`: contributor instructions for this repository.
 - `general_info/Business_Requirements_Document.md`: business rules, operations, costs, and phased scope.
 - `general_info/Flow_Design_Diagram.mermaid`: end-to-end conversation flow.
 - `Software_Design_Document.md`: target Rust architecture, data model, state machine, and webhook contract.
@@ -13,6 +14,7 @@ There is no `src/` or `tests/` directory yet. When implementation starts, follow
 ## Build, Test, and Development Commands
 There is no active build pipeline in this workspace yet. Use these commands for document work and planned Rust development:
 
+- `git status --short --branch`: confirm working tree state before editing.
 - `rg --files`: list repository files quickly.
 - `sed -n '1,120p' general_info/Business_Requirements_Document.md`: inspect a document section before editing.
 - `cargo check`: verify the Rust project compiles once scaffolding exists.
@@ -28,7 +30,7 @@ For planned Rust code, follow standard conventions: 4-space indentation, `snake_
 No automated test suite exists yet. For documentation changes, verify internal consistency across the business, design, and implementation documents. For Rust code, add `cargo test` coverage for webhook parsing, pricing rules, and state transitions. Name tests by behavior, for example `parses_button_reply_payload` or `applies_liquor_pair_discount`.
 
 ## Commit & Pull Request Guidelines
-This workspace does not currently include `.git/`, so no local commit history is available to infer conventions. Use short imperative commit messages, ideally Conventional Commit style, for example `docs: clarify advisor relay flow` or `feat: add pricing module`.
+The current history is minimal and uses a plain descriptive subject (`setting AGENTS.MD and secuencial phase of the project`). Keep future commit subjects short, imperative, and specific. Prefer patterns like `docs: refine implementation phases` or `feat: scaffold webhook routes` over vague multi-topic messages.
 
 Pull requests should include:
 
