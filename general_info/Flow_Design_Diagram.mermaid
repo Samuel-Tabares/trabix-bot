@@ -1,0 +1,317 @@
+%%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor':'#667eea', 'primaryBorderColor':'#7b9bff', 'background':'#1e1e2e', 'mainBkg':'#2a2a3a', 'tertiaryBkg':'#333344', 'lineColor':'#7b9bff', 'textColor':'#e0e0e0', 'clusterBkg':'#2a2a3a', 'clusterBorder':'#7b9bff'}}}%%
+graph TD
+    A["👤 CLIENTE ESCRIBE"] --> B["🤖 BOT: Menú Principal"]
+    
+    B --> C{"¿Qué deseas?"}
+    
+    C -->|1️⃣ Hacer Pedido| CUANDO{"🕐 ¿Cuándo lo necesitas?"}
+    C -->|2️⃣ Ver Menú| F["📋 Mostrar Precios"]
+    C -->|3️⃣ Horarios| G["⏰ Mostrar Horarios"]
+    C -->|4️⃣ Hablar Asesor| H["👨‍💼 Conectar con Asesor"]
+
+    %% ============================================
+    %% SECCIÓN HORARIOS
+    %% ============================================
+    G --> G1["⏰ HORARIOS<br/>Entrega Inmediata: 8 AM - 11 PM<br/>─────────────────<br/>📌 Si no se encuentra entre estas<br/>horas, igualmente podemos intentar<br/>contactarlo si hay alguien disponible<br/>para completar su pedido"]
+    G1 -->|Hacer pedido| CUANDO
+    G1 -->|No| B
+
+    %% ============================================
+    %% FLUJO DE TIEMPO DE ENTREGA
+    %% ============================================
+    CUANDO -->|Entrega<br/>INMEDIATA| VERIF_HOR["⏰ Verificar Horario<br/>¿8 AM - 11 PM?"]
+    CUANDO -->|Entrega<br/>PROGRAMADA| PROG_FECHA["📅 Seleccionar Fecha"]
+
+    VERIF_HOR -->|✅ SÍ| RECOL["📝 RECOLECTAR DATOS"]
+    VERIF_HOR -->|❌ NO| FUERA_HOR["🚫 Fuera de Horario<br/>─────────────────<br/>Estamos fuera del horario de<br/>entrega inmediata. Sin embargo,<br/>puede contactar directamente a<br/>un asesor para continuar con<br/>la venta si es posible."]
+
+    FUERA_HOR -->|📅 Programar<br/>para después| PROG_FECHA
+    FUERA_HOR -->|👨‍💼 Contactar<br/>asesor ahora| H
+    FUERA_HOR -->|🏠 Menú| B
+
+    %% ============================================
+    %% PROGRAMAR PEDIDO - Fecha y Hora
+    %% ============================================
+    PROG_FECHA --> PROG_HORA["🕐 Seleccionar Hora<br/>de Entrega"]
+    PROG_HORA --> PROG_CONF["✅ Entrega programada para:<br/>📅 Fecha a las 🕐 Hora<br/>¿Confirmar?"]
+    PROG_CONF -->|✅ Sí| RECOL
+    PROG_CONF -->|🔄 Cambiar| PROG_FECHA
+
+    %% ============================================
+    %% RECOLECTAR DATOS DEL CLIENTE
+    %% ============================================
+    RECOL --> R1["¿Nombre completo?"]
+    R1 --> R2["¿Teléfono?"]
+    R2 --> R3["¿Dirección de entrega?"]
+
+    %% ============================================
+    %% FLUJO UNIFICADO DE VENTAS
+    %% No se pregunta detal/mayor, solo se pide
+    %% ============================================
+    R3 --> TIPO_GRAN{"🧊 ¿Qué tipo de<br/>granizado deseas?"}
+    
+    TIPO_GRAN -->|🍹 Con Licor| SAB_LICOR["🍹 Seleccionar Sabor CON LICOR<br/>─────────────────<br/>📸 Bot envía IMAGEN del menú<br/>con los sabores con licor"]
+    TIPO_GRAN -->|🧊 Sin Licor| SAB_SIN["🧊 Seleccionar Sabor SIN LICOR<br/>─────────────────<br/>📸 Bot envía IMAGEN del menú<br/>con los sabores sin licor"]
+
+    SAB_LICOR --> CANT_LIC["¿Cuántos de este sabor?"]
+    SAB_SIN --> CANT_SIN["¿Cuántos de este sabor?"]
+
+    CANT_LIC --> AGREGAR["✅ Agregado al pedido"]
+    CANT_SIN --> AGREGAR
+
+    AGREGAR --> MAS{"🔄 ¿Deseas agregar<br/>más granizados?"}
+    MAS -->|Sí| TIPO_GRAN
+    MAS -->|No, finalizar pedido| CHECK_LICOR
+
+    %% ============================================
+    %% VALIDACIÓN AUTOMÁTICA POR TIPO
+    %% Al mayor = >=20 del MISMO TIPO (con/sin licor)
+    %% Se evalúan CON LICOR y SIN LICOR por separado
+    %%
+    %% LÓGICA DE PROMO CON LICOR (DETAL):
+    %% La promo aplica en PARES:
+    %%   1 unid = $8.000
+    %%   2 unid = $8.000 + $4.000 = $12.000 (1 promo)
+    %%   3 unid = $12.000 + $8.000 = $20.000
+    %%   4 unid = $12.000 + $12.000 = $24.000 (2 promos)
+    %% Fórmula: pares = cantidad ÷ 2 (entero)
+    %%   impares = cantidad mod 2
+    %%   total = (pares × $12.000) + (impares × $8.000)
+    %% ============================================
+    CHECK_LICOR{"📊 ¿Total granizados<br/>CON LICOR?"}
+
+    CHECK_LICOR -->|"< 20 unid.<br/>🛍️ DETAL"| PRECIO_LIC_DET["🍹 Con Licor → DETAL<br/>$8.000 c/u<br/>2do granizado: $4.000"]
+    CHECK_LICOR -->|"20-49 unid.<br/>📦 MAYOR"| PRECIO_LIC_M20["🍹 Con Licor → MAYOR<br/>$4.900 c/u"]
+    CHECK_LICOR -->|"50-99 unid.<br/>📦 MAYOR"| PRECIO_LIC_M50["🍹 Con Licor → MAYOR<br/>$4.700 c/u"]
+    CHECK_LICOR -->|"100+ unid.<br/>📦 MAYOR"| PRECIO_LIC_M100["🍹 Con Licor → MAYOR<br/>$4.500 c/u"]
+
+    PRECIO_LIC_DET --> CHECK_SIN
+    PRECIO_LIC_M20 --> CHECK_SIN
+    PRECIO_LIC_M50 --> CHECK_SIN
+    PRECIO_LIC_M100 --> CHECK_SIN
+
+    CHECK_SIN{"📊 ¿Total granizados<br/>SIN LICOR?"}
+
+    CHECK_SIN -->|"< 20 unid.<br/>🛍️ DETAL"| PRECIO_SIN_DET["🧊 Sin Licor → DETAL<br/>$7.000 c/u"]
+    CHECK_SIN -->|"20-49 unid.<br/>📦 MAYOR"| PRECIO_SIN_M20["🧊 Sin Licor → MAYOR<br/>$4.800 c/u"]
+    CHECK_SIN -->|"50-99 unid.<br/>📦 MAYOR"| PRECIO_SIN_M50["🧊 Sin Licor → MAYOR<br/>$4.500 c/u"]
+    CHECK_SIN -->|"100+ unid.<br/>📦 MAYOR"| PRECIO_SIN_M100["🧊 Sin Licor → MAYOR<br/>$4.200 c/u"]
+
+    %% ============================================
+    %% RESUMEN + CONFIRMACIÓN CON PAGO
+    %% (Fusionado: el cliente ve el resumen y elige
+    %%  forma de pago en un solo paso)
+    %% NOTA: Se usa LISTA INTERACTIVA (no botones)
+    %% porque hay 4 opciones y el límite es 3 botones.
+    %% ============================================
+    PRECIO_SIN_DET --> RESUMEN["📋 RESUMEN DEL PEDIDO<br/>─────────────────<br/>🍹 Granizados Con Licor:<br/>  Sabores × Cantidad → Subtotal<br/>  (Promo: por cada par, 2do a $4.000)<br/>🧊 Granizados Sin Licor:<br/>  Sabores × Cantidad → Subtotal<br/>─────────────────<br/>🚚 DOMICILIO<br/>Dentro de Armenia: $3.500 - $8.000<br/>El asesor confirma el valor exacto<br/>después de confirmar el pedido<br/>─────────────────<br/>💰 TOTAL estimado: $XX.XXX + domicilio<br/>─────────────────<br/>💳 ¿Cómo desea pagar?<br/>(Lista interactiva: 4 opciones)"]
+    PRECIO_SIN_M20 --> RESUMEN
+    PRECIO_SIN_M50 --> RESUMEN
+    PRECIO_SIN_M100 --> RESUMEN
+
+    RESUMEN -->|💵 Contra<br/>Entrega| PAGO_CONF["✅ Su dirección de entrega es:<br/>[dirección]<br/>¿Es correcta?"]
+    RESUMEN -->|📲 Pago<br/>Ahora| PAGO_DATOS["💵 Envía datos bancarios"]
+    RESUMEN -->|✏️ Modificar<br/>pedido| TIPO_GRAN
+    RESUMEN -->|❌ Cancelar| B
+
+    PAGO_CONF -->|"✏️ Cambiar<br/>dirección"| R3_EDIT["📝 ¿Nueva dirección?"]
+    R3_EDIT --> PAGO_CONF
+
+    PAGO_DATOS --> COMP_WAIT["⏳ Espera comprobante<br/>Timeout: 10 min"]
+    COMP_WAIT -->|Recibido| COMP_OK["📸 Comprobante recibido"]
+    COMP_WAIT -->|Timeout| COMP_FAIL["❌ No llegó comprobante"]
+
+    COMP_FAIL -->|Cambiar forma<br/>de pago| RESUMEN
+    COMP_FAIL -->|Cancelar| B
+
+    %% Ambos paths de pago convergen a confirmación de dirección
+    COMP_OK --> PAGO_CONF
+
+    %% ============================================
+    %% RESUMEN FINAL → SE ENVÍA AL ASESOR
+    %% (El cliente NO ve este resumen, es para el asesor)
+    %% ============================================
+    PAGO_CONF -->|"✅ Sí, correcta"| RESUMEN_FINAL["📋 RESUMEN COMPLETO → ASESOR<br/>─────────────────<br/>👤 Datos del cliente<br/>🧊 Detalle de granizados<br/>💰 Total a pagar<br/>💳 Método de pago<br/>📸 Comprobante de pago (si aplica)<br/>📅 Tipo de entrega<br/>🚚 Dirección + costo domicilio<br/>pendiente por definir"]
+
+    RESUMEN_FINAL --> CHECK_ES_MAYOR{"📦 ¿El pedido incluye<br/>algún tipo AL MAYOR?<br/>Con Licor ≥20 ó Sin Licor ≥20"}
+
+    %% ============================================
+    %% RUTA DETAL → Flujo por botones
+    %% El asesor interactúa con el bot vía botones,
+    %% el bot transmite todo al cliente.
+    %%
+    %% REGLA: Cada mensaje al asesor incluye los
+    %% últimos 4 dígitos del teléfono del cliente
+    %% para identificar a quién se refiere.
+    %% Los button_id incluyen el phone completo.
+    %% ============================================
+    CHECK_ES_MAYOR -->|"🛍️ Todo es DETAL"| NOTIF["📤 ENVIAR AL ASESOR<br/>─────────────────<br/>📋 Resumen pedido [...4567]<br/>Bot envía resumen + botones:<br/>✅ Confirmar [...4567]<br/>❌ No puedo [...4567]<br/>🕐 Proponer hora [...4567]"]
+    NOTIF --> NOTIF_CLI["💬 MENSAJE AL CLIENTE<br/>Tu pedido ha sido enviado.<br/>Estamos confirmando<br/>disponibilidad..."]
+    NOTIF_CLI --> WAIT_RESP["⏳ ESPERAR RESPUESTA<br/>ASESOR - 2 minutos"]
+
+    WAIT_RESP -->|"✅ Asesor presiona<br/>Confirmar"| ASK_DOMICILIO["💬 BOT → ASESOR<br/>Pedido [...4567] confirmado.<br/>¿Cuánto cobra de domicilio<br/>para [dirección]?<br/>─────────────────<br/>Responda con el valor<br/>(ej: 5000)"]
+    WAIT_RESP -->|"❌ Asesor presiona<br/>No puedo ahora"| CANNOT["🟡 ASESOR: Propone hora"]
+    WAIT_RESP -->|Programado| PROG_WAIT["🟡 Gestión manual<br/>sin urgencia"]
+    WAIT_RESP -->|Sin respuesta| TIMEOUT["🔴 TIMEOUT<br/>Asesor ocupado"]
+
+    %% ============================================
+    %% CONFIRMACIÓN DE DOMICILIO
+    %% Bot pregunta al asesor → asesor digita valor →
+    %% bot informa al cliente el total final
+    %% ============================================
+    ASK_DOMICILIO --> CONFIRM_DET["🟢 BOT → CLIENTE<br/>─────────────────<br/>¡Pedido confirmado! ✅<br/>🧊 Detalle del pedido<br/>💰 Subtotal: $XX.XXX<br/>🚚 Domicilio: $X.XXX<br/>💰 TOTAL FINAL: $XX.XXX<br/>📍 Entrega en 20-30 min<br/>─────────────────<br/>¡Gracias por su compra!"]
+    CONFIRM_DET --> ORDER_COMPLETE["✅ PEDIDO COMPLETADO<br/>─────────────────<br/>Estado transitorio: resetea<br/>la conversación a MainMenu.<br/>Si el cliente escribe de nuevo,<br/>ve el menú principal."]
+
+    %% ============================================
+    %% NEGOCIACIÓN DE HORA (Asesor ↔ Cliente)
+    %% Todo mediado por el bot con botones
+    %% ============================================
+    CANNOT --> ASK_HOUR["👨‍💼 BOT → ASESOR<br/>Pedido [...4567]<br/>¿A qué hora puede?<br/>─────────────────<br/>Asesor responde con hora"]
+    ASK_HOUR --> OFFER_HOUR["🎯 BOT → CLIENTE<br/>El asesor propone entrega<br/>a las [HORA]<br/>¿Acepta?"]
+    
+    OFFER_HOUR -->|✅ Acepta| OFFER_ASE_OK["📤 BOT → ASESOR<br/>Cliente [...4567] aceptó<br/>la hora. ¿Confirma el pedido?<br/>─────────────────<br/>✅ Confirmar [...4567]"]
+    OFFER_ASE_OK -->|"✅ Asesor<br/>confirma"| ASK_DOMICILIO
+    
+    OFFER_HOUR -->|❌ Rechaza| CLI_HORA["🕐 BOT → CLIENTE<br/>¿A qué hora le queda<br/>más cómodo?<br/>─────────────────<br/>Cliente escribe hora"]
+    
+    CLI_HORA --> ENVIAR_ASE["📤 BOT → ASESOR<br/>Cliente [...4567] propone<br/>las [HORA]. ¿Puede?<br/>─────────────────<br/>✅ Sí, confirmo [...4567]<br/>🔄 Otra hora [...4567]"]
+    ENVIAR_ASE --> ASE_DECIDE{"👨‍💼 Asesor responde"}
+    
+    ASE_DECIDE -->|"✅ Confirma<br/>hora del cliente"| ASK_DOMICILIO
+    ASE_DECIDE -->|"🔄 Propone<br/>otra hora"| ASK_HOUR
+
+    %% ============================================
+    %% RUTA AL MAYOR → Modo Relay
+    %% El asesor coordina con el cliente A TRAVÉS
+    %% del bot. El bot reenvía mensajes de texto
+    %% entre ambos como un puente.
+    %% ============================================
+    CHECK_ES_MAYOR -->|"📦 Incluye AL MAYOR"| NOTIF_MAY["📤 ENVIAR AL ASESOR<br/>─────────────────<br/>⚠️ PEDIDO AL POR MAYOR [...4567]<br/>Bot envía resumen completo<br/>con botón:<br/>✅ Tomar pedido [...4567]"]
+    
+    NOTIF_MAY --> NOTIF_MAY_CLI["💬 BOT → CLIENTE<br/>Su pedido al por mayor ha sido<br/>enviado. Un asesor lo atenderá<br/>personalmente en breve."]
+    NOTIF_MAY_CLI --> WAIT_MAY["⏳ ESPERAR RESPUESTA<br/>ASESOR - 2 minutos"]
+    
+    WAIT_MAY -->|"✅ Asesor presiona<br/>Tomar pedido"| RELAY_INIT["🔄 INICIAR MODO RELAY<br/>─────────────────<br/>BOT → CLIENTE:<br/>Un asesor está atendiendo<br/>su pedido. Puede escribir<br/>directamente y el asesor<br/>le responderá.<br/>─────────────────<br/>BOT → ASESOR:<br/>Modo relay activo.<br/>Todo lo que escriba se<br/>reenviará al cliente.<br/>Presione 🔴 Finalizar<br/>cuando termine."]
+    WAIT_MAY -->|Sin respuesta| TIMEOUT_MAY["🔴 TIMEOUT"]
+
+    RELAY_INIT --> RELAY_MODE{"🔄 MODO RELAY ACTIVO<br/>─────────────────<br/>📨 Cliente escribe →<br/>Bot reenvía al asesor<br/>📨 Asesor escribe →<br/>Bot reenvía al cliente<br/>─────────────────<br/>⏱️ Timer: 30 min<br/>de inactividad"}
+
+    RELAY_MODE -->|"📨 Mensaje<br/>de cualquiera"| RELAY_MODE
+    RELAY_MODE -->|"🔴 Asesor presiona<br/>Finalizar"| RELAY_END["📤 BOT → CLIENTE<br/>El asesor ha finalizado<br/>la atención. ¡Gracias!<br/>Si necesita algo más,<br/>escriba en cualquier momento."]
+    RELAY_MODE -->|"⏱️ 30 min<br/>sin mensajes"| RELAY_END
+
+    RELAY_END --> ORDER_COMPLETE
+
+    TIMEOUT_MAY -->|📅 Programar| PROG_FECHA
+    TIMEOUT_MAY -->|🔄 Reintentar| WAIT_MAY
+    TIMEOUT_MAY -->|🏠 Menú| B
+
+    %% ============================================
+    %% PEDIDO PROGRAMADO → Gestión manual vía bot
+    %% ============================================
+    PROG_WAIT --> PROG_WAIT_END["📤 BOT → CLIENTE<br/>Su pedido programado ha<br/>sido registrado. El asesor<br/>le confirmará en su momento."]
+    PROG_WAIT_END --> ORDER_COMPLETE
+
+    TIMEOUT -->|📅 Programar| PROG_FECHA
+    TIMEOUT -->|🔄 Reintentar| WAIT_RESP
+    TIMEOUT -->|🏠 Menú| B
+
+    %% ============================================
+    %% VER MENÚ (con imagen)
+    %% ============================================
+    F --> F1["📊 MENÚ Y PRECIOS<br/>─────────────────<br/>📸 Bot envía IMAGEN del menú<br/>con todos los sabores<br/>─────────────────<br/>🛍️ DETAL:<br/>🍹 Con Licor: $8.000<br/>  2do con licor: $4.000<br/>🧊 Sin Licor: $7.000 c/u<br/>─────────────────<br/>📦 AL MAYOR - 20+ del mismo tipo:<br/>🍹 Con Licor:<br/>  20-49u: $4.900 │ 50-99u: $4.700 │ 100+u: $4.500<br/>🧊 Sin Licor:<br/>  20-49u: $4.800 │ 50-99u: $4.500 │ 100+u: $4.200"]
+    F1 -->|Hacer pedido| CUANDO
+    F1 -->|No| B
+
+    %% ============================================
+    %% HABLAR CON ASESOR → Modo Relay
+    %% El asesor NO habla directo desde WhatsApp,
+    %% todo pasa por el bot como intermediario.
+    %% ============================================
+    H --> H1["👤 ¿Nombre del cliente?"]
+    H1 --> H2["📱 ¿Teléfono?"]
+    H2 --> H3["📊 BOT → ASESOR<br/>─────────────────<br/>👤 Cliente quiere hablar [...4567]<br/>Nombre: [nombre]<br/>Teléfono: [teléfono]<br/>─────────────────<br/>✅ Atender [...4567]<br/>❌ No disponible [...4567]"]
+    H3 --> H4["⏳ BOT → CLIENTE<br/>Contactando al asesor...<br/>Espere un momento."]
+    H4 --> H4_WAIT["⏳ Espera 2 minutos"]
+
+    H4_WAIT -->|"✅ Asesor presiona<br/>Atender"| RELAY_INIT
+    H4_WAIT -->|Timeout| H6["🔇 Asesor no disponible"]
+
+    H6 -->|Dejar mensaje| H7["💬 ¿Cuál es tu pregunta?"]
+    H7 --> H8["✅ BOT → ASESOR<br/>Mensaje registrado:<br/>[pregunta del cliente]<br/>─────────────────<br/>📱 Contacto: [teléfono]<br/>Responda cuando pueda."]
+    H8 --> H8_CLI["📤 BOT → CLIENTE<br/>Su mensaje ha sido enviado<br/>al asesor. Le responderá<br/>lo antes posible."]
+    H8_CLI --> B
+
+    H6 -->|🏠 Menú| B
+
+    %% ============================================
+    %% ORDEN COMPLETADA → Bot listo para nueva
+    %% interacción
+    %% ============================================
+    ORDER_COMPLETE --> READY["🤖 BOT EN ESPERA<br/>─────────────────<br/>Estado: activo, esperando<br/>nuevo mensaje del cliente.<br/>Si escribe → Menú Principal"]
+
+    %% ============================================
+    %% ESTILOS
+    %% ============================================
+    style A fill:#667eea,stroke:#7b9bff,color:#fff
+    style CUANDO fill:#2196f3,stroke:#42a5f5,color:#fff
+    style VERIF_HOR fill:#ff9800,stroke:#ffb74d,color:#fff
+    style FUERA_HOR fill:#f44336,stroke:#ef5350,color:#fff
+    style PROG_FECHA fill:#9c27b0,stroke:#ba68c8,color:#fff
+    style PROG_HORA fill:#9c27b0,stroke:#ba68c8,color:#fff
+    style PROG_CONF fill:#9c27b0,stroke:#ba68c8,color:#fff
+    style RECOL fill:#2196f3,stroke:#42a5f5,color:#fff
+    style TIPO_GRAN fill:#00bcd4,stroke:#26c6da,color:#fff
+    style SAB_LICOR fill:#e91e63,stroke:#ec407a,color:#fff
+    style SAB_SIN fill:#00bcd4,stroke:#26c6da,color:#fff
+    style CANT_LIC fill:#607d8b,stroke:#78909c,color:#fff
+    style CANT_SIN fill:#607d8b,stroke:#78909c,color:#fff
+    style AGREGAR fill:#4caf50,stroke:#66bb6a,color:#fff
+    style CHECK_LICOR fill:#ff9800,stroke:#ffb74d,color:#fff
+    style CHECK_SIN fill:#ff9800,stroke:#ffb74d,color:#fff
+    style PRECIO_LIC_DET fill:#4caf50,stroke:#66bb6a,color:#fff
+    style PRECIO_LIC_M20 fill:#ff9800,stroke:#ffb74d,color:#fff
+    style PRECIO_LIC_M50 fill:#ff9800,stroke:#ffb74d,color:#fff
+    style PRECIO_LIC_M100 fill:#ff9800,stroke:#ffb74d,color:#fff
+    style PRECIO_SIN_DET fill:#4caf50,stroke:#66bb6a,color:#fff
+    style PRECIO_SIN_M20 fill:#ff9800,stroke:#ffb74d,color:#fff
+    style PRECIO_SIN_M50 fill:#ff9800,stroke:#ffb74d,color:#fff
+    style PRECIO_SIN_M100 fill:#ff9800,stroke:#ffb74d,color:#fff
+    style RESUMEN fill:#9c27b0,stroke:#ba68c8,color:#fff
+    style PAGO_CONF fill:#2196f3,stroke:#42a5f5,color:#fff
+    style R3_EDIT fill:#2196f3,stroke:#42a5f5,color:#fff
+    style RESUMEN_FINAL fill:#9c27b0,stroke:#ba68c8,color:#fff
+    style COMP_WAIT fill:#ff9800,stroke:#ffb74d,color:#fff
+    style CHECK_ES_MAYOR fill:#ff9800,stroke:#ffb74d,color:#fff
+    style NOTIF fill:#2196f3,stroke:#42a5f5,color:#fff
+    style NOTIF_CLI fill:#2196f3,stroke:#42a5f5,color:#fff
+    style WAIT_RESP fill:#2196f3,stroke:#42a5f5,color:#fff
+    style ASK_DOMICILIO fill:#ff9800,stroke:#ffb74d,color:#fff
+    style CONFIRM_DET fill:#4caf50,stroke:#66bb6a,color:#fff
+    style ORDER_COMPLETE fill:#4caf50,stroke:#66bb6a,color:#fff
+    style READY fill:#667eea,stroke:#7b9bff,color:#fff
+    style CANNOT fill:#ff9800,stroke:#ffb74d,color:#fff
+    style ASK_HOUR fill:#ff9800,stroke:#ffb74d,color:#fff
+    style OFFER_HOUR fill:#2196f3,stroke:#42a5f5,color:#fff
+    style OFFER_ASE_OK fill:#ff9800,stroke:#ffb74d,color:#fff
+    style CLI_HORA fill:#2196f3,stroke:#42a5f5,color:#fff
+    style ENVIAR_ASE fill:#ff9800,stroke:#ffb74d,color:#fff
+    style ASE_DECIDE fill:#ff9800,stroke:#ffb74d,color:#fff
+    style NOTIF_MAY fill:#e91e63,stroke:#ec407a,color:#fff
+    style NOTIF_MAY_CLI fill:#e91e63,stroke:#ec407a,color:#fff
+    style WAIT_MAY fill:#e91e63,stroke:#ec407a,color:#fff
+    style RELAY_INIT fill:#e91e63,stroke:#ec407a,color:#fff
+    style RELAY_MODE fill:#e91e63,stroke:#ec407a,color:#fff
+    style RELAY_END fill:#4caf50,stroke:#66bb6a,color:#fff
+    style TIMEOUT_MAY fill:#f44336,stroke:#ef5350,color:#fff
+    style TIMEOUT fill:#f44336,stroke:#ef5350,color:#fff
+    style PROG_WAIT fill:#ff9800,stroke:#ffb74d,color:#fff
+    style PROG_WAIT_END fill:#4caf50,stroke:#66bb6a,color:#fff
+    style H3 fill:#2196f3,stroke:#42a5f5,color:#fff
+    style H4 fill:#2196f3,stroke:#42a5f5,color:#fff
+    style H4_WAIT fill:#2196f3,stroke:#42a5f5,color:#fff
+    style H6 fill:#f44336,stroke:#ef5350,color:#fff
+    style H8 fill:#4caf50,stroke:#66bb6a,color:#fff
+    style H8_CLI fill:#4caf50,stroke:#66bb6a,color:#fff
+    style F1 fill:#00bcd4,stroke:#26c6da,color:#fff
+    style G1 fill:#ff9800,stroke:#ffb74d,color:#fff
