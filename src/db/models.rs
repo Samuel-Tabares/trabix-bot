@@ -13,6 +13,8 @@ pub struct ConversationStateData {
     pub scheduled_time: Option<String>,
     pub payment_method: Option<String>,
     pub receipt_media_id: Option<String>,
+    pub pending_has_liquor: Option<bool>,
+    pub pending_flavor: Option<String>,
 }
 
 impl Default for ConversationStateData {
@@ -24,6 +26,8 @@ impl Default for ConversationStateData {
             scheduled_time: None,
             payment_method: None,
             receipt_media_id: None,
+            pending_has_liquor: None,
+            pending_flavor: None,
         }
     }
 }

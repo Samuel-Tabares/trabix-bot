@@ -10,7 +10,15 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 use crate::{
-    whatsapp::types::{IncomingMessage, InteractiveContent, WebhookPayload},
+    bot::state_machine::{extract_input, transition, BotAction, ConversationContext, ConversationState, UserInput},
+    db::{
+        models::ConversationStateData,
+        queries::{
+            create_conversation, get_conversation, reset_conversation, update_customer_data,
+            update_last_message, update_state,
+        },
+    },
+    whatsapp::types::WebhookPayload,
     AppState,
 };
 
@@ -97,7 +105,8 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
 
     let from = message.from.clone();
     let message_id = message.id.clone();
-    let (message_type, content, echo) = describe_message(message);
+    let input = extract_input(message);
+    let (message_type, content) = describe_input(&input);
 
     tracing::info!(
         phone = %from,
@@ -107,64 +116,140 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
     );
 
     state.wa_client.mark_as_read(&message_id).await?;
-    state.wa_client.send_text(&from, &echo).await?;
+
+    if from == state.config.advisor_phone {
+        tracing::info!("advisor message received but advisor flow is not active in this phase");
+        return Ok(());
+    }
+
+    let conversation = match get_conversation(&state.pool, &from).await? {
+        Some(conversation) => conversation,
+        None => create_conversation(&state.pool, &from).await?,
+    };
+
+    let mut context = ConversationContext::from_persisted(
+        conversation.phone_number.clone(),
+        conversation.customer_name.clone(),
+        conversation.customer_phone.clone(),
+        conversation.delivery_address.clone(),
+        &conversation.state_data.0,
+    );
+
+    let current_state = match ConversationState::from_storage_key(&conversation.state, &context) {
+        Ok(state) => state,
+        Err(err) => {
+            tracing::error!(phone = %from, error = %err, "failed to rehydrate state, resetting conversation");
+            reset_conversation(&state.pool, &from).await?;
+            context = ConversationContext::from_persisted(
+                from.clone(),
+                conversation.customer_name.clone(),
+                conversation.customer_phone.clone(),
+                conversation.delivery_address.clone(),
+                &ConversationStateData::default(),
+            );
+            ConversationState::MainMenu
+        }
+    };
+
+    let (new_state, actions) = transition(&current_state, &input, &mut context)?;
+
+    update_customer_data(
+        &state.pool,
+        &from,
+        context.customer_name.as_deref(),
+        context.customer_phone.as_deref(),
+        context.delivery_address.as_deref(),
+    )
+    .await?;
+
+    let execution = execute_actions(&state, &actions).await?;
+
+    if !execution.reset_requested {
+        update_state(
+            &state.pool,
+            &from,
+            new_state.as_storage_key(),
+            &context.to_state_data(),
+        )
+        .await?;
+    }
+
+    update_last_message(&state.pool, &from).await?;
 
     Ok(())
 }
 
-fn describe_message(message: &IncomingMessage) -> (&'static str, String, String) {
-    match message.kind.as_str() {
-        "text" => {
-            let body = message
-                .text
-                .as_ref()
-                .map(|text| text.body.clone())
-                .unwrap_or_default();
-            ("text", body.clone(), format!("Recibí tu mensaje: {body}"))
-        }
-        "interactive" => describe_interactive(message.interactive.as_ref()),
-        "image" => {
-            let media_id = message
-                .image
-                .as_ref()
-                .map(|image| image.id.clone())
-                .unwrap_or_default();
-            ("image", media_id, "Recibí tu imagen".to_string())
-        }
-        other => (
-            "unsupported",
-            other.to_string(),
-            "Recibí tu mensaje".to_string(),
-        ),
-    }
+struct ExecutionOutcome {
+    reset_requested: bool,
 }
 
-fn describe_interactive(content: Option<&InteractiveContent>) -> (&'static str, String, String) {
-    match content.map(|content| content.kind.as_str()) {
-        Some("button_reply") => {
-            let id = content
-                .and_then(|interactive| interactive.button_reply.as_ref())
-                .map(|reply| reply.id.clone())
-                .unwrap_or_default();
-            ("button_reply", id.clone(), format!("Recibí tu mensaje: {id}"))
+async fn execute_actions(
+    state: &AppState,
+    actions: &[BotAction],
+) -> Result<ExecutionOutcome, Box<dyn Error + Send + Sync>> {
+    let mut reset_requested = false;
+
+    for action in actions {
+        match action {
+            BotAction::SendText { to, body } => {
+                state.wa_client.send_text(to, body).await?;
+            }
+            BotAction::SendButtons { to, body, buttons } => {
+                state
+                    .wa_client
+                    .send_buttons(to, body, buttons.clone())
+                    .await?;
+            }
+            BotAction::SendList {
+                to,
+                body,
+                button_text,
+                sections,
+            } => {
+                state
+                    .wa_client
+                    .send_list(to, body, button_text, sections.clone())
+                    .await?;
+            }
+            BotAction::SendImage {
+                to,
+                media_id,
+                caption,
+            } => {
+                state
+                    .wa_client
+                    .send_image(to, media_id, caption.as_deref())
+                    .await?;
+            }
+            BotAction::ResetConversation { phone } => {
+                reset_conversation(&state.pool, phone).await?;
+                reset_requested = true;
+            }
+            BotAction::NoOp => {}
+            BotAction::StartTimer { timer_type, phone, .. } => {
+                tracing::info!(?timer_type, phone = %phone, "action not implemented yet");
+            }
+            BotAction::CancelTimer { timer_type, phone } => {
+                tracing::info!(?timer_type, phone = %phone, "action not implemented yet");
+            }
+            BotAction::SaveOrder { .. } => {
+                tracing::info!("action not implemented yet");
+            }
+            BotAction::RelayMessage { from, to, .. } => {
+                tracing::info!(from = %from, to = %to, "action not implemented yet");
+            }
         }
-        Some("list_reply") => {
-            let id = content
-                .and_then(|interactive| interactive.list_reply.as_ref())
-                .map(|reply| reply.id.clone())
-                .unwrap_or_default();
-            ("list_reply", id.clone(), format!("Recibí tu mensaje: {id}"))
-        }
-        Some(other) => (
-            "interactive",
-            other.to_string(),
-            "Recibí tu mensaje".to_string(),
-        ),
-        None => (
-            "interactive",
-            String::new(),
-            "Recibí tu mensaje".to_string(),
-        ),
+    }
+
+    Ok(ExecutionOutcome { reset_requested })
+}
+
+fn describe_input(input: &UserInput) -> (&'static str, String) {
+    match input {
+        UserInput::TextMessage(body) => ("text", body.clone()),
+        UserInput::ButtonPress(id) => ("button_reply", id.clone()),
+        UserInput::ListSelection(id) => ("list_reply", id.clone()),
+        UserInput::ImageMessage(media_id) => ("image", media_id.clone()),
     }
 }
 
@@ -187,7 +272,8 @@ fn nibble_to_hex(value: u8) -> char {
 
 #[cfg(test)]
 mod tests {
-    use super::{describe_message, verify_signature, SignatureError};
+    use super::{describe_input, verify_signature, SignatureError};
+    use crate::bot::state_machine::extract_input;
     use crate::whatsapp::types::WebhookPayload;
     use axum::http::HeaderValue;
     use hmac::{Hmac, Mac};
@@ -255,10 +341,9 @@ mod tests {
         )
         .expect("payload");
 
-        let message = payload.first_message().expect("message");
-        let (_, content, echo) = describe_message(message);
+        let input = extract_input(payload.first_message().expect("message"));
+        let (_, content) = describe_input(&input);
 
         assert_eq!(content, "Hola");
-        assert_eq!(echo, "Recibí tu mensaje: Hola");
     }
 }

@@ -30,7 +30,7 @@ impl Error for ConfigError {}
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
-        let _ = dotenvy::dotenv();
+        load_dotenv();
 
         Ok(Self {
             whatsapp_token: read_required("WHATSAPP_TOKEN")?,
@@ -43,6 +43,14 @@ impl Config {
         })
     }
 }
+
+#[cfg(not(test))]
+fn load_dotenv() {
+    let _ = dotenvy::dotenv();
+}
+
+#[cfg(test)]
+fn load_dotenv() {}
 
 fn read_required(name: &'static str) -> Result<String, ConfigError> {
     env::var(name).map_err(|_| ConfigError::MissingVar(name))
