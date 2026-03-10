@@ -14,6 +14,7 @@ Current source-of-truth areas:
 - `general_info/phase_planning/phase1validation.md`: Phase 1 validation notes.
 - `general_info/phase_planning/phase2.md`: approved Phase 2 implementation plan.
 - `general_info/phase_planning/phase2validation.md`: Phase 2 validation checklist and evidence guide.
+- `general_info/phase_planning/phase3.md`: approved Phase 3 planning baseline.
 
 Current code layout:
 
@@ -35,7 +36,7 @@ Current implementation status:
   - item loop until `ShowSummary`
   - persistence in PostgreSQL across messages and restarts
   - natural-language date/time parsing for scheduling
-- Phase 3 and beyond are not implemented yet. Prices, real payment flow, advisor workflow, timers, and relay remain pending.
+- Phase 3 is planned but not implemented yet. Prices, real payment flow, receipt timer, advisor workflow, and relay remain pending in code.
 
 ## Build, Test, and Development Commands
 Use these commands regularly:
