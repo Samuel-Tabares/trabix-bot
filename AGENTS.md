@@ -16,6 +16,8 @@ Current source-of-truth areas:
 - `general_info/phase_planning/phase2validation.md`: Phase 2 validation checklist and evidence guide.
 - `general_info/phase_planning/phase3.md`: approved Phase 3 planning baseline.
 - `general_info/phase_planning/phase3validation.md`: Phase 3 validation checklist, evidence guide, and manual test setup.
+- `general_info/phase_planning/phase4.md`: approved Phase 4 implementation plan.
+- `general_info/phase_planning/phase4validation.md`: Phase 4 validation checklist, evidence guide, manual relay/advisor scenarios, and restart checks.
 
 Current code layout:
 
@@ -40,7 +42,7 @@ Current implementation status:
   - flexible text capture for programmed date/time with minimal length validation
   - flavor selection through WhatsApp lists after choosing `Con Licor` or `Sin Licor`
   - single menu image sent only in `Ver Menú`
-- Phase 3 is implemented and partially validated as the current checkout/handoff flow:
+- Phase 3 is implemented and partially validated as the checkout foundation:
   - real price calculation in `pricing.rs`, including liquor pair promo and wholesale tiers
   - `ShowSummary` with estimated total excluding delivery cost
   - payment choice: `Contra Entrega` or `Pago Ahora`
@@ -49,13 +51,17 @@ Current implementation status:
   - address confirmation/editing before handoff
   - order draft/final persistence in `orders` and `order_items`
   - conversation persistence of payment context, receipt state, and timer rehydration data
-  - handoff closure in `pending_advisor` / `WaitAdvisorResponse`
-- Phase 4 is still pending in code:
-  - real advisor message handling
-  - advisor delivery-cost confirmation
-  - advisor hour negotiation
-  - relay mode for wholesale / advisor contact flows
-  - advisor-side timers and retry flows
+  - handoff persistence into `pending_advisor`
+- Phase 4 is implemented in code and pending full end-to-end WhatsApp validation:
+  - real advisor routing in `webhook.rs`, including per-client advisor buttons and active advisor session binding
+  - advisor detail flow: confirmation, delivery-cost capture, total final update, and closure back to `MainMenu`
+  - advisor hour negotiation for detail and scheduled orders
+  - 2-minute advisor timeout with `Programar`, `Reintentar`, and `Menú`
+  - schedule resume path that keeps items, payment, and address while reusing `SelectDate` / `SelectTime`
+  - wholesale relay mode with 30-minute inactivity timeout and advisor-side finish button
+  - `Hablar con Asesor` path with advisor attend/unavailable flow plus leave-message fallback
+  - timer restoration after restart for `wait_advisor_response`, `wait_advisor_mayor`, `wait_advisor_contact`, and `relay_mode`
+- Phase 4 validation should now be run against `general_info/phase_planning/phase4validation.md`.
 
 ## Build, Test, and Development Commands
 Use these commands regularly:
@@ -101,14 +107,17 @@ When adding Phase 3+ work, prefer tests named by behavior, for example `applies_
 Current important coverage areas:
 
 - `src/bot/pricing.rs`: detail promo, wholesale pricing, mixed-order totals.
-- `src/bot/states/checkout.rs`: payment selection, receipt handling, address confirmation, timeout branches.
-- `src/bot/timers.rs`: timer start/cancel and receipt-timeout restoration behavior.
+- `src/bot/states/checkout.rs`: payment selection, receipt handling, address confirmation, and handoff entry.
+- `src/bot/states/advisor.rs`: advisor button parsing, delivery-cost capture, hour negotiation, timeout retry/programming, and contact-advisor flow.
+- `src/bot/states/relay.rs`: wholesale relay, advisor-contact relay, finish button, and text-only forwarding rules.
+- `src/bot/timers.rs`: receipt timeout, advisor timeout, relay inactivity timeout, and timer restoration after restart.
 
 For manual WhatsApp validation:
 
 - confirm the webhook points to the active service
 - validate behavior from the tester phone, not just transport
 - check PostgreSQL state when the acceptance criteria require persistence evidence
+- use `general_info/phase_planning/phase4validation.md` as the current checklist for advisor, timeout, relay, and restart scenarios
 
 ## Commit & Pull Request Guidelines
 The current history is minimal and uses a plain descriptive subject (`setting AGENTS.MD and secuencial phase of the project`). Keep future commit subjects short, imperative, and specific. Prefer patterns like `docs: refine implementation phases` or `feat: scaffold webhook routes` over vague multi-topic messages.

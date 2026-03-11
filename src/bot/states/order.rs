@@ -19,10 +19,7 @@ const LIQUOR_FLAVORS: [(&str, &str); 7] = [
     ("liquor_blueberry_vodka", "Blueberry Vodka"),
     ("liquor_uva_vodka", "Uva Vodka"),
     ("liquor_bonbonbum_whiskey", "Bonbonbum Whiskey"),
-    (
-        "liquor_bonbonbum_fresa_champagne",
-        "Bonbonbum de fresa con Champagne",
-    ),
+    ("liquor_bonbonbum_fresa_champagne","Bonbonbum fresa champaña",),
     ("liquor_smirnoff_lulo", "Smirnoff de lulo"),
     ("liquor_manzana_verde_tequila", "Manzana verde Tequila"),
 ];
@@ -313,7 +310,7 @@ mod tests {
 
     use super::{
         handle_add_more, handle_select_flavor, handle_select_quantity, handle_select_type,
-        select_flavor_actions, validate_quantity,
+        select_flavor_actions, validate_quantity, LIQUOR_FLAVORS, NON_LIQUOR_FLAVORS,
     };
 
     fn context() -> ConversationContext {
@@ -374,6 +371,16 @@ mod tests {
             if sections.first().map(|section| section.rows.len()) == Some(7)
         ));
         assert_eq!(actions.len(), 1);
+    }
+
+    #[test]
+    fn flavor_titles_fit_whatsapp_list_limit() {
+        for (_, title) in LIQUOR_FLAVORS.iter().chain(NON_LIQUOR_FLAVORS.iter()) {
+            assert!(
+                title.chars().count() <= 24,
+                "flavor title exceeds Meta list limit: {title}"
+            );
+        }
     }
 
     #[test]
