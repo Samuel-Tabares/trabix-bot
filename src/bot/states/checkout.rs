@@ -21,6 +21,7 @@ const CANCEL_ORDER: &str = "cancel_order";
 const CHANGE_PAYMENT_METHOD: &str = "change_payment_method";
 const CONFIRM_ADDRESS: &str = "confirm_address";
 const CHANGE_ADDRESS: &str = "change_address";
+const BACK_MAIN_MENU: &str = "back_main_menu";
 
 pub fn handle_show_summary(
     input: &UserInput,
@@ -212,16 +213,52 @@ pub fn handle_wait_advisor_response(
     input: &UserInput,
     context: &mut ConversationContext,
 ) -> TransitionResult {
+    if matches!(input, UserInput::TextMessage(text) if text.trim().eq_ignore_ascii_case("menu")) {
+        return Ok((
+            ConversationState::MainMenu,
+            {
+                let mut actions = vec![BotAction::ResetConversation {
+                    phone: context.phone_number.clone(),
+                }];
+                actions.extend(menu::main_menu_actions(&context.phone_number));
+                actions
+            },
+        ));
+    }
+
+    if matches!(selection_id(input).as_deref(), Some(BACK_MAIN_MENU)) {
+        return Ok((
+            ConversationState::MainMenu,
+            {
+                let mut actions = vec![BotAction::ResetConversation {
+                    phone: context.phone_number.clone(),
+                }];
+                actions.extend(menu::main_menu_actions(&context.phone_number));
+                actions
+            },
+        ));
+    }
+
     if matches!(selection_id(input).as_deref(), Some(CANCEL_ORDER)) {
         return Ok(cancel_order_transition(context));
     }
 
     Ok((
         ConversationState::WaitAdvisorResponse,
-        vec![BotAction::SendText {
-            to: context.phone_number.clone(),
-            body: "Tu pedido ya está registrado. Un asesor te escribirá para confirmar el domicilio y el cierre final.".to_string(),
-        }],
+        vec![
+            BotAction::SendText {
+                to: context.phone_number.clone(),
+                body: "Tu pedido ya está registrado. Un asesor te escribirá para confirmar el domicilio y el cierre final.".to_string(),
+            },
+            BotAction::SendButtons {
+                to: context.phone_number.clone(),
+                body: "Si necesitas salir del flujo mientras llega el asesor, puedes volver al menú.".to_string(),
+                buttons: vec![
+                    reply_button(CANCEL_ORDER, "Cancelar"),
+                    reply_button(BACK_MAIN_MENU, "Volver al menu"),
+                ],
+            },
+        ],
     ))
 }
 
