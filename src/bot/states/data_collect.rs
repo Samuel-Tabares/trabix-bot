@@ -182,6 +182,7 @@ mod tests {
     fn context() -> ConversationContext {
         ConversationContext {
             phone_number: "573001234567".to_string(),
+            advisor_phone: "573009999999".to_string(),
             customer_name: None,
             customer_phone: None,
             delivery_address: None,
@@ -192,6 +193,14 @@ mod tests {
             payment_method: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
+            advisor_target_phone: None,
+            advisor_timer_started_at: None,
+            advisor_timer_expired: false,
+            relay_timer_started_at: None,
+            relay_kind: None,
+            advisor_proposed_hour: None,
+            client_counter_hour: None,
+            schedule_resume_target: None,
             current_order_id: None,
             editing_address: false,
             receipt_timer_expired: false,

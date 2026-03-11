@@ -17,17 +17,18 @@ use crate::{
     bot::{
         pricing::calcular_pedido,
         state_machine::{
-            extract_input, transition, BotAction, ConversationContext, ConversationState,
-            ImageAsset, TimerType, UserInput,
+            extract_input, transition, transition_advisor, BotAction, ConversationContext,
+            ConversationState, ImageAsset, TimerType, UserInput,
         },
-        timers::{cancel_timer, expire_receipt_timer, start_timer},
+        states::advisor::parse_advisor_button_id,
+        timers::{cancel_timer, expire_advisor_timer, expire_receipt_timer, expire_relay_timer, start_timer},
     },
     db::{
-        models::ConversationStateData,
+        models::{Conversation, ConversationStateData},
         queries::{
             create_conversation, create_order, get_conversation, replace_order_items,
             reset_conversation, update_customer_data, update_last_message, update_order,
-            update_order_status, update_state,
+            update_order_delivery_cost, update_order_status, update_state,
         },
     },
     whatsapp::types::WebhookPayload,
@@ -130,44 +131,27 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
     state.wa_client.mark_as_read(&message_id).await?;
 
     if from == state.config.advisor_phone {
-        tracing::info!("advisor message received but advisor flow is not active in this phase");
-        return Ok(());
+        handle_advisor_message(state, input).await?;
+    } else {
+        handle_client_message(state, from, input).await?;
     }
 
-    let conversation = match get_conversation(&state.pool, &from).await? {
-        Some(conversation) => conversation,
-        None => create_conversation(&state.pool, &from).await?,
-    };
+    Ok(())
+}
 
-    let mut context = ConversationContext::from_persisted(
-        conversation.phone_number.clone(),
-        conversation.customer_name.clone(),
-        conversation.customer_phone.clone(),
-        conversation.delivery_address.clone(),
-        &conversation.state_data.0,
-    );
-
-    let current_state = match ConversationState::from_storage_key(&conversation.state, &context) {
-        Ok(state) => state,
-        Err(err) => {
-            tracing::error!(phone = %from, error = %err, "failed to rehydrate state, resetting conversation");
-            reset_conversation(&state.pool, &from).await?;
-            context = ConversationContext::from_persisted(
-                from.clone(),
-                conversation.customer_name.clone(),
-                conversation.customer_phone.clone(),
-                conversation.delivery_address.clone(),
-                &ConversationStateData::default(),
-            );
-            ConversationState::MainMenu
-        }
-    };
+async fn handle_client_message(
+    state: AppState,
+    phone: String,
+    input: UserInput,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let conversation = load_or_create_conversation(&state, &phone).await?;
+    let (current_state, mut context) = rehydrate_client_conversation(&state, &conversation).await?;
 
     let (new_state, actions) = transition(&current_state, &input, &mut context)?;
 
     update_customer_data(
         &state.pool,
-        &from,
+        &phone,
         context.customer_name.as_deref(),
         context.customer_phone.as_deref(),
         context.delivery_address.as_deref(),
@@ -179,16 +163,138 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
     if !execution.reset_requested {
         update_state(
             &state.pool,
-            &from,
+            &phone,
             new_state.as_storage_key(),
             &context.to_state_data(),
         )
         .await?;
     }
 
-    update_last_message(&state.pool, &from).await?;
-
+    update_last_message(&state.pool, &phone).await?;
     Ok(())
+}
+
+async fn handle_advisor_message(
+    state: AppState,
+    input: UserInput,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let advisor_phone = state.config.advisor_phone.clone();
+    let advisor_conversation = load_or_create_conversation(&state, &advisor_phone).await?;
+
+    let target_phone = resolve_advisor_target_phone(&advisor_conversation.state_data.0, &input);
+    let Some(target_phone) = target_phone else {
+        state
+            .wa_client
+            .send_text(
+                &advisor_phone,
+                "Primero usa un botón de un caso pendiente para indicar a qué cliente responder.",
+            )
+            .await?;
+        update_last_message(&state.pool, &advisor_phone).await?;
+        return Ok(());
+    };
+
+    let Some(client_conversation) = get_conversation(&state.pool, &target_phone).await? else {
+        clear_advisor_session(&state, &advisor_phone).await?;
+        state
+            .wa_client
+            .send_text(
+                &advisor_phone,
+                "Ese caso ya no está disponible. Usa un botón de un caso pendiente.",
+            )
+            .await?;
+        update_last_message(&state.pool, &advisor_phone).await?;
+        return Ok(());
+    };
+
+    let (current_state, mut context) =
+        rehydrate_client_conversation(&state, &client_conversation).await?;
+    let (new_state, actions) = transition_advisor(&current_state, &input, &mut context)?;
+
+    update_customer_data(
+        &state.pool,
+        &target_phone,
+        context.customer_name.as_deref(),
+        context.customer_phone.as_deref(),
+        context.delivery_address.as_deref(),
+    )
+    .await?;
+
+    let execution = execute_actions(&state, client_conversation.id, &mut context, &actions).await?;
+
+    if !execution.reset_requested {
+        update_state(
+            &state.pool,
+            &target_phone,
+            new_state.as_storage_key(),
+            &context.to_state_data(),
+        )
+        .await?;
+    }
+
+    update_last_message(&state.pool, &advisor_phone).await?;
+    update_last_message(&state.pool, &target_phone).await?;
+    Ok(())
+}
+
+async fn load_or_create_conversation(
+    state: &AppState,
+    phone: &str,
+) -> Result<Conversation, sqlx::Error> {
+    match get_conversation(&state.pool, phone).await? {
+        Some(conversation) => Ok(conversation),
+        None => create_conversation(&state.pool, phone).await,
+    }
+}
+
+async fn rehydrate_client_conversation(
+    state: &AppState,
+    conversation: &Conversation,
+) -> Result<(ConversationState, ConversationContext), Box<dyn Error + Send + Sync>> {
+    let mut context = ConversationContext::from_persisted(
+        conversation.phone_number.clone(),
+        state.config.advisor_phone.clone(),
+        conversation.customer_name.clone(),
+        conversation.customer_phone.clone(),
+        conversation.delivery_address.clone(),
+        &conversation.state_data.0,
+    );
+
+    let current_state = match ConversationState::from_storage_key(&conversation.state, &context) {
+        Ok(state) => state,
+        Err(err) => {
+            tracing::error!(
+                phone = %conversation.phone_number,
+                error = %err,
+                "failed to rehydrate state, resetting conversation"
+            );
+            reset_conversation(&state.pool, &conversation.phone_number).await?;
+            context = ConversationContext::from_persisted(
+                conversation.phone_number.clone(),
+                state.config.advisor_phone.clone(),
+                conversation.customer_name.clone(),
+                conversation.customer_phone.clone(),
+                conversation.delivery_address.clone(),
+                &ConversationStateData::default(),
+            );
+            ConversationState::MainMenu
+        }
+    };
+
+    Ok((current_state, context))
+}
+
+fn resolve_advisor_target_phone(
+    state_data: &ConversationStateData,
+    input: &UserInput,
+) -> Option<String> {
+    match input {
+        UserInput::ButtonPress(id) | UserInput::ListSelection(id) => parse_advisor_button_id(id)
+            .map(|(_, phone)| phone)
+            .or_else(|| state_data.advisor_target_phone.clone()),
+        UserInput::TextMessage(_) => state_data.advisor_target_phone.clone(),
+        UserInput::ImageMessage(_) => state_data.advisor_target_phone.clone(),
+    }
 }
 
 struct ExecutionOutcome {
@@ -275,12 +381,17 @@ async fn execute_actions(
                                     tracing::error!(error = %err, "failed to expire receipt timer");
                                 }
                             }
-                            _ => {
-                                tracing::info!(
-                                    ?timer_type,
-                                    "timer expiration not implemented in this phase"
-                                );
+                            TimerType::AdvisorResponse => {
+                                if let Err(err) = expire_advisor_timer(app_state, phone).await {
+                                    tracing::error!(error = %err, "failed to expire advisor timer");
+                                }
                             }
+                            TimerType::RelayInactivity => {
+                                if let Err(err) = expire_relay_timer(app_state, phone).await {
+                                    tracing::error!(error = %err, "failed to expire relay timer");
+                                }
+                            }
+                            TimerType::ConversationAbandon => {}
                         }
                     },
                 )
@@ -292,19 +403,65 @@ async fn execute_actions(
             BotAction::UpsertDraftOrder { status } | BotAction::FinalizeCurrentOrder { status } => {
                 upsert_order_from_context(&state.pool, conversation_id, context, status).await?;
             }
+            BotAction::UpdateCurrentOrderDeliveryCost {
+                delivery_cost,
+                total_final,
+                status,
+            } => {
+                let order_id = context.current_order_id.ok_or_else(|| {
+                    IoError::new(ErrorKind::InvalidData, "missing current_order_id")
+                })?;
+                update_order_delivery_cost(&state.pool, order_id, *delivery_cost, *total_final)
+                    .await?;
+                update_order_status(&state.pool, order_id, status).await?;
+            }
             BotAction::CancelCurrentOrder { order_id } => {
                 update_order_status(&state.pool, *order_id, "cancelled").await?;
             }
             BotAction::SaveOrder { .. } => {
                 tracing::info!("action not implemented yet");
             }
-            BotAction::RelayMessage { from, to, .. } => {
-                tracing::info!(from = %from, to = %to, "action not implemented yet");
+            BotAction::BindAdvisorSession {
+                advisor_phone,
+                target_phone,
+            } => {
+                bind_advisor_session(state, advisor_phone, Some(target_phone.clone())).await?;
+            }
+            BotAction::ClearAdvisorSession { advisor_phone } => {
+                bind_advisor_session(state, advisor_phone, None).await?;
+            }
+            BotAction::RelayMessage { to, body, .. } => {
+                state.wa_client.send_text(to, body).await?;
             }
         }
     }
 
     Ok(ExecutionOutcome { reset_requested })
+}
+
+async fn bind_advisor_session(
+    state: &AppState,
+    advisor_phone: &str,
+    target_phone: Option<String>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let conversation = load_or_create_conversation(state, advisor_phone).await?;
+    let mut state_data = conversation.state_data.0;
+    state_data.advisor_target_phone = target_phone;
+    update_state(&state.pool, advisor_phone, &conversation.state, &state_data).await?;
+    Ok(())
+}
+
+async fn clear_advisor_session(
+    state: &AppState,
+    advisor_phone: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if let Some(conversation) = get_conversation(&state.pool, advisor_phone).await? {
+        let mut state_data = conversation.state_data.0;
+        state_data.advisor_target_phone = None;
+        update_state(&state.pool, advisor_phone, &conversation.state, &state_data).await?;
+    }
+
+    Ok(())
 }
 
 async fn upsert_order_from_context(
@@ -315,8 +472,8 @@ async fn upsert_order_from_context(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let delivery_type = required_field(&context.delivery_type, "delivery_type")?;
     let payment_method = required_field(&context.payment_method, "payment_method")?;
-    let scheduled_date = parse_optional_date(context.scheduled_date.as_deref())?;
-    let scheduled_time = parse_optional_time(context.scheduled_time.as_deref())?;
+    let scheduled_date = parse_optional_date(context.scheduled_date.as_deref());
+    let scheduled_time = parse_optional_time(context.scheduled_time.as_deref());
     let pedido = calcular_pedido(&context.items);
     let total_estimated = i32::try_from(pedido.total_estimado)
         .map_err(|_| IoError::new(ErrorKind::InvalidData, "total_estimated out of range"))?;
@@ -374,7 +531,6 @@ async fn upsert_order_from_context(
         .collect::<Result<Vec<_>, IoError>>()?;
 
     replace_order_items(pool, order.id, &persisted_items).await?;
-
     Ok(())
 }
 
@@ -391,34 +547,32 @@ fn required_field<'a>(
     })
 }
 
-fn parse_optional_date(
-    value: Option<&str>,
-) -> Result<Option<chrono::NaiveDate>, Box<dyn Error + Send + Sync>> {
-    value
-        .map(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d"))
-        .transpose()
-        .map_err(|err| {
-            IoError::new(
-                ErrorKind::InvalidData,
-                format!("invalid scheduled_date: {err}"),
-            )
-            .into()
-        })
+fn parse_optional_date(value: Option<&str>) -> Option<chrono::NaiveDate> {
+    let raw = value?;
+
+    [
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y/%m/%d",
+    ]
+    .iter()
+    .find_map(|format| chrono::NaiveDate::parse_from_str(raw, format).ok())
 }
 
-fn parse_optional_time(
-    value: Option<&str>,
-) -> Result<Option<chrono::NaiveTime>, Box<dyn Error + Send + Sync>> {
-    value
-        .map(|time| chrono::NaiveTime::parse_from_str(time, "%H:%M"))
-        .transpose()
-        .map_err(|err| {
-            IoError::new(
-                ErrorKind::InvalidData,
-                format!("invalid scheduled_time: {err}"),
-            )
-            .into()
-        })
+fn parse_optional_time(value: Option<&str>) -> Option<chrono::NaiveTime> {
+    let raw = value?;
+
+    [
+        "%H:%M",
+        "%H:%M:%S",
+        "%I:%M%P",
+        "%I:%M %P",
+        "%I%P",
+        "%I %P",
+    ]
+    .iter()
+    .find_map(|format| chrono::NaiveTime::parse_from_str(raw, format).ok())
 }
 
 fn describe_input(input: &UserInput) -> (&'static str, String) {
@@ -450,8 +604,13 @@ fn nibble_to_hex(value: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::{describe_input, verify_signature, SignatureError};
-    use crate::bot::state_machine::extract_input;
-    use crate::whatsapp::types::WebhookPayload;
+    use crate::{
+        bot::{
+            state_machine::extract_input,
+            states::advisor::{parse_advisor_button_id, AdvisorButtonAction},
+        },
+        whatsapp::types::WebhookPayload,
+    };
     use axum::http::HeaderValue;
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -522,5 +681,13 @@ mod tests {
         let (_, content) = describe_input(&input);
 
         assert_eq!(content, "Hola");
+    }
+
+    #[test]
+    fn parses_advisor_button_target() {
+        let parsed =
+            parse_advisor_button_id("advisor_confirm_573001234567").expect("advisor button");
+
+        assert_eq!(parsed, (AdvisorButtonAction::Confirm, "573001234567".to_string()));
     }
 }

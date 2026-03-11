@@ -21,8 +21,6 @@ const CANCEL_ORDER: &str = "cancel_order";
 const CHANGE_PAYMENT_METHOD: &str = "change_payment_method";
 const CONFIRM_ADDRESS: &str = "confirm_address";
 const CHANGE_ADDRESS: &str = "change_address";
-const BACK_MAIN_MENU: &str = "back_main_menu";
-
 pub fn handle_show_summary(
     input: &UserInput,
     context: &mut ConversationContext,
@@ -184,18 +182,11 @@ pub fn handle_confirm_address(
     }
 
     match selection_id(input).as_deref() {
-        Some(CONFIRM_ADDRESS) => Ok((
-            ConversationState::WaitAdvisorResponse,
-            vec![
-                BotAction::FinalizeCurrentOrder {
-                    status: "pending_advisor".to_string(),
-                },
-                BotAction::SendText {
-                    to: context.phone_number.clone(),
-                    body: "Tu pedido quedó registrado y será confirmado por un asesor.".to_string(),
-                },
-            ],
-        )),
+        Some(CONFIRM_ADDRESS) => {
+            let (state, actions) =
+                super::advisor::handoff_order_after_address_confirmation(context);
+            Ok((state, actions))
+        }
         Some(CHANGE_ADDRESS) => {
             context.editing_address = true;
             Ok((
@@ -218,47 +209,11 @@ pub fn handle_wait_advisor_response(
     input: &UserInput,
     context: &mut ConversationContext,
 ) -> TransitionResult {
-    if matches!(input, UserInput::TextMessage(text) if text.trim().eq_ignore_ascii_case("menu")) {
-        return Ok((ConversationState::MainMenu, {
-            let mut actions = vec![BotAction::ResetConversation {
-                phone: context.phone_number.clone(),
-            }];
-            actions.extend(menu::main_menu_actions(&context.phone_number));
-            actions
-        }));
-    }
-
-    if matches!(selection_id(input).as_deref(), Some(BACK_MAIN_MENU)) {
-        return Ok((ConversationState::MainMenu, {
-            let mut actions = vec![BotAction::ResetConversation {
-                phone: context.phone_number.clone(),
-            }];
-            actions.extend(menu::main_menu_actions(&context.phone_number));
-            actions
-        }));
-    }
-
-    if matches!(selection_id(input).as_deref(), Some(CANCEL_ORDER)) {
-        return Ok(cancel_order_transition(context));
-    }
-
-    Ok((
-        ConversationState::WaitAdvisorResponse,
-        vec![
-            BotAction::SendText {
-                to: context.phone_number.clone(),
-                body: "Tu pedido ya está registrado. Un asesor te escribirá para confirmar el domicilio y el cierre final.".to_string(),
-            },
-            BotAction::SendButtons {
-                to: context.phone_number.clone(),
-                body: "Si necesitas salir del flujo mientras llega el asesor, puedes volver al menú.".to_string(),
-                buttons: vec![
-                    reply_button(CANCEL_ORDER, "Cancelar"),
-                    reply_button(BACK_MAIN_MENU, "Volver al menu"),
-                ],
-            },
-        ],
-    ))
+    super::advisor::handle_client_waiting_state(
+        &ConversationState::WaitAdvisorResponse,
+        input,
+        context,
+    )
 }
 
 pub fn handle_order_complete(context: &mut ConversationContext) -> TransitionResult {
@@ -490,6 +445,7 @@ mod tests {
     fn context() -> ConversationContext {
         ConversationContext {
             phone_number: "573001234567".to_string(),
+            advisor_phone: "573009999999".to_string(),
             customer_name: Some("Ana".to_string()),
             customer_phone: Some("3001234567".to_string()),
             delivery_address: Some("Cra 15 #20-30 Armenia".to_string()),
@@ -511,6 +467,14 @@ mod tests {
             payment_method: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
+            advisor_target_phone: None,
+            advisor_timer_started_at: None,
+            advisor_timer_expired: false,
+            relay_timer_started_at: None,
+            relay_kind: None,
+            advisor_proposed_hour: None,
+            client_counter_hour: None,
+            schedule_resume_target: None,
             current_order_id: Some(7),
             editing_address: false,
             receipt_timer_expired: false,

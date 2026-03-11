@@ -128,14 +128,14 @@ impl ConversationState {
             "negotiate_hour" => Ok(Self::NegotiateHour),
             "offer_hour_to_client" => Ok(Self::OfferHourToClient {
                 proposed_hour: context
-                    .scheduled_time
+                    .advisor_proposed_hour
                     .clone()
                     .unwrap_or_else(|| "pendiente".to_string()),
             }),
             "wait_client_hour" => Ok(Self::WaitClientHour),
             "wait_advisor_hour_decision" => Ok(Self::WaitAdvisorHourDecision {
                 client_hour: context
-                    .scheduled_time
+                    .client_counter_hour
                     .clone()
                     .unwrap_or_else(|| "pendiente".to_string()),
             }),
@@ -279,11 +279,23 @@ pub enum BotAction {
     FinalizeCurrentOrder {
         status: String,
     },
+    UpdateCurrentOrderDeliveryCost {
+        delivery_cost: i32,
+        total_final: i32,
+        status: String,
+    },
     CancelCurrentOrder {
         order_id: i32,
     },
     SaveOrder {
         order: crate::db::models::Order,
+    },
+    BindAdvisorSession {
+        advisor_phone: String,
+        target_phone: String,
+    },
+    ClearAdvisorSession {
+        advisor_phone: String,
     },
     ResetConversation {
         phone: String,
@@ -299,6 +311,7 @@ pub enum BotAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConversationContext {
     pub phone_number: String,
+    pub advisor_phone: String,
     pub customer_name: Option<String>,
     pub customer_phone: Option<String>,
     pub delivery_address: Option<String>,
@@ -309,6 +322,14 @@ pub struct ConversationContext {
     pub payment_method: Option<String>,
     pub receipt_media_id: Option<String>,
     pub receipt_timer_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub advisor_target_phone: Option<String>,
+    pub advisor_timer_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub advisor_timer_expired: bool,
+    pub relay_timer_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub relay_kind: Option<String>,
+    pub advisor_proposed_hour: Option<String>,
+    pub client_counter_hour: Option<String>,
+    pub schedule_resume_target: Option<String>,
     pub current_order_id: Option<i32>,
     pub editing_address: bool,
     pub receipt_timer_expired: bool,
@@ -319,6 +340,7 @@ pub struct ConversationContext {
 impl ConversationContext {
     pub fn from_persisted(
         phone_number: String,
+        advisor_phone: String,
         customer_name: Option<String>,
         customer_phone: Option<String>,
         delivery_address: Option<String>,
@@ -326,6 +348,7 @@ impl ConversationContext {
     ) -> Self {
         Self {
             phone_number,
+            advisor_phone,
             customer_name,
             customer_phone,
             delivery_address,
@@ -336,6 +359,14 @@ impl ConversationContext {
             payment_method: state_data.payment_method.clone(),
             receipt_media_id: state_data.receipt_media_id.clone(),
             receipt_timer_started_at: state_data.receipt_timer_started_at,
+            advisor_target_phone: state_data.advisor_target_phone.clone(),
+            advisor_timer_started_at: state_data.advisor_timer_started_at,
+            advisor_timer_expired: state_data.advisor_timer_expired,
+            relay_timer_started_at: state_data.relay_timer_started_at,
+            relay_kind: state_data.relay_kind.clone(),
+            advisor_proposed_hour: state_data.advisor_proposed_hour.clone(),
+            client_counter_hour: state_data.client_counter_hour.clone(),
+            schedule_resume_target: state_data.schedule_resume_target.clone(),
             current_order_id: state_data.current_order_id,
             editing_address: state_data.editing_address,
             receipt_timer_expired: state_data.receipt_timer_expired,
@@ -353,6 +384,14 @@ impl ConversationContext {
             payment_method: self.payment_method.clone(),
             receipt_media_id: self.receipt_media_id.clone(),
             receipt_timer_started_at: self.receipt_timer_started_at,
+            advisor_target_phone: self.advisor_target_phone.clone(),
+            advisor_timer_started_at: self.advisor_timer_started_at,
+            advisor_timer_expired: self.advisor_timer_expired,
+            relay_timer_started_at: self.relay_timer_started_at,
+            relay_kind: self.relay_kind.clone(),
+            advisor_proposed_hour: self.advisor_proposed_hour.clone(),
+            client_counter_hour: self.client_counter_hour.clone(),
+            schedule_resume_target: self.schedule_resume_target.clone(),
             current_order_id: self.current_order_id,
             editing_address: self.editing_address,
             receipt_timer_expired: self.receipt_timer_expired,
@@ -428,15 +467,45 @@ pub fn transition(
             advisor::handle_wait_advisor_contact(input, context)
         }
         ConversationState::LeaveMessage => advisor::handle_leave_message(input, context),
-        ConversationState::AskDeliveryCost
-        | ConversationState::NegotiateHour
-        | ConversationState::OfferHourToClient { .. }
+        ConversationState::OfferHourToClient { .. }
         | ConversationState::WaitClientHour
+        | ConversationState::AskDeliveryCost
+        | ConversationState::NegotiateHour
         | ConversationState::WaitAdvisorHourDecision { .. }
         | ConversationState::WaitAdvisorConfirmHour
-        | ConversationState::WaitAdvisorMayor => advisor::handle_unimplemented(state, context),
+        | ConversationState::WaitAdvisorMayor => {
+            advisor::handle_client_waiting_state(state, input, context)
+        }
         ConversationState::RelayMode => relay::handle_relay_mode(input, context),
         ConversationState::OrderComplete => checkout::handle_order_complete(context),
+    }
+}
+
+pub fn transition_advisor(
+    state: &ConversationState,
+    input: &UserInput,
+    context: &mut ConversationContext,
+) -> TransitionResult {
+    match state {
+        ConversationState::WaitAdvisorResponse => {
+            advisor::handle_advisor_wait_advisor_response(input, context)
+        }
+        ConversationState::AskDeliveryCost => advisor::handle_advisor_ask_delivery_cost(input, context),
+        ConversationState::NegotiateHour => advisor::handle_advisor_negotiate_hour(input, context),
+        ConversationState::WaitAdvisorHourDecision { .. } => {
+            advisor::handle_advisor_hour_decision(input, context)
+        }
+        ConversationState::WaitAdvisorConfirmHour => {
+            advisor::handle_advisor_confirm_hour(input, context)
+        }
+        ConversationState::WaitAdvisorMayor => {
+            advisor::handle_advisor_wait_advisor_mayor(input, context)
+        }
+        ConversationState::WaitAdvisorContact => {
+            advisor::handle_advisor_wait_advisor_contact(input, context)
+        }
+        ConversationState::RelayMode => relay::handle_relay_mode_advisor(input, context),
+        _ => advisor::handle_advisor_unexpected_state(state, context),
     }
 }
 
@@ -490,6 +559,7 @@ mod tests {
     fn sample_context() -> ConversationContext {
         ConversationContext {
             phone_number: "573001234567".to_string(),
+            advisor_phone: "573009999999".to_string(),
             customer_name: Some("Ana".to_string()),
             customer_phone: Some("3001234567".to_string()),
             delivery_address: Some("Cra 15 #20-30 Armenia".to_string()),
@@ -504,6 +574,14 @@ mod tests {
             payment_method: None,
             receipt_media_id: None,
             receipt_timer_started_at: Some(chrono::Utc::now()),
+            advisor_target_phone: Some("573001234567".to_string()),
+            advisor_timer_started_at: Some(chrono::Utc::now()),
+            advisor_timer_expired: false,
+            relay_timer_started_at: Some(chrono::Utc::now()),
+            relay_kind: Some("wholesale_order".to_string()),
+            advisor_proposed_hour: Some("5:00 pm".to_string()),
+            client_counter_hour: Some("6:00 pm".to_string()),
+            schedule_resume_target: Some("wait_advisor_response".to_string()),
             current_order_id: Some(42),
             editing_address: true,
             receipt_timer_expired: false,
@@ -549,6 +627,7 @@ mod tests {
         let state_data = context.to_state_data();
         let loaded = ConversationContext::from_persisted(
             context.phone_number.clone(),
+            context.advisor_phone.clone(),
             context.customer_name.clone(),
             context.customer_phone.clone(),
             context.delivery_address.clone(),
@@ -563,6 +642,13 @@ mod tests {
             context.receipt_timer_started_at
         );
         assert!(loaded.editing_address);
+        assert_eq!(loaded.advisor_target_phone.as_deref(), Some("573001234567"));
+        assert_eq!(loaded.advisor_proposed_hour.as_deref(), Some("5:00 pm"));
+        assert_eq!(loaded.client_counter_hour.as_deref(), Some("6:00 pm"));
+        assert_eq!(
+            loaded.schedule_resume_target.as_deref(),
+            Some("wait_advisor_response")
+        );
     }
 
     #[test]
@@ -682,6 +768,7 @@ mod tests {
     fn default_state_data_still_loads_context() {
         let context = ConversationContext::from_persisted(
             "573001234567".to_string(),
+            "573009999999".to_string(),
             None,
             None,
             None,

@@ -7,7 +7,9 @@ use crate::{
     bot::state_machine::{ConversationContext, TimerType},
     db::{
         models::ConversationStateData,
-        queries::{get_conversation, list_active_timer_conversations, update_state},
+        queries::{
+            get_conversation, list_active_timer_conversations, reset_conversation, update_state,
+        },
     },
     whatsapp::types::{Button, ButtonReplyPayload},
     AppState,
@@ -17,6 +19,8 @@ pub type TimerKey = (String, TimerType);
 pub type TimerMap = Arc<Mutex<HashMap<TimerKey, CancellationToken>>>;
 
 pub const RECEIPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+pub const RELAY_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 pub fn new_timer_map() -> TimerMap {
     Arc::new(Mutex::new(HashMap::new()))
@@ -60,50 +64,109 @@ pub async fn cancel_timer(timers: TimerMap, key: &TimerKey) {
 }
 
 pub async fn restore_pending_timers(state: AppState) -> Result<(), sqlx::Error> {
-    let conversations = list_active_timer_conversations(&state.pool, &["wait_receipt"]).await?;
+    let conversations = list_active_timer_conversations(
+        &state.pool,
+        &[
+            "wait_receipt",
+            "wait_advisor_response",
+            "wait_advisor_mayor",
+            "wait_advisor_contact",
+            "relay_mode",
+        ],
+    )
+    .await?;
 
     for conversation in conversations {
         let state_data = &conversation.state_data.0;
-        if state_data.receipt_timer_expired {
-            continue;
-        }
-
-        let elapsed = receipt_timer_elapsed_at(
-            state_data
-                .receipt_timer_started_at
-                .unwrap_or(conversation.last_message_at),
-            chrono::Utc::now(),
-        );
-
-        if elapsed >= RECEIPT_TIMEOUT {
-            if let Err(err) =
-                expire_receipt_timer(state.clone(), conversation.phone_number.clone()).await
-            {
-                tracing::error!(phone = %conversation.phone_number, error = %err, "failed to expire restored receipt timer");
+        match conversation.state.as_str() {
+            "wait_receipt" if !state_data.receipt_timer_expired => {
+                restore_timer(
+                    state.clone(),
+                    conversation.phone_number.clone(),
+                    TimerType::ReceiptUpload,
+                    RECEIPT_TIMEOUT,
+                    state_data
+                        .receipt_timer_started_at
+                        .unwrap_or(conversation.last_message_at),
+                )
+                .await;
             }
-            continue;
+            "wait_advisor_response" | "wait_advisor_mayor" | "wait_advisor_contact"
+                if !state_data.advisor_timer_expired =>
+            {
+                restore_timer(
+                    state.clone(),
+                    conversation.phone_number.clone(),
+                    TimerType::AdvisorResponse,
+                    ADVISOR_RESPONSE_TIMEOUT,
+                    state_data
+                        .advisor_timer_started_at
+                        .unwrap_or(conversation.last_message_at),
+                )
+                .await;
+            }
+            "relay_mode" => {
+                restore_timer(
+                    state.clone(),
+                    conversation.phone_number.clone(),
+                    TimerType::RelayInactivity,
+                    RELAY_INACTIVITY_TIMEOUT,
+                    state_data
+                        .relay_timer_started_at
+                        .unwrap_or(conversation.last_message_at),
+                )
+                .await;
+            }
+            _ => {}
         }
-
-        let remaining = RECEIPT_TIMEOUT - elapsed;
-        let phone = conversation.phone_number.clone();
-        let cloned = state.clone();
-        start_timer(
-            state.timers.clone(),
-            (phone.clone(), TimerType::ReceiptUpload),
-            remaining,
-            move || async move {
-                if let Err(err) = expire_receipt_timer(cloned, phone).await {
-                    tracing::error!(error = %err, "failed to expire restored receipt timer");
-                }
-            },
-        )
-        .await;
     }
 
     Ok(())
 }
 
-fn receipt_timer_elapsed_at(
+async fn restore_timer(
+    state: AppState,
+    phone_number: String,
+    timer_type: TimerType,
+    timeout: Duration,
+    started_at: chrono::DateTime<chrono::Utc>,
+) {
+    let elapsed = elapsed_since(started_at, chrono::Utc::now());
+    if elapsed >= timeout {
+        expire_timer_now(state, phone_number, timer_type).await;
+        return;
+    }
+
+    let remaining = timeout - elapsed;
+    let app_state = state.clone();
+    let phone = phone_number.clone();
+    let kind = timer_type.clone();
+
+    start_timer(
+        state.timers.clone(),
+        (phone_number, timer_type),
+        remaining,
+        move || async move {
+            expire_timer_now(app_state, phone, kind).await;
+        },
+    )
+    .await;
+}
+
+async fn expire_timer_now(state: AppState, phone_number: String, timer_type: TimerType) {
+    let result = match timer_type {
+        TimerType::ReceiptUpload => expire_receipt_timer(state, phone_number).await,
+        TimerType::AdvisorResponse => expire_advisor_timer(state, phone_number).await,
+        TimerType::RelayInactivity => expire_relay_timer(state, phone_number).await,
+        TimerType::ConversationAbandon => Ok(()),
+    };
+
+    if let Err(err) = result {
+        tracing::error!(error = %err, "failed to expire timer");
+    }
+}
+
+fn elapsed_since(
     started_at: chrono::DateTime<chrono::Utc>,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Duration {
@@ -150,8 +213,99 @@ pub async fn expire_receipt_timer(
     Ok(())
 }
 
+pub async fn expire_advisor_timer(
+    state: AppState,
+    phone_number: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(conversation) = get_conversation(&state.pool, &phone_number).await? else {
+        return Ok(());
+    };
+
+    if !matches!(
+        conversation.state.as_str(),
+        "wait_advisor_response" | "wait_advisor_mayor" | "wait_advisor_contact"
+    ) {
+        return Ok(());
+    }
+
+    let mut state_data = conversation.state_data.0;
+    if state_data.advisor_timer_expired {
+        return Ok(());
+    }
+
+    state_data.advisor_timer_expired = true;
+    state_data.advisor_timer_started_at = None;
+    update_state(&state.pool, &phone_number, &conversation.state, &state_data).await?;
+    clear_advisor_session(&state).await?;
+
+    match conversation.state.as_str() {
+        "wait_advisor_contact" => {
+            state
+                .wa_client
+                .send_buttons(
+                    &phone_number,
+                    "El asesor no está disponible en este momento. Puedes dejar un mensaje o volver al menú.",
+                    contact_timeout_buttons(),
+                )
+                .await?;
+        }
+        _ => {
+            state
+                .wa_client
+                .send_text(
+                    &phone_number,
+                    "El asesor no respondió a tiempo. Puedes programar, reintentar o volver al menú.",
+                )
+                .await?;
+            state
+                .wa_client
+                .send_buttons(
+                    &phone_number,
+                    "Selecciona cómo quieres continuar.",
+                    advisor_timeout_buttons(),
+                )
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn expire_relay_timer(
+    state: AppState,
+    phone_number: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(conversation) = get_conversation(&state.pool, &phone_number).await? else {
+        return Ok(());
+    };
+
+    if conversation.state != "relay_mode" {
+        return Ok(());
+    }
+
+    reset_conversation(&state.pool, &phone_number).await?;
+    clear_advisor_session(&state).await?;
+    state
+        .wa_client
+        .send_text(
+            &phone_number,
+            "La conversación con el asesor se cerró por inactividad.",
+        )
+        .await?;
+    state
+        .wa_client
+        .send_text(
+            &state.config.advisor_phone,
+            &format!("Relay {} cerrado por inactividad.", phone_marker(&phone_number)),
+        )
+        .await?;
+
+    Ok(())
+}
+
 pub fn rehydrate_context_for_timer(
     phone_number: String,
+    advisor_phone: String,
     customer_name: Option<String>,
     customer_phone: Option<String>,
     delivery_address: Option<String>,
@@ -159,6 +313,7 @@ pub fn rehydrate_context_for_timer(
 ) -> ConversationContext {
     ConversationContext::from_persisted(
         phone_number,
+        advisor_phone,
         customer_name,
         customer_phone,
         delivery_address,
@@ -166,10 +321,45 @@ pub fn rehydrate_context_for_timer(
     )
 }
 
+async fn clear_advisor_session(
+    state: &AppState,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(advisor_conversation) =
+        get_conversation(&state.pool, &state.config.advisor_phone).await?
+    {
+        let mut state_data = advisor_conversation.state_data.0;
+        state_data.advisor_target_phone = None;
+        update_state(
+            &state.pool,
+            &state.config.advisor_phone,
+            &advisor_conversation.state,
+            &state_data,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
 fn receipt_timeout_buttons() -> Vec<Button> {
     vec![
         reply_button("change_payment_method", "Cambiar pago"),
         reply_button("cancel_order", "Cancelar"),
+    ]
+}
+
+fn advisor_timeout_buttons() -> Vec<Button> {
+    vec![
+        reply_button("advisor_timeout_schedule", "Programar"),
+        reply_button("advisor_timeout_retry", "Reintentar"),
+        reply_button("advisor_timeout_menu", "Menú"),
+    ]
+}
+
+fn contact_timeout_buttons() -> Vec<Button> {
+    vec![
+        reply_button("leave_message", "Dejar mensaje"),
+        reply_button("back_main_menu", "Menú"),
     ]
 }
 
@@ -183,6 +373,15 @@ fn reply_button(id: &str, title: &str) -> Button {
     }
 }
 
+fn phone_marker(phone: &str) -> String {
+    let suffix = if phone.len() >= 4 {
+        &phone[phone.len() - 4..]
+    } else {
+        phone
+    };
+    format!("[...{suffix}]")
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{Duration as ChronoDuration, Utc};
@@ -192,7 +391,7 @@ mod tests {
     };
     use std::time::Duration;
 
-    use super::{cancel_timer, new_timer_map, receipt_timer_elapsed_at, start_timer};
+    use super::{cancel_timer, elapsed_since, new_timer_map, start_timer};
     use crate::bot::state_machine::TimerType;
 
     #[tokio::test]
@@ -240,12 +439,12 @@ mod tests {
     }
 
     #[test]
-    fn receipt_timeout_uses_original_start_time() {
+    fn elapsed_uses_original_start_time() {
         let started_at = Utc::now() - ChronoDuration::minutes(8);
         let later_message_at = Utc::now() - ChronoDuration::minutes(1);
 
-        let elapsed_from_start = receipt_timer_elapsed_at(started_at, Utc::now());
-        let elapsed_from_later_message = receipt_timer_elapsed_at(later_message_at, Utc::now());
+        let elapsed_from_start = elapsed_since(started_at, Utc::now());
+        let elapsed_from_later_message = elapsed_since(later_message_at, Utc::now());
 
         assert!(elapsed_from_start > elapsed_from_later_message);
         assert!(elapsed_from_start >= Duration::from_secs(8 * 60));

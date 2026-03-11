@@ -8,6 +8,7 @@ use granizado_bot::{
 fn base_context() -> ConversationContext {
     ConversationContext::from_persisted(
         "573001234567".to_string(),
+        "573009999999".to_string(),
         None,
         None,
         None,
@@ -25,6 +26,7 @@ fn advance(
     let stored_data = context.to_state_data();
     let rehydrated_context = ConversationContext::from_persisted(
         context.phone_number.clone(),
+        context.advisor_phone.clone(),
         context.customer_name.clone(),
         context.customer_phone.clone(),
         context.delivery_address.clone(),
