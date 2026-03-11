@@ -9,6 +9,7 @@ pub struct Config {
     pub database_url: String,
     pub advisor_phone: String,
     pub transfer_payment_text: String,
+    pub menu_image_media_id: String,
     pub port: u16,
 }
 
@@ -41,6 +42,7 @@ impl Config {
             database_url: read_required("DATABASE_URL")?,
             advisor_phone: read_required("ADVISOR_PHONE")?,
             transfer_payment_text: read_required("TRANSFER_PAYMENT_TEXT")?,
+            menu_image_media_id: read_required("MENU_IMAGE_MEDIA_ID")?,
             port: read_port()?,
         })
     }
@@ -86,6 +88,7 @@ mod tests {
             "DATABASE_URL",
             "ADVISOR_PHONE",
             "TRANSFER_PAYMENT_TEXT",
+            "MENU_IMAGE_MEDIA_ID",
             "PORT",
         ] {
             std::env::remove_var(key);
@@ -104,6 +107,7 @@ mod tests {
         std::env::set_var("DATABASE_URL", "postgres://db");
         std::env::set_var("ADVISOR_PHONE", "573001234567");
         std::env::set_var("TRANSFER_PAYMENT_TEXT", "Nequi 3001234567");
+        std::env::set_var("MENU_IMAGE_MEDIA_ID", "menu-media");
 
         let config = Config::from_env().expect("config should load");
 
@@ -111,6 +115,7 @@ mod tests {
         assert_eq!(config.whatsapp_token, "token");
         assert_eq!(config.whatsapp_phone_id, "phone-id");
         assert_eq!(config.transfer_payment_text, "Nequi 3001234567");
+        assert_eq!(config.menu_image_media_id, "menu-media");
     }
 
     #[test]
@@ -135,6 +140,7 @@ mod tests {
         std::env::set_var("DATABASE_URL", "postgres://db");
         std::env::set_var("ADVISOR_PHONE", "573001234567");
         std::env::set_var("TRANSFER_PAYMENT_TEXT", "Nequi 3001234567");
+        std::env::set_var("MENU_IMAGE_MEDIA_ID", "menu-media");
         std::env::set_var("PORT", "not-a-port");
 
         let err = Config::from_env().expect_err("config should fail");

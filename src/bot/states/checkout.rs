@@ -31,6 +31,7 @@ pub fn handle_show_summary(
         Some(CASH_ON_DELIVERY) => {
             context.payment_method = Some(CASH_ON_DELIVERY.to_string());
             context.receipt_media_id = None;
+            context.receipt_timer_started_at = None;
             context.receipt_timer_expired = false;
             context.editing_address = false;
 
@@ -44,6 +45,7 @@ pub fn handle_show_summary(
         Some(PAY_NOW) => {
             context.payment_method = Some("transfer".to_string());
             context.receipt_media_id = None;
+            context.receipt_timer_started_at = Some(chrono::Utc::now());
             context.receipt_timer_expired = false;
             context.editing_address = false;
 
@@ -59,6 +61,7 @@ pub fn handle_show_summary(
             context.items.clear();
             context.payment_method = None;
             context.receipt_media_id = None;
+            context.receipt_timer_started_at = None;
             context.current_order_id = None;
             context.editing_address = false;
             context.receipt_timer_expired = false;
@@ -93,6 +96,7 @@ pub fn handle_wait_receipt(
             Some(CHANGE_PAYMENT_METHOD) => {
                 context.payment_method = None;
                 context.receipt_media_id = None;
+                context.receipt_timer_started_at = None;
                 context.receipt_timer_expired = false;
 
                 Ok((
@@ -111,6 +115,7 @@ pub fn handle_wait_receipt(
     match input {
         UserInput::ImageMessage(media_id) => {
             context.receipt_media_id = Some(media_id.clone());
+            context.receipt_timer_started_at = None;
             context.receipt_timer_expired = false;
             context.editing_address = false;
 
@@ -214,29 +219,23 @@ pub fn handle_wait_advisor_response(
     context: &mut ConversationContext,
 ) -> TransitionResult {
     if matches!(input, UserInput::TextMessage(text) if text.trim().eq_ignore_ascii_case("menu")) {
-        return Ok((
-            ConversationState::MainMenu,
-            {
-                let mut actions = vec![BotAction::ResetConversation {
-                    phone: context.phone_number.clone(),
-                }];
-                actions.extend(menu::main_menu_actions(&context.phone_number));
-                actions
-            },
-        ));
+        return Ok((ConversationState::MainMenu, {
+            let mut actions = vec![BotAction::ResetConversation {
+                phone: context.phone_number.clone(),
+            }];
+            actions.extend(menu::main_menu_actions(&context.phone_number));
+            actions
+        }));
     }
 
     if matches!(selection_id(input).as_deref(), Some(BACK_MAIN_MENU)) {
-        return Ok((
-            ConversationState::MainMenu,
-            {
-                let mut actions = vec![BotAction::ResetConversation {
-                    phone: context.phone_number.clone(),
-                }];
-                actions.extend(menu::main_menu_actions(&context.phone_number));
-                actions
-            },
-        ));
+        return Ok((ConversationState::MainMenu, {
+            let mut actions = vec![BotAction::ResetConversation {
+                phone: context.phone_number.clone(),
+            }];
+            actions.extend(menu::main_menu_actions(&context.phone_number));
+            actions
+        }));
     }
 
     if matches!(selection_id(input).as_deref(), Some(CANCEL_ORDER)) {
@@ -370,6 +369,7 @@ fn cancel_order_transition(
     context.items.clear();
     context.payment_method = None;
     context.receipt_media_id = None;
+    context.receipt_timer_started_at = None;
     context.current_order_id = None;
     context.editing_address = false;
     context.receipt_timer_expired = false;
@@ -510,6 +510,7 @@ mod tests {
             scheduled_time: None,
             payment_method: None,
             receipt_media_id: None,
+            receipt_timer_started_at: None,
             current_order_id: Some(7),
             editing_address: false,
             receipt_timer_expired: false,
@@ -529,6 +530,7 @@ mod tests {
 
         assert_eq!(state, ConversationState::WaitReceipt);
         assert_eq!(context.payment_method.as_deref(), Some("transfer"));
+        assert!(context.receipt_timer_started_at.is_some());
         assert!(actions.iter().any(|action| matches!(
             action,
             crate::bot::state_machine::BotAction::StartTimer { .. }
@@ -548,6 +550,36 @@ mod tests {
 
         assert_eq!(state, ConversationState::ConfirmAddress);
         assert_eq!(context.receipt_media_id.as_deref(), Some("media-123"));
+        assert_eq!(context.receipt_timer_started_at, None);
+    }
+
+    #[test]
+    fn wait_receipt_after_timeout_offers_change_or_cancel() {
+        let mut context = context();
+        context.payment_method = Some("transfer".to_string());
+        context.receipt_timer_expired = true;
+        context.receipt_timer_started_at = Some(chrono::Utc::now());
+
+        let (state, actions) =
+            handle_wait_receipt(&UserInput::TextMessage("hola".to_string()), &mut context)
+                .expect("transition");
+
+        assert_eq!(state, ConversationState::WaitReceipt);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::SendButtons { .. }
+        )));
+
+        let (state, _) = handle_wait_receipt(
+            &UserInput::ButtonPress("change_payment_method".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::ShowSummary);
+        assert_eq!(context.payment_method, None);
+        assert_eq!(context.receipt_timer_started_at, None);
+        assert!(!context.receipt_timer_expired);
     }
 
     #[test]

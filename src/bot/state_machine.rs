@@ -229,6 +229,11 @@ pub enum TimerType {
     ConversationAbandon,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageAsset {
+    Menu,
+}
+
 #[derive(Debug, Clone)]
 pub enum BotAction {
     SendText {
@@ -249,6 +254,11 @@ pub enum BotAction {
     SendImage {
         to: String,
         media_id: String,
+        caption: Option<String>,
+    },
+    SendAssetImage {
+        to: String,
+        asset: ImageAsset,
         caption: Option<String>,
     },
     SendTransferInstructions {
@@ -298,6 +308,7 @@ pub struct ConversationContext {
     pub scheduled_time: Option<String>,
     pub payment_method: Option<String>,
     pub receipt_media_id: Option<String>,
+    pub receipt_timer_started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub current_order_id: Option<i32>,
     pub editing_address: bool,
     pub receipt_timer_expired: bool,
@@ -324,6 +335,7 @@ impl ConversationContext {
             scheduled_time: state_data.scheduled_time.clone(),
             payment_method: state_data.payment_method.clone(),
             receipt_media_id: state_data.receipt_media_id.clone(),
+            receipt_timer_started_at: state_data.receipt_timer_started_at,
             current_order_id: state_data.current_order_id,
             editing_address: state_data.editing_address,
             receipt_timer_expired: state_data.receipt_timer_expired,
@@ -340,6 +352,7 @@ impl ConversationContext {
             scheduled_time: self.scheduled_time.clone(),
             payment_method: self.payment_method.clone(),
             receipt_media_id: self.receipt_media_id.clone(),
+            receipt_timer_started_at: self.receipt_timer_started_at,
             current_order_id: self.current_order_id,
             editing_address: self.editing_address,
             receipt_timer_expired: self.receipt_timer_expired,
@@ -490,6 +503,7 @@ mod tests {
             scheduled_time: Some("15:30".to_string()),
             payment_method: None,
             receipt_media_id: None,
+            receipt_timer_started_at: Some(chrono::Utc::now()),
             current_order_id: Some(42),
             editing_address: true,
             receipt_timer_expired: false,
@@ -544,6 +558,10 @@ mod tests {
         assert_eq!(loaded.pending_has_liquor, Some(true));
         assert_eq!(loaded.pending_flavor.as_deref(), Some("maracuya"));
         assert_eq!(loaded.current_order_id, Some(42));
+        assert_eq!(
+            loaded.receipt_timer_started_at,
+            context.receipt_timer_started_at
+        );
         assert!(loaded.editing_address);
     }
 

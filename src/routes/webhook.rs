@@ -18,7 +18,7 @@ use crate::{
         pricing::calcular_pedido,
         state_machine::{
             extract_input, transition, BotAction, ConversationContext, ConversationState,
-            TimerType, UserInput,
+            ImageAsset, TimerType, UserInput,
         },
         timers::{cancel_timer, expire_receipt_timer, start_timer},
     },
@@ -230,6 +230,16 @@ async fn execute_actions(
                 media_id,
                 caption,
             } => {
+                state
+                    .wa_client
+                    .send_image(to, media_id, caption.as_deref())
+                    .await?;
+            }
+            BotAction::SendAssetImage { to, asset, caption } => {
+                let media_id = match *asset {
+                    ImageAsset::Menu => &state.config.menu_image_media_id,
+                };
+
                 state
                     .wa_client
                     .send_image(to, media_id, caption.as_deref())

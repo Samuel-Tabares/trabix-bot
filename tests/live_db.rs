@@ -302,6 +302,7 @@ async fn recreates_wait_receipt_timer_after_restart() {
             database_url,
             advisor_phone: "573001234567".into(),
             transfer_payment_text: "Nequi 3001234567".into(),
+            menu_image_media_id: "menu-media".into(),
             port: 8080,
         },
         pool,

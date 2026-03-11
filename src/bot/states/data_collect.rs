@@ -127,8 +127,9 @@ pub fn collect_address_actions(phone: &str) -> Vec<BotAction> {
 
 pub fn validate_name(input: &str) -> Result<String, String> {
     let normalized = collapse_spaces(input);
-    if normalized.chars().count() < 3 {
-        return Err("El nombre debe tener al menos 3 caracteres.".to_string());
+    let length = normalized.chars().count();
+    if !(2..=80).contains(&length) {
+        return Err("El nombre debe tener entre 2 y 80 caracteres.".to_string());
     }
 
     Ok(normalized)
@@ -148,8 +149,9 @@ pub fn validate_phone(input: &str) -> Result<String, String> {
 
 pub fn validate_address(input: &str) -> Result<String, String> {
     let normalized = collapse_spaces(input);
-    if normalized.chars().count() < 10 {
-        return Err("La dirección debe tener al menos 10 caracteres.".to_string());
+    let length = normalized.chars().count();
+    if !(5..=160).contains(&length) {
+        return Err("La dirección debe tener entre 5 y 160 caracteres.".to_string());
     }
 
     Ok(normalized)
@@ -189,6 +191,7 @@ mod tests {
             scheduled_time: None,
             payment_method: None,
             receipt_media_id: None,
+            receipt_timer_started_at: None,
             current_order_id: None,
             editing_address: false,
             receipt_timer_expired: false,

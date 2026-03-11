@@ -68,10 +68,12 @@ pub async fn restore_pending_timers(state: AppState) -> Result<(), sqlx::Error> 
             continue;
         }
 
-        let elapsed = chrono::Utc::now()
-            .signed_duration_since(conversation.last_message_at)
-            .to_std()
-            .unwrap_or_default();
+        let elapsed = receipt_timer_elapsed_at(
+            state_data
+                .receipt_timer_started_at
+                .unwrap_or(conversation.last_message_at),
+            chrono::Utc::now(),
+        );
 
         if elapsed >= RECEIPT_TIMEOUT {
             if let Err(err) =
@@ -99,6 +101,15 @@ pub async fn restore_pending_timers(state: AppState) -> Result<(), sqlx::Error> 
     }
 
     Ok(())
+}
+
+fn receipt_timer_elapsed_at(
+    started_at: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Duration {
+    now.signed_duration_since(started_at)
+        .to_std()
+        .unwrap_or_default()
 }
 
 pub async fn expire_receipt_timer(
@@ -174,12 +185,14 @@ fn reply_button(id: &str, title: &str) -> Button {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{Duration as ChronoDuration, Utc};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+    use std::time::Duration;
 
-    use super::{cancel_timer, new_timer_map, start_timer};
+    use super::{cancel_timer, new_timer_map, receipt_timer_elapsed_at, start_timer};
     use crate::bot::state_machine::TimerType;
 
     #[tokio::test]
@@ -224,5 +237,17 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(70)).await;
 
         assert_eq!(runs.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn receipt_timeout_uses_original_start_time() {
+        let started_at = Utc::now() - ChronoDuration::minutes(8);
+        let later_message_at = Utc::now() - ChronoDuration::minutes(1);
+
+        let elapsed_from_start = receipt_timer_elapsed_at(started_at, Utc::now());
+        let elapsed_from_later_message = receipt_timer_elapsed_at(later_message_at, Utc::now());
+
+        assert!(elapsed_from_start > elapsed_from_later_message);
+        assert!(elapsed_from_start >= Duration::from_secs(8 * 60));
     }
 }

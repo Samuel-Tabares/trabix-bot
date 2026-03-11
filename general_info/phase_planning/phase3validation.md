@@ -14,11 +14,18 @@ La evidencia se divide en 4 capas: local automatizada, DB live, WhatsApp live ma
 
 ### Precondiciones
 
-- `.env` con `DATABASE_URL`, `TEST_DATABASE_URL`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `ADVISOR_PHONE` y `TRANSFER_PAYMENT_TEXT`.
+- `.env` con `DATABASE_URL`, `TEST_DATABASE_URL`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `ADVISOR_PHONE`, `TRANSFER_PAYMENT_TEXT` y `MENU_IMAGE_MEDIA_ID`.
 - `ADVISOR_PHONE` debe ser distinto a `WHATSAPP_TEST_RECIPIENT`.
 - El webhook de Meta debe apuntar al servicio activo.
 - Si se quiere probar fuera de horario o escenarios de agenda, se puede usar localmente `FORCE_BOGOTA_NOW=2026-03-10 23:30`.
 - No usar `FORCE_BOGOTA_NOW` en Railway o produccion.
+- Si todavia no tienes `MENU_IMAGE_MEDIA_ID`, sube la imagen unica del menu con:
+
+```bash
+cargo run --bin upload_media -- /ruta/local/menu.jpg
+```
+
+  Luego pega el `media_id` devuelto en `MENU_IMAGE_MEDIA_ID`.
 
 ### Comandos de validacion
 

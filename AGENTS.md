@@ -15,6 +15,7 @@ Current source-of-truth areas:
 - `general_info/phase_planning/phase2.md`: approved Phase 2 implementation plan.
 - `general_info/phase_planning/phase2validation.md`: Phase 2 validation checklist and evidence guide.
 - `general_info/phase_planning/phase3.md`: approved Phase 3 planning baseline.
+- `general_info/phase_planning/phase3validation.md`: Phase 3 validation checklist, evidence guide, and manual test setup.
 
 Current code layout:
 
@@ -22,6 +23,7 @@ Current code layout:
 - `src/whatsapp/`: Meta Cloud API client, button/list builders, and payload types.
 - `src/bot/`: state machine and per-state handlers.
 - `src/db/`: SQLx models and conversation queries.
+- `src/bin/`: local operational utilities such as media upload to Meta.
 - `migrations/`: PostgreSQL schema.
 - `tests/`: local integration and live smoke tests.
 
@@ -35,8 +37,25 @@ Current implementation status:
   - customer data collection
   - item loop until `ShowSummary`
   - persistence in PostgreSQL across messages and restarts
-  - natural-language date/time parsing for scheduling
-- Phase 3 is planned but not implemented yet. Prices, real payment flow, receipt timer, advisor workflow, and relay remain pending in code.
+  - flexible text capture for programmed date/time with minimal length validation
+  - flavor selection through WhatsApp lists after choosing `Con Licor` or `Sin Licor`
+  - single menu image sent only in `Ver Menú`
+- Phase 3 is implemented and partially validated as the current checkout/handoff flow:
+  - real price calculation in `pricing.rs`, including liquor pair promo and wholesale tiers
+  - `ShowSummary` with estimated total excluding delivery cost
+  - payment choice: `Contra Entrega` or `Pago Ahora`
+  - transfer instructions plus receipt image capture
+  - 10-minute receipt timer with timeout options to change payment or cancel
+  - address confirmation/editing before handoff
+  - order draft/final persistence in `orders` and `order_items`
+  - conversation persistence of payment context, receipt state, and timer rehydration data
+  - handoff closure in `pending_advisor` / `WaitAdvisorResponse`
+- Phase 4 is still pending in code:
+  - real advisor message handling
+  - advisor delivery-cost confirmation
+  - advisor hour negotiation
+  - relay mode for wholesale / advisor contact flows
+  - advisor-side timers and retry flows
 
 ## Build, Test, and Development Commands
 Use these commands regularly:
@@ -49,13 +68,18 @@ Use these commands regularly:
 - `cargo test --test phase2_flow`: run the Phase 2 end-to-end state-machine flow.
 - `cargo test --test live_db -- --ignored --test-threads=1`: run live PostgreSQL smoke tests.
 - `cargo test --test live_whatsapp -- --ignored --test-threads=1`: run live WhatsApp transport smoke tests.
-- `PORT=8080 cargo run`: run the local bot service.
+- `cargo run --bin granizado-bot`: run the local bot service.
+- `cargo run --bin upload_media -- /ruta/local/menu.jpg`: upload a local media file to Meta and print the `media_id`.
 
 Operational notes:
 
 - Live tests rely on `.env`. They now load it via `dotenvy`, but still require valid credentials and reachable services.
+- `TRANSFER_PAYMENT_TEXT` should be quoted in `.env` if it contains spaces.
+- `MENU_IMAGE_MEDIA_ID` must contain a valid Meta `media_id`; the runtime no longer expects separate media IDs for liquor/non-liquor flavor flows.
 - `FORCE_BOGOTA_NOW=YYYY-MM-DD HH:MM` is available only for local testing of after-hours scheduling. Do not enable it in Railway or production.
 - Keep `ADVISOR_PHONE` different from `WHATSAPP_TEST_RECIPIENT` during local WhatsApp validation, otherwise tester messages are routed as advisor messages.
+- Large menu images may be rejected by Meta. If needed, compress or resize locally before upload.
+- Operational menu images should not live under `src/` as tracked source code; the bot only needs the resulting `media_id`.
 
 ## Coding Style & Naming Conventions
 Keep Markdown concise, task-oriented, and aligned with the existing Spanish project documents. Use clear section headings and short paragraphs. For Mermaid, prefer readable node labels and grouped flow sections.
@@ -68,11 +92,17 @@ Persisted conversation state uses `snake_case` strings in the database. Any tran
 Automated coverage already exists and should be extended with each phase:
 
 - `src/` unit tests cover webhook parsing, config loading, state serialization, validations, and state transitions.
-- `tests/phase2_flow.rs` covers the approved Phase 2 flow, including persistence/rehydration between steps.
+- `tests/phase2_flow.rs` covers the current customer flow, including persistence/rehydration between steps and list-based flavor selection.
 - `tests/live_db.rs` covers live database persistence and migrations.
 - `tests/live_whatsapp.rs` covers live transport to Meta for text, buttons, and lists.
 
 When adding Phase 3+ work, prefer tests named by behavior, for example `applies_liquor_pair_discount` or `handles_transfer_payment_without_receipt`.
+
+Current important coverage areas:
+
+- `src/bot/pricing.rs`: detail promo, wholesale pricing, mixed-order totals.
+- `src/bot/states/checkout.rs`: payment selection, receipt handling, address confirmation, timeout branches.
+- `src/bot/timers.rs`: timer start/cancel and receipt-timeout restoration behavior.
 
 For manual WhatsApp validation:
 

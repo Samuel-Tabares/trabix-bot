@@ -1,6 +1,6 @@
 use crate::{
     bot::state_machine::{
-        BotAction, ConversationContext, ConversationState, TransitionResult, UserInput,
+        BotAction, ConversationContext, ConversationState, ImageAsset, TransitionResult, UserInput,
     },
     whatsapp::types::{Button, ButtonReplyPayload, ListRow, ListSection},
 };
@@ -124,9 +124,14 @@ pub fn main_menu_actions(phone: &str) -> Vec<BotAction> {
 
 pub fn view_menu_actions(phone: &str) -> Vec<BotAction> {
     vec![
+        BotAction::SendAssetImage {
+            to: phone.to_string(),
+            asset: ImageAsset::Menu,
+            caption: Some("Menú general de granizados".to_string()),
+        },
         BotAction::SendText {
             to: phone.to_string(),
-            body: "MENÚ Y PRECIOS\n\nDETAL:\nCon licor: $8.000\nSegundo con licor: $4.000\nSin licor: $7.000 c/u\n\nAL MAYOR (20+ del mismo tipo):\nCon licor: 20-49u $4.900 | 50-99u $4.700 | 100+u $4.500\nSin licor: 20-49u $4.800 | 50-99u $4.500 | 100+u $4.200\n\nEn Fase 2 el menú visual se envía como texto provisional.".to_string(),
+            body: "MENÚ Y PRECIOS\n\nDETAL:\nCon licor: $8.000\nSegundo con licor: $4.000\nSin licor: $7.000 c/u\n\nAL MAYOR (20+ del mismo tipo):\nCon licor: 20-49u $4.900 | 50-99u $4.700 | 100+u $4.500\nSin licor: 20-49u $4.800 | 50-99u $4.500 | 100+u $4.200".to_string(),
         },
         BotAction::SendButtons {
             to: phone.to_string(),
@@ -182,7 +187,8 @@ fn target_phone(actions: &[BotAction]) -> String {
             BotAction::SendText { to, .. }
             | BotAction::SendButtons { to, .. }
             | BotAction::SendList { to, .. }
-            | BotAction::SendImage { to, .. } => Some(to.clone()),
+            | BotAction::SendImage { to, .. }
+            | BotAction::SendAssetImage { to, .. } => Some(to.clone()),
             _ => None,
         })
         .unwrap_or_default()
@@ -216,6 +222,7 @@ mod tests {
             scheduled_time: None,
             payment_method: None,
             receipt_media_id: None,
+            receipt_timer_started_at: None,
             current_order_id: None,
             editing_address: false,
             receipt_timer_expired: false,

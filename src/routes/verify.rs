@@ -51,6 +51,7 @@ mod tests {
                 database_url: "postgres://db".into(),
                 advisor_phone: "573001234567".into(),
                 transfer_payment_text: "Nequi 3001234567".into(),
+                menu_image_media_id: "menu-media".into(),
                 port: 8080,
             },
             pool: sqlx::postgres::PgPoolOptions::new()

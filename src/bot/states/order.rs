@@ -6,13 +6,33 @@ use crate::{
         states::checkout,
     },
     db::models::OrderItemData,
-    whatsapp::types::{Button, ButtonReplyPayload},
+    whatsapp::types::{Button, ButtonReplyPayload, ListRow, ListSection},
 };
 
 const WITH_LIQUOR: &str = "with_liquor";
 const WITHOUT_LIQUOR: &str = "without_liquor";
 const ADD_MORE: &str = "add_more";
 const FINISH_ORDER: &str = "finish_order";
+
+const LIQUOR_FLAVORS: [(&str, &str); 7] = [
+    ("liquor_maracumango_ron_blanco", "Maracumango Ron blanco"),
+    ("liquor_blueberry_vodka", "Blueberry Vodka"),
+    ("liquor_uva_vodka", "Uva Vodka"),
+    ("liquor_bonbonbum_whiskey", "Bonbonbum Whiskey"),
+    (
+        "liquor_bonbonbum_fresa_champagne",
+        "Bonbonbum de fresa con Champagne",
+    ),
+    ("liquor_smirnoff_lulo", "Smirnoff de lulo"),
+    ("liquor_manzana_verde_tequila", "Manzana verde Tequila"),
+];
+
+const NON_LIQUOR_FLAVORS: [(&str, &str); 4] = [
+    ("non_liquor_maracumango", "Maracumango"),
+    ("non_liquor_manzana_verde", "Manzana verde"),
+    ("non_liquor_bonbonbum", "Bonbonbum"),
+    ("non_liquor_blueberry", "Blueberry"),
+];
 
 pub fn handle_select_type(
     input: &UserInput,
@@ -51,36 +71,27 @@ pub fn handle_select_flavor(
     context: &mut ConversationContext,
     has_liquor: bool,
 ) -> TransitionResult {
-    match input {
-        UserInput::TextMessage(text) => {
-            let flavor = normalize_flavor(text);
-            if flavor.is_empty() {
-                return Ok((
-                    ConversationState::SelectFlavor { has_liquor },
-                    retry_actions(
-                        &context.phone_number,
-                        "Escribe un sabor para continuar.",
-                        select_flavor_actions(&context.phone_number, has_liquor),
-                    ),
-                ));
-            }
-
+    match selection_id(input)
+        .as_deref()
+        .and_then(|id| flavor_by_id(id, has_liquor))
+    {
+        Some(flavor) => {
             context.pending_has_liquor = Some(has_liquor);
-            context.pending_flavor = Some(flavor.clone());
+            context.pending_flavor = Some(flavor.to_string());
 
             Ok((
                 ConversationState::SelectQuantity {
                     has_liquor,
-                    flavor: flavor.clone(),
+                    flavor: flavor.to_string(),
                 },
-                select_quantity_actions(&context.phone_number, has_liquor, &flavor),
+                select_quantity_actions(&context.phone_number, has_liquor, flavor),
             ))
         }
-        _ => Ok((
+        None => Ok((
             ConversationState::SelectFlavor { has_liquor },
             retry_actions(
                 &context.phone_number,
-                "Escribe el sabor que deseas.",
+                "Selecciona un sabor de la lista para continuar.",
                 select_flavor_actions(&context.phone_number, has_liquor),
             ),
         )),
@@ -164,15 +175,26 @@ pub fn select_type_actions(phone: &str) -> Vec<BotAction> {
 }
 
 pub fn select_flavor_actions(phone: &str, has_liquor: bool) -> Vec<BotAction> {
-    let body = if has_liquor {
-        "Escribe el sabor con licor que deseas. Referencia provisional: maracuya, mora, fresa, mango."
+    let (body, rows) = if has_liquor {
+        (
+            "Selecciona el sabor con licor que deseas.",
+            flavor_rows(&LIQUOR_FLAVORS),
+        )
     } else {
-        "Escribe el sabor sin licor que deseas. Referencia provisional: mora, maracuya, limon, mango."
+        (
+            "Selecciona el sabor sin licor que deseas.",
+            flavor_rows(&NON_LIQUOR_FLAVORS),
+        )
     };
 
-    vec![BotAction::SendText {
+    vec![BotAction::SendList {
         to: phone.to_string(),
         body: body.to_string(),
+        button_text: "Ver sabores".to_string(),
+        sections: vec![ListSection {
+            title: "Sabores disponibles".to_string(),
+            rows,
+        }],
     }]
 }
 
@@ -217,12 +239,27 @@ pub fn validate_quantity(input: &str) -> Result<u32, String> {
     Ok(quantity)
 }
 
-pub fn normalize_flavor(input: &str) -> String {
-    input
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+fn flavor_rows(flavors: &[(&str, &str)]) -> Vec<ListRow> {
+    flavors
+        .iter()
+        .map(|(id, title)| ListRow {
+            id: (*id).to_string(),
+            title: (*title).to_string(),
+            description: "Seleccionar sabor".to_string(),
+        })
+        .collect()
+}
+
+fn flavor_by_id(id: &str, has_liquor: bool) -> Option<&'static str> {
+    let flavors = if has_liquor {
+        &LIQUOR_FLAVORS[..]
+    } else {
+        &NON_LIQUOR_FLAVORS[..]
+    };
+
+    flavors
+        .iter()
+        .find_map(|(row_id, display)| (*row_id == id).then_some(*display))
 }
 
 fn partial_summary(items: &[OrderItemData]) -> String {
@@ -276,7 +313,7 @@ mod tests {
 
     use super::{
         handle_add_more, handle_select_flavor, handle_select_quantity, handle_select_type,
-        normalize_flavor, validate_quantity,
+        select_flavor_actions, validate_quantity,
     };
 
     fn context() -> ConversationContext {
@@ -291,20 +328,13 @@ mod tests {
             scheduled_time: None,
             payment_method: None,
             receipt_media_id: None,
+            receipt_timer_started_at: None,
             current_order_id: None,
             editing_address: false,
             receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
         }
-    }
-
-    #[test]
-    fn normalizes_flavor() {
-        assert_eq!(
-            normalize_flavor("  Maracuya   Especial "),
-            "maracuya especial"
-        );
     }
 
     #[test]
@@ -326,10 +356,22 @@ mod tests {
     }
 
     #[test]
-    fn select_flavor_moves_to_quantity() {
+    fn select_flavor_actions_include_only_list() {
+        let actions = select_flavor_actions("573001234567", true);
+
+        assert!(matches!(
+            actions.first(),
+            Some(crate::bot::state_machine::BotAction::SendList { sections, .. })
+            if sections.first().map(|section| section.rows.len()) == Some(7)
+        ));
+        assert_eq!(actions.len(), 1);
+    }
+
+    #[test]
+    fn select_flavor_moves_to_quantity_from_list_selection() {
         let mut context = context();
         let (state, _) = handle_select_flavor(
-            &UserInput::TextMessage("Mora".to_string()),
+            &UserInput::ListSelection("non_liquor_bonbonbum".to_string()),
             &mut context,
             false,
         )
@@ -339,10 +381,10 @@ mod tests {
             state,
             ConversationState::SelectQuantity {
                 has_liquor: false,
-                flavor: "mora".to_string()
+                flavor: "Bonbonbum".to_string()
             }
         );
-        assert_eq!(context.pending_flavor.as_deref(), Some("mora"));
+        assert_eq!(context.pending_flavor.as_deref(), Some("Bonbonbum"));
     }
 
     #[test]
@@ -352,7 +394,7 @@ mod tests {
             &UserInput::TextMessage("3".to_string()),
             &mut context,
             true,
-            "maracuya",
+            "Maracumango Ron blanco",
         )
         .expect("transition");
 
@@ -365,7 +407,7 @@ mod tests {
     fn add_more_finish_moves_to_summary() {
         let mut context = context();
         context.items.push(crate::db::models::OrderItemData {
-            flavor: "mora".to_string(),
+            flavor: "Bonbonbum".to_string(),
             has_liquor: false,
             quantity: 2,
         });
