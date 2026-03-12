@@ -13,7 +13,7 @@ contact_advisor_title = "Hablar con Asesor"
 contact_advisor_description = "Recibe ayuda personalizada"
 retry_main_menu = "Para continuar, elige una opción del menú principal 👇"
 menu_image_caption = "📋 Menú general de granizados"
-menu_text = """🍧 MENÚ Y PRECIOS
+menu_text = """🍧PRECIOS
 
 DETAL:
 Con licor: $8.000
@@ -21,8 +21,16 @@ Segundo con licor: $4.000
 Sin licor: $7.000 c/u
 
 AL MAYOR (20+ del mismo tipo):
-Con licor: 20-49u $4.900 | 50-99u $4.700 | 100+u $4.500
-Sin licor: 20-49u $4.800 | 50-99u $4.500 | 100+u $4.200
+
+Con licor:
+20-49u $4.900
+50-99u $4.700
+100+u $4.500
+
+Sin licor:
+20-49u $4.800
+50-99u $4.500
+100+u $4.200
 
 Si quieres, te acompaño a armar tu pedido paso a paso ✨"""
 view_menu_buttons_body = "¿Qué quieres hacer ahora? 😊"
