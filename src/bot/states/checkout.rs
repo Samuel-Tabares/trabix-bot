@@ -361,7 +361,7 @@ fn render_summary(
     };
 
     format!(
-        "RESUMEN DEL PEDIDO\n\nCliente: {}\nTeléfono: {}\nDirección: {}\nEntrega: {}\n\nItems:\n{}\n\nTotal estimado: {}\n\nNota: el domicilio no está incluido. Un asesor lo define después de revisar tu pedido.",
+        "RESUMEN DEL PEDIDO\n\nCliente: {}\nTeléfono: {}\nDirección: {}\nEntrega: {}\n\nItems:\n{}\n\nTotal estimado: {}\n\nNota: el domicilio no está incluido. Si el pedido es inmediato, un asesor lo define después de revisar tu pedido.",
         context.customer_name.as_deref().unwrap_or("pendiente"),
         context.customer_phone.as_deref().unwrap_or("pendiente"),
         context.delivery_address.as_deref().unwrap_or("pendiente"),

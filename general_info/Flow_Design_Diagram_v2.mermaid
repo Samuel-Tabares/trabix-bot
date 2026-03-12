@@ -1,0 +1,201 @@
+%%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor':'#667eea', 'primaryBorderColor':'#7b9bff', 'background':'#1e1e2e', 'mainBkg':'#2a2a3a', 'tertiaryBkg':'#333344', 'lineColor':'#7b9bff', 'textColor':'#e0e0e0', 'clusterBkg':'#2a2a3a', 'clusterBorder':'#7b9bff'}}}%%
+graph TD
+
+    WAClient["👤 CLIENTE WHATSAPP"] --> Meta["📡 META CLOUD API"]
+    Meta -->|GET /webhook| Verify["✅ VERIFY WEBHOOK"]
+    Meta -->|POST /webhook + X-Hub-Signature-256| Webhook["📥 RECEIVE WEBHOOK"]
+    Verify -->|hub.challenge| Meta
+
+    subgraph Runtime["RUST SERVICE GRANIZADO-BOT"]
+        Webhook --> HMAC{"🔐 ¿Firma válida?"}
+        HMAC -->|No| Reject["401 / ignorar"]
+        HMAC -->|Si| Parse["🧩 Parse webhook + describe_input"]
+        Parse --> Msg{"💬 ¿Hay mensaje útil?"}
+        Msg -->|No| Ignore["200 OK + log"]
+        Msg -->|Si| Route{"from == ADVISOR_PHONE?"}
+    end
+
+    subgraph Persistence["POSTGRESQL + RUNTIME STATE"]
+        Conversations["🗂️ conversations<br/>- phone_number<br/>- state<br/>- state_data JSONB<br/>- customer_name<br/>- customer_phone<br/>- delivery_address<br/>- last_message_at"]
+        Orders["🧾 orders<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- receipt_media_id<br/>- delivery_cost<br/>- total_estimated<br/>- total_final<br/>- status"]
+        OrderItems["🧊 order_items<br/>- flavor<br/>- has_liquor<br/>- quantity<br/>- unit_price<br/>- subtotal"]
+        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- relay_inactivity 30m<br/>- restore_pending_timers()"]
+    end
+
+    Route -->|Cliente| LoadClient["load_or_create_conversation + rehydrate context"]
+    Route -->|Asesor| LoadAdvisor["load advisor conversation + resolve target phone"]
+
+    LoadClient --> ClientState{"Estado actual"}
+    LoadAdvisor --> AdvisorState{"Estado actual del caso"}
+
+    ClientState --> MainMenu
+
+    subgraph CustomerFlow["FLUJO CLIENTE REAL"]
+        MainMenu["🤖 MAIN MENU<br/>Texto + lista:<br/>Hacer Pedido / Ver Menú / Horarios / Hablar con Asesor"] --> MainChoice{"📍 Selección"}
+
+        MainChoice -->|Ver Menu| ViewMenu["view_menu\n- envia imagen Menu\n- envia precios\n- botones Hacer Pedido / Volver al Menu"]
+        MainChoice -->|Horarios| ViewSchedule["view_schedule\n- envia horarios\n- botones Hacer Pedido / Volver al Menu"]
+        MainChoice -->|Hacer Pedido| WhenDelivery["when_delivery\nBotones: Entrega Inmediata / Entrega Programada"]
+        MainChoice -->|Hablar con Asesor| ContactAdvisorBootstrap["start_contact_advisor"]
+
+        ViewMenu --> MainMenu
+        ViewSchedule --> MainMenu
+
+        WhenDelivery --> DeliveryChoice{"🕐 delivery_type"}
+        DeliveryChoice -->|immediate| CheckHours{"⏰ ¿Bogotá 08:00-23:00?"}
+        DeliveryChoice -->|scheduled| SelectDate["📅 select_date<br/>Captura texto libre fecha"]
+
+        CheckHours -->|dentro de horario| CollectName["collect_name"]
+        CheckHours -->|fuera de horario| OutOfHours["out_of_hours\nTexto + botones Programar / Asesor / Menu"]
+        OutOfHours -->|Programar| SelectDate
+        OutOfHours -->|Asesor| ContactAdvisorBootstrap
+        OutOfHours -->|Menu| MainMenu
+
+        SelectDate --> SelectTime["🕐 select_time<br/>Captura texto libre hora"]
+        SelectTime --> ConfirmSchedule["✅ confirm_schedule<br/>Muestra fecha/hora + Confirmar / Cambiar"]
+        ConfirmSchedule -->|Confirmar| CollectName
+        ConfirmSchedule -->|Cambiar| SelectDate
+
+        CollectName --> CollectPhone["📱 collect_phone"]
+        CollectPhone --> CollectAddress["📍 collect_address"]
+        CollectAddress --> SelectType["🧊 select_type<br/>Botones Con Licor / Sin Licor"]
+        SelectType --> SelectFlavor["🍧 select_flavor<br/>Lista según has_liquor"]
+        SelectFlavor --> SelectQuantity["🔢 select_quantity<br/>Pregunta cantidad"]
+        SelectQuantity --> AddMore["➕ add_more<br/>Resumen parcial + botones"]
+        AddMore -->|Agregar más| SelectType
+        AddMore -->|Finalizar pedido| ShowSummary["📋 show_summary<br/>render_summary() + lista pago"]
+
+        ShowSummary --> SummaryChoice{"Lista de pago y pedido"}
+        SummaryChoice -->|Contra Entrega| ConfirmAddress["✅ confirm_address"]
+        SummaryChoice -->|Pago Ahora| WaitReceipt["📸 wait_receipt<br/>- TRANSFER_PAYMENT_TEXT<br/>- pide comprobante<br/>- timer 10m"]
+        SummaryChoice -->|Modificar Pedido| SelectType
+        SummaryChoice -->|Cancelar Pedido| MainMenu
+
+        WaitReceipt -->|imagen recibida| ConfirmAddress
+        WaitReceipt -->|timer vencido| ReceiptTimeout["Opciones Cambiar pago / Cancelar"]
+        ReceiptTimeout --> ShowSummary
+
+        ConfirmAddress --> AddressChoice{"📍 ¿Dirección correcta?"}
+        AddressChoice -->|Cambiar| EditAddress["✏️ editing_address<br/>Captura nueva dirección"]
+        EditAddress --> ConfirmAddress
+        AddressChoice -->|Sí| AdvisorHandoff["📤 handoff_order_after_address_confirmation"]
+    end
+
+    subgraph OrderPersistence["PERSISTENCIA DEL PEDIDO"]
+        DraftUpsert["💾 UpsertDraftOrder / FinalizeCurrentOrder<br/>usa conversations + context para orders y order_items"]
+        ContextData["🧠 state_data relevante<br/>- items[]<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- receipt_media_id<br/>- current_order_id<br/>- advisor timers / relay timers"]
+    end
+
+    AdvisorHandoff --> DraftUpsert
+    ShowSummary --> ContextData
+    WaitReceipt --> ContextData
+    ConfirmAddress --> ContextData
+    DraftUpsert --> Orders
+    DraftUpsert --> OrderItems
+    LoadClient --> Conversations
+    LoadAdvisor --> Conversations
+    Parse --> Conversations
+    Timers --> Conversations
+
+    subgraph OrderAdvisorFlow["FLUJO REAL ASESOR PARA PEDIDOS"]
+        AdvisorHandoff --> AdvisorEntry{"👨‍💼 ¿delivery_type actual?"}
+
+        AdvisorEntry -->|scheduled| SendScheduledToAdvisor["Envios al asesor:\n1. render_order_summary()\n2. imagen comprobante si existe\n3. boton unico Confirmar {ultimos4}\nAl cliente: pedido programado enviado al asesor"]
+        AdvisorEntry -->|immediate| SendImmediateToAdvisor["Envios al asesor:\n1. render_order_summary()\n2. imagen comprobante si existe\n3. botones Confirmar / No puedo {ultimos4}\nAl cliente: pedido enviado al asesor"]
+
+        SendScheduledToAdvisor --> WaitAdvisorResponse["⏳ wait_advisor_response + timer 2m"]
+        SendImmediateToAdvisor --> WaitAdvisorResponse
+
+        WaitAdvisorResponse --> AdvisorDecision{"🔘 Acción del asesor"}
+
+        AdvisorDecision -->|Confirmar sobre scheduled| ScheduledConfirmed["FinalizeCurrentOrder status=confirmed\nCliente: pedido registrado + fecha ref + hora acordada\nResetConversation -> MainMenu"]
+
+        AdvisorDecision -->|Confirmar sobre immediate| AskDeliveryCost["ask_delivery_cost\nBot pregunta al asesor valor numerico del domicilio"]
+        AskDeliveryCost --> DeliveryCostOk{"💰 ¿Valor válido?"}
+        DeliveryCostOk -->|Si| ImmediateConfirmed["UpdateCurrentOrderDeliveryCost + status=confirmed\nCliente: subtotal + domicilio + total final + 20-40 min\nResetConversation -> MainMenu"]
+        DeliveryCostOk -->|No| AskDeliveryCost
+
+        AdvisorDecision -->|No puedo sobre immediate| ConvertToScheduled["Mutaciones:\n- delivery_type = scheduled\n- scheduled_date = hoy Bogota\n- scheduled_time = None\n- limpia proposed/client hour\nLuego pregunta al asesor que hora puede"]
+        ConvertToScheduled --> NegotiateHour["🕐 negotiate_hour"]
+        NegotiateHour --> AdvisorProposesHour["👨‍💼 Asesor envía texto hora"]
+        AdvisorProposesHour --> OfferHourToClient["🎯 offer_hour_to_client<br/>Cliente recibe propuesta + Aceptar / Rechazar"]
+        OfferHourToClient --> ClientHourDecision{"🙋 ¿Cliente acepta?"}
+        ClientHourDecision -->|Si| WaitAdvisorConfirmHour["✅ wait_advisor_confirm_hour<br/>Asesor recibe botón Confirmar"]
+        ClientHourDecision -->|No| WaitClientHour["📝 wait_client_hour<br/>Cliente escribe hora"]
+
+        WaitClientHour --> WaitAdvisorHourDecision["🔁 wait_advisor_hour_decision<br/>Asesor recibe Sí, confirmo / Otra hora"]
+        WaitAdvisorHourDecision -->|Si, confirmo| ScheduledConfirmed
+        WaitAdvisorHourDecision -->|Otra hora| NegotiateHour
+        WaitAdvisorConfirmHour -->|Confirmar| ScheduledConfirmed
+    end
+
+    subgraph ContactAdvisorFlow["FLUJO HABLAR CON ASESOR Y RELAY"]
+        ContactAdvisorBootstrap --> ContactNeeds{"📇 ¿Faltan datos?"}
+        ContactNeeds -->|falta nombre| ContactAdvisorName["contact_advisor_name"]
+        ContactNeeds -->|falta telefono| ContactAdvisorPhone["contact_advisor_phone"]
+        ContactNeeds -->|completo| WaitAdvisorContact["wait_advisor_contact\n- render_contact_request al asesor\n- botones Atender / No disp.\n- cliente queda esperando\n- timer 2m"]
+
+        ContactAdvisorName --> ContactAdvisorPhone
+        ContactAdvisorPhone --> WaitAdvisorContact
+
+        WaitAdvisorContact --> ContactDecision{"Asesor responde?"}
+        ContactDecision -->|Atender| RelayMode["🔄 relay_mode<br/>- cliente -> asesor<br/>- asesor -> cliente<br/>- botón Finalizar<br/>- timer 30m"]
+        ContactDecision -->|No disponible| LeaveOrMenu["Cliente recibe botones Dejar mensaje / Menu"]
+        ContactDecision -->|timeout 2m| LeaveOrMenu
+
+        LeaveOrMenu -->|Dejar mensaje| LeaveMessage["leave_message\nCliente deja texto\nBot reenvia al asesor y resetea"]
+        LeaveOrMenu -->|Menu| MainMenu
+        RelayMode -->|Finalizar o timeout| RelayClosed["Cliente: conversacion finalizada\nResetConversation -> MainMenu"]
+    end
+
+    subgraph AdvisorIngress["INGRESO DE MENSAJES DEL ASESOR"]
+        AdvisorState --> AdvisorTarget{"📌 ¿Hay target_phone o button_id?"}
+        AdvisorTarget -->|No| AdvisorNoTarget["Responder al asesor:\nPrimero usa un boton de un caso pendiente"]
+        AdvisorTarget -->|Si| AdvisorTransition["transition_advisor() segun estado del cliente"]
+        AdvisorTransition --> OrderAdvisorFlow
+        AdvisorTransition --> ContactAdvisorFlow
+    end
+
+    subgraph TimerBehavior["TIMERS Y REINICIO"]
+        WaitReceipt --> Timers
+        WaitAdvisorResponse --> Timers
+        WaitAdvisorContact --> Timers
+        RelayMode --> Timers
+
+        Timers --> ReceiptExpire["expire_receipt_timer\nCliente: no llego comprobante\nBotones Cambiar pago / Cancelar"]
+        Timers --> AdvisorExpire["expire_advisor_timer\nCliente: Programar / Reintentar / Menu\nO Dejar mensaje / Menu en contact"]
+        Timers --> RelayExpire["expire_relay_timer\nCliente: conversacion cerrada por inactividad"]
+        Timers --> Restore["restore_pending_timers al boot\nrehidrata wait_receipt / wait_advisor_* / relay_mode"]
+    end
+
+    Webhook -->|acciones send_text / send_buttons / send_list / send_image| Meta
+    Meta --> WAClient
+    Webhook -->|acciones hacia asesor| Meta
+    Meta --> AdvisorWA["👨‍💼 ASESOR WHATSAPP"]
+
+    Conversations -.estado y contexto persistido.-> LoadClient
+    Orders -.current_order_id / status.-> ContextData
+    OrderItems -.items persistidos por pricing lines.-> Orders
+
+    style WAClient fill:#667eea,stroke:#7b9bff,color:#fff
+    style MainMenu fill:#667eea,stroke:#7b9bff,color:#fff
+    style WhenDelivery fill:#2196f3,stroke:#42a5f5,color:#fff
+    style CheckHours fill:#ff9800,stroke:#ffb74d,color:#fff
+    style OutOfHours fill:#f44336,stroke:#ef5350,color:#fff
+    style SelectDate fill:#9c27b0,stroke:#ba68c8,color:#fff
+    style SelectTime fill:#9c27b0,stroke:#ba68c8,color:#fff
+    style ConfirmSchedule fill:#8bc34a,stroke:#9ccc65,color:#fff
+    style ShowSummary fill:#26a69a,stroke:#4db6ac,color:#fff
+    style WaitReceipt fill:#ff7043,stroke:#ff8a65,color:#fff
+    style ConfirmAddress fill:#66bb6a,stroke:#81c784,color:#fff
+    style AdvisorHandoff fill:#ab47bc,stroke:#ba68c8,color:#fff
+    style WaitAdvisorResponse fill:#5c6bc0,stroke:#7986cb,color:#fff
+    style AskDeliveryCost fill:#ffa726,stroke:#ffb74d,color:#fff
+    style NegotiateHour fill:#26c6da,stroke:#4dd0e1,color:#fff
+    style RelayMode fill:#ef5350,stroke:#e57373,color:#fff
+    style ScheduledConfirmed fill:#66bb6a,stroke:#81c784,color:#fff
+    style ImmediateConfirmed fill:#66bb6a,stroke:#81c784,color:#fff
+    style Conversations fill:#424242,stroke:#90a4ae,color:#fff
+    style Orders fill:#424242,stroke:#90a4ae,color:#fff
+    style OrderItems fill:#424242,stroke:#90a4ae,color:#fff
+    style Timers fill:#424242,stroke:#90a4ae,color:#fff

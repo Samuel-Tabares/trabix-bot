@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use chrono::{FixedOffset, Utc};
+
 use crate::{
     bot::{
         pricing::{calcular_pedido, ItemCalculated, PedidoCalculado},
@@ -14,7 +16,6 @@ use crate::{
 
 const ADVISOR_CONFIRM_PREFIX: &str = "advisor_confirm_";
 const ADVISOR_CANNOT_PREFIX: &str = "advisor_cannot_";
-const ADVISOR_PROPOSE_PREFIX: &str = "advisor_propose_";
 const ADVISOR_YES_HOUR_PREFIX: &str = "advisor_yes_hour_";
 const ADVISOR_OTHER_HOUR_PREFIX: &str = "advisor_other_hour_";
 const ADVISOR_TAKE_PREFIX: &str = "advisor_take_";
@@ -43,7 +44,6 @@ const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 pub enum AdvisorButtonAction {
     Confirm,
     Cannot,
-    Propose,
     YesHour,
     OtherHour,
     Take,
@@ -56,7 +56,6 @@ pub fn parse_advisor_button_id(button_id: &str) -> Option<(AdvisorButtonAction, 
     [
         (ADVISOR_CONFIRM_PREFIX, AdvisorButtonAction::Confirm),
         (ADVISOR_CANNOT_PREFIX, AdvisorButtonAction::Cannot),
-        (ADVISOR_PROPOSE_PREFIX, AdvisorButtonAction::Propose),
         (ADVISOR_YES_HOUR_PREFIX, AdvisorButtonAction::YesHour),
         (ADVISOR_OTHER_HOUR_PREFIX, AdvisorButtonAction::OtherHour),
         (ADVISOR_TAKE_PREFIX, AdvisorButtonAction::Take),
@@ -98,23 +97,13 @@ pub fn handoff_order_after_address_confirmation(
     context.advisor_timer_started_at = Some(chrono::Utc::now());
     context.advisor_timer_expired = false;
     context.schedule_resume_target = None;
+    context.relay_kind = None;
 
     let pedido = calcular_pedido(&context.items);
-    let is_wholesale = pedido.es_mayor_con_licor || pedido.es_mayor_sin_licor;
-
-    if is_wholesale {
-        context.relay_kind = Some(RELAY_KIND_WHOLESALE.to_string());
-        (
-            ConversationState::WaitAdvisorMayor,
-            wait_advisor_mayor_entry_actions(context, &pedido),
-        )
-    } else {
-        context.relay_kind = None;
-        (
-            ConversationState::WaitAdvisorResponse,
-            wait_advisor_response_entry_actions(context, &pedido),
-        )
-    }
+    (
+        ConversationState::WaitAdvisorResponse,
+        wait_advisor_response_entry_actions(context, &pedido),
+    )
 }
 
 pub fn resume_after_schedule_confirmation(
@@ -129,19 +118,14 @@ pub fn resume_after_schedule_confirmation(
         .clone()
         .unwrap_or_else(|| "wait_advisor_response".to_string());
     context.schedule_resume_target = None;
+    context.relay_kind = None;
 
     let pedido = calcular_pedido(&context.items);
-    if target == "wait_advisor_mayor" {
-        (
-            ConversationState::WaitAdvisorMayor,
-            wait_advisor_mayor_entry_actions(context, &pedido),
-        )
-    } else {
-        (
-            ConversationState::WaitAdvisorResponse,
-            wait_advisor_response_entry_actions(context, &pedido),
-        )
-    }
+    let _legacy_wait_state = target;
+    (
+        ConversationState::WaitAdvisorResponse,
+        wait_advisor_response_entry_actions(context, &pedido),
+    )
 }
 
 pub fn handle_contact_advisor_name(
@@ -347,7 +331,7 @@ pub fn handle_advisor_wait_advisor_response(
     input: &UserInput,
     context: &mut ConversationContext,
 ) -> TransitionResult {
-    let Some(AdvisorButtonAction::Confirm | AdvisorButtonAction::Cannot | AdvisorButtonAction::Propose) =
+    let Some(AdvisorButtonAction::Confirm | AdvisorButtonAction::Cannot) =
         advisor_button_action(input)
     else {
         return Ok((
@@ -367,26 +351,9 @@ pub fn handle_advisor_wait_advisor_response(
 
     match advisor_button_action(input).expect("checked above") {
         AdvisorButtonAction::Confirm => finalize_or_ask_delivery_cost(context),
-        AdvisorButtonAction::Cannot | AdvisorButtonAction::Propose => Ok((
-            ConversationState::NegotiateHour,
-            vec![
-                BotAction::CancelTimer {
-                    timer_type: TimerType::AdvisorResponse,
-                    phone: context.phone_number.clone(),
-                },
-                BotAction::BindAdvisorSession {
-                    advisor_phone: context.advisor_phone.clone(),
-                    target_phone: context.phone_number.clone(),
-                },
-                BotAction::SendText {
-                    to: context.advisor_phone.clone(),
-                    body: format!(
-                        "Pedido {}. ¿Qué hora puede proponer?",
-                        phone_marker(&context.phone_number)
-                    ),
-                },
-            ],
-        )),
+        AdvisorButtonAction::Cannot => {
+            transition_immediate_order_to_scheduled(context)
+        }
         _ => unreachable!(),
     }
 }
@@ -973,6 +940,7 @@ fn wait_advisor_response_entry_actions(
     context: &ConversationContext,
     pedido: &PedidoCalculado,
 ) -> Vec<BotAction> {
+    let scheduled = is_scheduled_order(context);
     let mut actions = vec![
         BotAction::FinalizeCurrentOrder {
             status: "pending_advisor".to_string(),
@@ -997,26 +965,22 @@ fn wait_advisor_response_entry_actions(
     actions.extend([
         BotAction::SendButtons {
             to: context.advisor_phone.clone(),
-            body: "Selecciona cómo deseas responder a este pedido.".to_string(),
-            buttons: vec![
-                reply_button(
-                    &advisor_button_id(ADVISOR_CONFIRM_PREFIX, &context.phone_number),
-                    &advisor_title("Confirmar", &context.phone_number),
-                ),
-                reply_button(
-                    &advisor_button_id(ADVISOR_CANNOT_PREFIX, &context.phone_number),
-                    &advisor_title("No puedo", &context.phone_number),
-                ),
-                reply_button(
-                    &advisor_button_id(ADVISOR_PROPOSE_PREFIX, &context.phone_number),
-                    &advisor_title("Proponer", &context.phone_number),
-                ),
-            ],
+            body: if scheduled {
+                "Confirma el pedido programado.".to_string()
+            } else {
+                "Selecciona cómo deseas responder a este pedido.".to_string()
+            },
+            buttons: advisor_order_buttons(context, scheduled),
         },
         BotAction::SendText {
             to: context.phone_number.clone(),
-            body: "Tu pedido ya fue enviado al asesor. Estamos confirmando disponibilidad."
-                .to_string(),
+            body: if scheduled {
+                "Tu pedido programado ya fue enviado al asesor. Estamos validando la gestión para la hora acordada."
+                    .to_string()
+            } else {
+                "Tu pedido ya fue enviado al asesor. Estamos confirmando disponibilidad."
+                    .to_string()
+            },
         },
         BotAction::StartTimer {
             timer_type: TimerType::AdvisorResponse,
@@ -1184,8 +1148,7 @@ fn finalize_or_ask_delivery_cost(
                 },
                 BotAction::SendText {
                     to: context.phone_number.clone(),
-                    body: "Tu pedido programado quedó registrado. El asesor lo gestionará en el horario acordado."
-                        .to_string(),
+                    body: render_scheduled_confirmation(context),
                 },
                 BotAction::ResetConversation {
                     phone: context.phone_number.clone(),
@@ -1253,12 +1216,91 @@ fn render_confirmed_order(
     total_final: i32,
 ) -> String {
     format!(
-        "Pedido confirmado.\n\nSubtotal: {}\nDomicilio: {}\nTotal final: {}\n\nDirección: {}\nTiempo estimado: el asesor te confirmará la entrega por este chat.",
+        "Pedido confirmado.\n\nSubtotal: {}\nDomicilio: {}\nTotal final: {}\n\nDirección: {}\nTiempo estimado de entrega: 20 a 40 minutos.",
         format_currency(pedido.total_estimado),
         format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
         format_currency(u32::try_from(total_final).unwrap_or_default()),
         context.delivery_address.as_deref().unwrap_or("pendiente")
     )
+}
+
+fn advisor_order_buttons(context: &ConversationContext, scheduled: bool) -> Vec<Button> {
+    let confirm = reply_button(
+        &advisor_button_id(ADVISOR_CONFIRM_PREFIX, &context.phone_number),
+        &advisor_title("Confirmar", &context.phone_number),
+    );
+
+    if scheduled {
+        vec![confirm]
+    } else {
+        vec![
+            confirm,
+            reply_button(
+                &advisor_button_id(ADVISOR_CANNOT_PREFIX, &context.phone_number),
+                &advisor_title("No puedo", &context.phone_number),
+            ),
+        ]
+    }
+}
+
+fn transition_immediate_order_to_scheduled(
+    context: &mut ConversationContext,
+) -> TransitionResult {
+    context.delivery_type = Some("scheduled".to_string());
+    context.scheduled_date = Some(today_bogota_iso_date());
+    context.scheduled_time = None;
+    context.advisor_proposed_hour = None;
+    context.client_counter_hour = None;
+
+    Ok((
+        ConversationState::NegotiateHour,
+        vec![
+            BotAction::CancelTimer {
+                timer_type: TimerType::AdvisorResponse,
+                phone: context.phone_number.clone(),
+            },
+            BotAction::BindAdvisorSession {
+                advisor_phone: context.advisor_phone.clone(),
+                target_phone: context.phone_number.clone(),
+            },
+            BotAction::SendText {
+                to: context.advisor_phone.clone(),
+                body: format!(
+                    "Pedido {} quedó como programado para hoy. ¿Qué hora puede proponer?",
+                    phone_marker(&context.phone_number)
+                ),
+            },
+        ],
+    ))
+}
+
+fn render_scheduled_confirmation(context: &ConversationContext) -> String {
+    let date = context
+        .scheduled_date
+        .as_deref()
+        .unwrap_or("hoy");
+    let time = context
+        .scheduled_time
+        .as_deref()
+        .unwrap_or("hora por confirmar");
+
+    format!(
+        "Tu pedido fue registrado.\n\nFecha de referencia: {}\nHora acordada: {}\n\nEl día de la entrega te contactaremos para gestionar el despacho.",
+        date, time
+    )
+}
+
+fn is_scheduled_order(context: &ConversationContext) -> bool {
+    context.delivery_type.as_deref() == Some("scheduled")
+}
+
+fn today_bogota_iso_date() -> String {
+    let offset = FixedOffset::west_opt(5 * 3600).expect("valid Bogota offset");
+    Utc::now()
+        .with_timezone(&offset)
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string()
 }
 
 fn render_items(items: &[ItemCalculated]) -> String {
@@ -1348,7 +1390,7 @@ fn advisor_button_id(prefix: &str, phone: &str) -> String {
 }
 
 fn advisor_title(title: &str, phone: &str) -> String {
-    format!("{title} {}", phone_marker(phone))
+    format!("{title} {}", phone_button_suffix(phone))
 }
 
 fn phone_marker(phone: &str) -> String {
@@ -1358,6 +1400,14 @@ fn phone_marker(phone: &str) -> String {
         phone
     };
     format!("[...{suffix}]")
+}
+
+fn phone_button_suffix(phone: &str) -> &str {
+    if phone.len() >= 4 {
+        &phone[phone.len() - 4..]
+    } else {
+        phone
+    }
 }
 
 fn reply_button(id: &str, title: &str) -> Button {
