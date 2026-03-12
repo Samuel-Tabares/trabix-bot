@@ -514,8 +514,8 @@ mod tests {
     #[test]
     fn rejects_invalid_placeholders() {
         let broken = include_str!("../config/messages.toml").replace(
-            "confirm_template = \"\"\"Entrega programada para: {date}\nHora de referencia: {time}\n\n¿Confirmas?\"\"\"",
-            "confirm_template = \"Entrega programada para: {date}\"",
+            "confirm_template = \"\"\"📦 Entrega programada\nFecha: {date}\nHora de referencia: {time}\n\n¿Así está bien?\"\"\"",
+            "confirm_template = \"📦 Entrega programada\"",
         );
 
         let error = ClientMessages::from_toml_str(&broken).expect_err("should fail");
