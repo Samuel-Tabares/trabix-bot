@@ -113,10 +113,7 @@ pub fn verify_signature(
 async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Error + Send + Sync>> {
     let payload: WebhookPayload = serde_json::from_slice(&body)?;
     let Some(message) = payload.first_message() else {
-        tracing::info!(
-            body = %String::from_utf8_lossy(&body),
-            "webhook without incoming messages ignored"
-        );
+        tracing::info!("webhook without incoming messages ignored");
         return Ok(());
     };
 
