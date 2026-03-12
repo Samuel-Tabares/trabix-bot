@@ -129,7 +129,14 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
         "received whatsapp message"
     );
 
-    state.wa_client.mark_as_read(&message_id).await?;
+    if let Err(err) = state.wa_client.mark_as_read(&message_id).await {
+        tracing::warn!(
+            phone = %from,
+            message_id = %message_id,
+            error = %err,
+            "failed to mark inbound whatsapp message as read; continuing"
+        );
+    }
 
     if from == state.config.advisor_phone {
         handle_advisor_message(state, input).await?;
