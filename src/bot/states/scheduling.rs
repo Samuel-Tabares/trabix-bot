@@ -9,6 +9,7 @@ use crate::{
         },
         states::{advisor, data_collect, menu},
     },
+    messages::{client_messages, render_template},
     whatsapp::types::{Button, ButtonReplyPayload},
 };
 
@@ -49,7 +50,7 @@ pub fn handle_when_delivery(
             ConversationState::WhenDelivery,
             retry_actions(
                 &context.phone_number,
-                "Selecciona si tu pedido es inmediato o programado.",
+                &client_messages().scheduling.retry_when_delivery,
                 when_delivery_actions(&context.phone_number),
             ),
         )),
@@ -91,7 +92,7 @@ pub fn handle_out_of_hours(
             ConversationState::OutOfHours,
             retry_actions(
                 &context.phone_number,
-                "Selecciona una de las opciones disponibles.",
+                &client_messages().scheduling.out_of_hours_retry,
                 out_of_hours_actions(&context.phone_number),
             ),
         )),
@@ -107,7 +108,7 @@ pub fn handle_select_date(
             text,
             DATE_MIN_LEN,
             DATE_MAX_LEN,
-            "La fecha debe tener entre 2 y 40 caracteres.",
+            &client_messages().scheduling.date_length_error,
         ) {
             Ok(date) => {
                 context.scheduled_date = Some(date);
@@ -129,7 +130,7 @@ pub fn handle_select_date(
             ConversationState::SelectDate,
             retry_actions(
                 &context.phone_number,
-                "Escribe una fecha para programar tu pedido.",
+                &client_messages().scheduling.select_date_retry_non_text,
                 select_date_actions(&context.phone_number),
             ),
         )),
@@ -145,7 +146,7 @@ pub fn handle_select_time(
             text,
             TIME_MIN_LEN,
             TIME_MAX_LEN,
-            "La hora debe tener entre 1 y 40 caracteres.",
+            &client_messages().scheduling.time_length_error,
         ) {
             Ok(time) => {
                 context.scheduled_time = Some(time);
@@ -167,7 +168,7 @@ pub fn handle_select_time(
             ConversationState::SelectTime,
             retry_actions(
                 &context.phone_number,
-                "Escribe una hora para programar tu pedido.",
+                &client_messages().scheduling.select_time_retry_non_text,
                 select_time_actions(&context.phone_number),
             ),
         )),
@@ -202,7 +203,7 @@ pub fn handle_confirm_schedule(
             ConversationState::ConfirmSchedule,
             retry_actions(
                 &context.phone_number,
-                "Confirma la programación o elige cambiarla.",
+                &client_messages().scheduling.confirm_retry,
                 confirm_schedule_actions(context),
             ),
         )),
@@ -210,29 +211,31 @@ pub fn handle_confirm_schedule(
 }
 
 pub fn when_delivery_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().scheduling;
     vec![BotAction::SendButtons {
         to: phone.to_string(),
-        body: "¿Cuándo lo necesitas?".to_string(),
+        body: messages.when_delivery_body.clone(),
         buttons: vec![
-            reply_button(IMMEDIATE_DELIVERY, "Entrega Inmediata"),
-            reply_button(SCHEDULED_DELIVERY, "Entrega Programada"),
+            reply_button(IMMEDIATE_DELIVERY, &messages.immediate_button),
+            reply_button(SCHEDULED_DELIVERY, &messages.scheduled_button),
         ],
     }]
 }
 
 pub fn out_of_hours_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().scheduling;
     vec![
         BotAction::SendText {
             to: phone.to_string(),
-            body: "Estamos fuera del horario de entrega inmediata. Puedes programar tu pedido para después o intentar contactar asesor.".to_string(),
+            body: messages.out_of_hours_text.clone(),
         },
         BotAction::SendButtons {
             to: phone.to_string(),
-            body: "¿Qué deseas hacer?".to_string(),
+            body: messages.out_of_hours_buttons_body.clone(),
             buttons: vec![
-                reply_button(SCHEDULE_LATER, "Programar"),
-                reply_button(CONTACT_ADVISOR_NOW, "Asesor"),
-                reply_button(BACK_MAIN_MENU, "Menú"),
+                reply_button(SCHEDULE_LATER, &messages.out_of_hours_schedule_button),
+                reply_button(CONTACT_ADVISOR_NOW, &messages.out_of_hours_advisor_button),
+                reply_button(BACK_MAIN_MENU, &messages.out_of_hours_menu_button),
             ],
         },
     ]
@@ -241,18 +244,19 @@ pub fn out_of_hours_actions(phone: &str) -> Vec<BotAction> {
 pub fn select_date_actions(phone: &str) -> Vec<BotAction> {
     vec![BotAction::SendText {
         to: phone.to_string(),
-        body: "Escribe la fecha de entrega como prefieras. Solo necesitamos una referencia para el asesor.".to_string(),
+        body: client_messages().scheduling.select_date_prompt.clone(),
     }]
 }
 
 pub fn select_time_actions(phone: &str) -> Vec<BotAction> {
     vec![BotAction::SendText {
         to: phone.to_string(),
-        body: "Escribe la hora de entrega como prefieras. Solo necesitamos una referencia para el asesor.".to_string(),
+        body: client_messages().scheduling.select_time_prompt.clone(),
     }]
 }
 
 pub fn confirm_schedule_actions(context: &ConversationContext) -> Vec<BotAction> {
+    let messages = &client_messages().scheduling;
     let date = context
         .scheduled_date
         .as_deref()
@@ -265,17 +269,17 @@ pub fn confirm_schedule_actions(context: &ConversationContext) -> Vec<BotAction>
     vec![
         BotAction::SendText {
             to: context.phone_number.clone(),
-            body: format!(
-                "Entrega programada para: {}\nHora de referencia: {}\n\n¿Confirmas?",
-                date, time
+            body: render_template(
+                &messages.confirm_template,
+                &[("date", date), ("time", time)],
             ),
         },
         BotAction::SendButtons {
             to: context.phone_number.clone(),
-            body: "Confirma la programación.".to_string(),
+            body: messages.confirm_buttons_body.clone(),
             buttons: vec![
-                reply_button(CONFIRM_SCHEDULE, "Confirmar"),
-                reply_button(CHANGE_SCHEDULE, "Cambiar"),
+                reply_button(CONFIRM_SCHEDULE, &messages.confirm_button),
+                reply_button(CHANGE_SCHEDULE, &messages.change_button),
             ],
         },
     ]

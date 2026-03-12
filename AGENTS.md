@@ -80,7 +80,8 @@ Use these commands regularly:
 Operational notes:
 
 - Live tests rely on `.env`. They now load it via `dotenvy`, but still require valid credentials and reachable services.
-- `TRANSFER_PAYMENT_TEXT` should be quoted in `.env` if it contains spaces.
+- Customer-facing bot copy now lives in `config/messages.toml` and is loaded at startup; restart the service after editing that file.
+- `TRANSFER_PAYMENT_TEXT` is now optional fallback-only in `.env` for backward compatibility if `config/messages.toml` leaves `checkout.transfer_payment_text` empty.
 - `MENU_IMAGE_MEDIA_ID` must contain a valid Meta `media_id`; the runtime no longer expects separate media IDs for liquor/non-liquor flavor flows.
 - `FORCE_BOGOTA_NOW=YYYY-MM-DD HH:MM` is available only for local testing of after-hours scheduling. Do not enable it in Railway or production.
 - Keep `ADVISOR_PHONE` different from `WHATSAPP_TEST_RECIPIENT` during local WhatsApp validation, otherwise tester messages are routed as advisor messages.

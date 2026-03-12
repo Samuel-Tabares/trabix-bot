@@ -5,6 +5,7 @@ use granizado_bot::{
     bot::timers::{new_timer_map, restore_pending_timers},
     config::Config,
     db::init_pool,
+    messages::{set_client_messages, ClientMessages},
     routes,
     whatsapp::client::WhatsAppClient,
     AppState,
@@ -22,6 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let config = Config::from_env()?;
+    let messages = ClientMessages::load_default()?;
+    set_client_messages(messages)?;
     let pool = init_pool(&config.database_url).await?;
     sqlx::migrate!().run(&pool).await?;
 

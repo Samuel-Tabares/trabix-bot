@@ -31,6 +31,7 @@ use crate::{
             update_order_delivery_cost, update_order_status, update_state,
         },
     },
+    messages::client_messages,
     whatsapp::types::WebhookPayload,
     AppState,
 };
@@ -352,9 +353,19 @@ async fn execute_actions(
                     .await?;
             }
             BotAction::SendTransferInstructions { to } => {
+                let configured = client_messages().checkout.transfer_payment_text.trim();
+                let body = if configured.is_empty() {
+                    state
+                        .config
+                        .transfer_payment_text
+                        .as_deref()
+                        .unwrap_or_default()
+                } else {
+                    configured
+                };
                 state
                     .wa_client
-                    .send_text(to, &state.config.transfer_payment_text)
+                    .send_text(to, body)
                     .await?;
             }
             BotAction::ResetConversation { phone } => {

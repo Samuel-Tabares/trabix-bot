@@ -8,6 +8,7 @@ use crate::{
         },
         states::advisor::{parse_advisor_button_id, AdvisorButtonAction},
     },
+    messages::client_messages,
     whatsapp::types::{Button, ButtonReplyPayload},
 };
 
@@ -51,7 +52,7 @@ pub fn handle_relay_mode(
             ConversationState::RelayMode,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "En esta fase el relay solo admite mensajes de texto.".to_string(),
+                body: client_messages().relay_customer.relay_text_only.clone(),
             }],
         )),
     }
@@ -106,7 +107,7 @@ pub fn handle_relay_mode_advisor(
             ConversationState::RelayMode,
             vec![BotAction::SendText {
                 to: context.advisor_phone.clone(),
-                body: "En esta fase el relay solo admite mensajes de texto.".to_string(),
+                body: client_messages().relay_customer.relay_text_only.clone(),
             }],
         )),
     }
@@ -121,9 +122,9 @@ fn close_relay_actions(
     by_timeout: bool,
 ) -> Vec<BotAction> {
     let client_message = if by_timeout {
-        "La conversación con el asesor se cerró por inactividad."
+        client_messages().relay_customer.relay_closed_by_timeout.as_str()
     } else {
-        "La conversación con el asesor fue finalizada."
+        client_messages().relay_customer.relay_closed_manual.as_str()
     };
 
     let advisor_message = if by_timeout {

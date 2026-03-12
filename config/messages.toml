@@ -1,0 +1,237 @@
+[menu]
+main_welcome = "Hola, bienvenido a Granizados. Elige una opción del menú principal."
+main_list_body = "¿Qué deseas hacer?"
+main_list_button_text = "Ver opciones"
+main_section_title = "Menú Principal"
+make_order_title = "Hacer Pedido"
+make_order_description = "Arma tu pedido de granizados"
+view_menu_title = "Ver Menú"
+view_menu_description = "Sabores y precios"
+view_schedule_title = "Horarios"
+view_schedule_description = "Horarios de entrega"
+contact_advisor_title = "Hablar con Asesor"
+contact_advisor_description = "Atención por asesor"
+retry_main_menu = "Selecciona una opción del menú para continuar."
+menu_image_caption = "Menú general de granizados"
+menu_text = """MENÚ Y PRECIOS
+
+DETAL:
+Con licor: $8.000
+Segundo con licor: $4.000
+Sin licor: $7.000 c/u
+
+AL MAYOR (20+ del mismo tipo):
+Con licor: 20-49u $4.900 | 50-99u $4.700 | 100+u $4.500
+Sin licor: 20-49u $4.800 | 50-99u $4.500 | 100+u $4.200"""
+view_menu_buttons_body = "¿Qué deseas hacer ahora?"
+view_menu_make_order_button = "Hacer Pedido"
+view_menu_back_button = "Volver al Menú"
+retry_view_menu = "Selecciona una opción del menú para continuar."
+schedule_text = """HORARIOS
+Entrega inmediata: 8:00 AM - 11:00 PM
+
+Si estás fuera de este horario, aún podemos intentar programar tu pedido o dejarlo listo para asesor."""
+schedule_buttons_body = "¿Deseas hacer un pedido?"
+schedule_make_order_button = "Hacer Pedido"
+schedule_back_button = "Volver al Menú"
+retry_view_schedule = "Selecciona una opción válida para continuar."
+
+[scheduling]
+when_delivery_body = "¿Cuándo lo necesitas?"
+immediate_button = "Entrega Inmediata"
+scheduled_button = "Entrega Programada"
+retry_when_delivery = "Selecciona si tu pedido es inmediato o programado."
+out_of_hours_text = "Estamos fuera del horario de entrega inmediata. Puedes programar tu pedido para después o intentar contactar asesor."
+out_of_hours_buttons_body = "¿Qué deseas hacer?"
+out_of_hours_schedule_button = "Programar"
+out_of_hours_advisor_button = "Asesor"
+out_of_hours_menu_button = "Menú"
+out_of_hours_retry = "Selecciona una de las opciones disponibles."
+select_date_prompt = "Escribe la fecha de entrega como prefieras. Solo necesitamos una referencia para el asesor."
+select_date_retry_non_text = "Escribe una fecha para programar tu pedido."
+date_length_error = "La fecha debe tener entre 2 y 40 caracteres."
+select_time_prompt = "Escribe la hora de entrega como prefieras. Solo necesitamos una referencia para el asesor."
+select_time_retry_non_text = "Escribe una hora para programar tu pedido."
+time_length_error = "La hora debe tener entre 1 y 40 caracteres."
+confirm_template = """Entrega programada para: {date}
+Hora de referencia: {time}
+
+¿Confirmas?"""
+confirm_buttons_body = "Confirma la programación."
+confirm_button = "Confirmar"
+change_button = "Cambiar"
+confirm_retry = "Confirma la programación o elige cambiarla."
+
+[data_collect]
+ask_name = "¿Nombre completo?"
+ask_phone = "¿Teléfono de contacto?"
+ask_address = "¿Dirección de entrega?"
+retry_name_non_text = "Escribe tu nombre completo para continuar."
+retry_phone_non_text = "Escribe un teléfono válido para continuar."
+retry_address_non_text = "Escribe la dirección de entrega para continuar."
+name_length_error = "El nombre debe tener entre 2 y 80 caracteres."
+phone_digits_error = "El teléfono debe contener solo dígitos."
+phone_length_error = "El teléfono debe tener entre 7 y 15 dígitos."
+address_length_error = "La dirección debe tener entre 5 y 160 caracteres."
+
+[order]
+select_type_body = "¿Qué tipo de granizado deseas?"
+with_liquor_button = "Con Licor"
+without_liquor_button = "Sin Licor"
+retry_select_type = "Selecciona el tipo de granizado."
+select_flavor_with_liquor_body = "Selecciona el sabor con licor que deseas."
+select_flavor_without_liquor_body = "Selecciona el sabor sin licor que deseas."
+flavor_button_text = "Ver sabores"
+flavor_section_title = "Sabores disponibles"
+flavor_row_description = "Seleccionar sabor"
+retry_select_flavor = "Selecciona un sabor de la lista para continuar."
+quantity_prompt_template = "¿Cuántos de {flavor} {kind} deseas?"
+quantity_kind_with_liquor = "con licor"
+quantity_kind_without_liquor = "sin licor"
+retry_quantity_non_text = "Escribe una cantidad válida para continuar."
+quantity_parse_error = "La cantidad debe ser un número entero."
+quantity_range_error = "La cantidad debe estar entre 1 y 999."
+added_to_order_template = """Agregado al pedido.
+
+Resumen parcial:
+{summary}"""
+partial_summary_line_template = "- {quantity} x {flavor} ({kind})"
+partial_kind_with_liquor = "con licor"
+partial_kind_without_liquor = "sin licor"
+add_more_body = "¿Deseas agregar más granizados?"
+add_more_button = "Agregar más"
+finish_order_button = "Finalizar pedido"
+retry_add_more = "Selecciona si deseas agregar más o finalizar el pedido."
+
+[order.flavors_with_liquor]
+liquor_maracumango_ron_blanco = "Maracumango Ron blanco"
+liquor_blueberry_vodka = "Blueberry Vodka"
+liquor_uva_vodka = "Uva Vodka"
+liquor_bonbonbum_whiskey = "Bonbonbum Whiskey"
+liquor_bonbonbum_fresa_champagne = "Bonbonbum fresa champaña"
+liquor_smirnoff_lulo = "Smirnoff de lulo"
+liquor_manzana_verde_tequila = "Manzana verde Tequila"
+
+[order.flavors_without_liquor]
+non_liquor_maracumango = "Maracumango"
+non_liquor_manzana_verde = "Manzana verde"
+non_liquor_bonbonbum = "Bonbonbum"
+non_liquor_blueberry = "Blueberry"
+
+[checkout]
+modify_order_text = "Perfecto. Vamos a reconstruir tu pedido desde los sabores."
+receipt_image_required = "Para validar el pago necesito una imagen del comprobante. Envíala como foto por este chat."
+change_address_prompt = "Escribe la nueva dirección completa para actualizar el pedido."
+change_address_non_text = "Escribe la nueva dirección en texto para continuar."
+summary_template = """RESUMEN DEL PEDIDO
+
+Cliente: {customer_name}
+Teléfono: {customer_phone}
+Dirección: {delivery_address}
+Entrega: {delivery}
+
+Items:
+{items}
+
+Total estimado: {total_estimated}
+
+Nota: el domicilio no está incluido. Si el pedido es inmediato, un asesor lo define después de revisar tu pedido."""
+summary_delivery_immediate = "Inmediata"
+summary_delivery_scheduled_template = """Programada
+Fecha: {date}
+Hora: {time}"""
+summary_delivery_pending = "Pendiente"
+summary_items_empty = "- Sin items"
+summary_item_line_template = "- {quantity} x {flavor} ({kind}, {mode}) -> {subtotal}{promo}"
+summary_item_promo_template = " | promo pares en {promo_units} unidad(es)"
+summary_item_kind_with_liquor = "con licor"
+summary_item_kind_without_liquor = "sin licor"
+summary_item_mode_wholesale = "mayor"
+summary_item_mode_detail = "detal"
+summary_list_body = "Selecciona cómo quieres continuar con tu pedido."
+summary_list_button_text = "Ver opciones"
+summary_section_title = "Pago y pedido"
+cash_on_delivery_title = "Contra Entrega"
+cash_on_delivery_description = "Pagar al recibir el pedido"
+pay_now_title = "Pago Ahora"
+pay_now_description = "Transferencia y envío de comprobante"
+modify_order_title = "Modificar Pedido"
+modify_order_description = "Borrar items y volver a elegir sabores"
+cancel_order_title = "Cancelar Pedido"
+cancel_order_description = "Salir y volver al menú principal"
+confirm_address_template = """Tu dirección de entrega es:
+{address}
+
+¿Es correcta?"""
+confirm_address_button = "Si, correcta"
+change_address_button = "Cambiar direccion"
+transfer_payment_text = ""
+wait_receipt_prompt = "Envía una foto del comprobante en los próximos 10 minutos para continuar."
+receipt_timeout_body = "El tiempo para el comprobante ya venció. Puedes cambiar la forma de pago o cancelar el pedido."
+receipt_timeout_change_payment_button = "Cambiar pago"
+receipt_timeout_cancel_button = "Cancelar"
+
+[advisor_customer]
+contact_name_prompt = "¿Nombre del cliente?"
+contact_phone_prompt = "¿Teléfono de contacto?"
+contact_name_retry_non_text = "Escribe tu nombre para continuar."
+contact_phone_retry_non_text = "Escribe un teléfono válido para continuar."
+wait_contact_initial_text = "Estamos contactando al asesor. Te avisaremos por este chat cuando responda."
+wait_contact_repeat_text = "Estamos contactando al asesor. Apenas responda, seguimos por este chat."
+wait_contact_leave_message_prompt = "Escribe el mensaje que deseas dejar al asesor."
+leave_message_non_text = "Por ahora solo puedo reenviar mensajes de texto al asesor."
+leave_message_length_error = "El mensaje debe tener entre 2 y 500 caracteres."
+leave_message_success = "Tu mensaje fue enviado al asesor. Te responderán por ese medio cuando estén disponibles."
+wait_delivery_cost_text = "Estamos cerrando el valor final de tu pedido con el asesor."
+wait_negotiate_hour_text = "El asesor está revisando una hora para tu pedido."
+wait_advisor_hour_decision_text = "Tu propuesta de hora ya fue enviada al asesor. Estamos esperando su respuesta."
+wait_advisor_confirm_text = "Estamos esperando la confirmación final del asesor."
+wait_general_text = "El asesor está atendiendo este caso en este momento."
+availability_wait_text = "Estamos confirmando disponibilidad con el asesor. Apenas responda te avisamos."
+wholesale_wait_text = "Tu pedido al por mayor ya fue enviado al asesor. Estamos esperando que tome el caso."
+order_sent_text = "Tu pedido ya fue enviado al asesor. Estamos confirmando disponibilidad."
+scheduled_order_sent_text = "Tu pedido programado ya fue enviado al asesor. Estamos validando la gestión para la hora acordada."
+wholesale_order_sent_text = "Tu pedido al por mayor fue enviado al asesor. Estamos esperando que tome el caso."
+proposed_hour_question_template = "El asesor propone entregar {hour}. ¿Aceptas esa hora?"
+proposed_hour_buttons_body = "Selecciona cómo deseas continuar."
+accept_button = "Aceptar"
+reject_button = "Rechazar"
+proposed_hour_repeat_template = "El asesor propone entregar {hour}."
+client_hour_prompt = "Escribe la hora que te sirve y se la enviamos al asesor."
+client_hour_retry_non_text = "Escribe la hora que te sirve para continuar."
+hour_length_error = "La hora debe tener entre 1 y 40 caracteres."
+confirmed_order_template = """Pedido confirmado.
+
+Subtotal: {subtotal}
+Domicilio: {delivery_cost}
+Total final: {total_final}
+
+Dirección: {address}
+Tiempo estimado de entrega: 20 a 40 minutos."""
+scheduled_confirmation_template = """Tu pedido fue registrado.
+
+Fecha de referencia: {date}
+Hora acordada: {time}
+
+El día de la entrega te contactaremos para gestionar el despacho."""
+
+[relay_customer]
+direct_contact_connected_text = "El asesor ya está disponible. Puedes escribir por este chat y el mensaje será reenviado."
+wholesale_connected_text = "Tu pedido al por mayor ya quedó conectado con el asesor."
+relay_text_only = "En esta fase el relay solo admite mensajes de texto."
+relay_closed_by_timeout = "La conversación con el asesor se cerró por inactividad."
+relay_closed_manual = "La conversación con el asesor fue finalizada."
+
+[timers_customer]
+receipt_timeout_text = "No recibimos el comprobante dentro de los 10 minutos. Puedes cambiar la forma de pago o cancelar el pedido."
+receipt_timeout_buttons_body = "Selecciona cómo quieres continuar."
+advisor_timeout_text = "El asesor no respondió a tiempo. Puedes reintentar, programar o volver al menú."
+advisor_timeout_wholesale_text = "El asesor no tomó el caso todavía. Puedes reintentar, programar o volver al menú."
+advisor_timeout_buttons_body = "¿Cómo deseas continuar?"
+advisor_timeout_schedule_button = "Programar"
+advisor_timeout_retry_button = "Reintentar"
+advisor_timeout_menu_button = "Menú"
+contact_timeout_body = "El asesor no está disponible en este momento. Puedes dejar un mensaje o volver al menú."
+contact_timeout_leave_message_button = "Dejar mensaje"
+contact_timeout_menu_button = "Menú"
+relay_timeout_text = "La conversación con el asesor se cerró por inactividad."

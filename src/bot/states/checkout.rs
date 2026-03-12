@@ -9,6 +9,7 @@ use crate::{
         },
         timers::RECEIPT_TIMEOUT,
     },
+    messages::{client_messages, render_template},
     whatsapp::types::{Button, ButtonReplyPayload, ListRow, ListSection},
 };
 
@@ -71,7 +72,7 @@ pub fn handle_show_summary(
             }
             actions.push(BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "Perfecto. Vamos a reconstruir tu pedido desde los sabores.".to_string(),
+                body: client_messages().checkout.modify_order_text.clone(),
             });
             actions.extend(order::select_type_actions(&context.phone_number));
 
@@ -134,7 +135,7 @@ pub fn handle_wait_receipt(
             ConversationState::WaitReceipt,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "Para validar el pago necesito una imagen del comprobante. Envíala como foto por este chat.".to_string(),
+                body: client_messages().checkout.receipt_image_required.clone(),
             }],
         )),
     }
@@ -165,8 +166,7 @@ pub fn handle_confirm_address(
                         },
                         BotAction::SendText {
                             to: context.phone_number.clone(),
-                            body: "Escribe la nueva dirección completa para actualizar el pedido."
-                                .to_string(),
+                            body: client_messages().checkout.change_address_prompt.clone(),
                         },
                     ],
                 )),
@@ -175,7 +175,7 @@ pub fn handle_confirm_address(
                 ConversationState::ConfirmAddress,
                 vec![BotAction::SendText {
                     to: context.phone_number.clone(),
-                    body: "Escribe la nueva dirección en texto para continuar.".to_string(),
+                    body: client_messages().checkout.change_address_non_text.clone(),
                 }],
             )),
         };
@@ -193,8 +193,7 @@ pub fn handle_confirm_address(
                 ConversationState::ConfirmAddress,
                 vec![BotAction::SendText {
                     to: context.phone_number.clone(),
-                    body: "Escribe la nueva dirección completa para actualizar el pedido."
-                        .to_string(),
+                    body: client_messages().checkout.change_address_prompt.clone(),
                 }],
             ))
         }
@@ -226,6 +225,7 @@ pub fn handle_order_complete(context: &mut ConversationContext) -> TransitionRes
 }
 
 pub fn show_summary_actions(context: &ConversationContext) -> Vec<BotAction> {
+    let messages = &client_messages().checkout;
     let pedido = calcular_pedido(&context.items);
     vec![
         BotAction::SendText {
@@ -234,30 +234,30 @@ pub fn show_summary_actions(context: &ConversationContext) -> Vec<BotAction> {
         },
         BotAction::SendList {
             to: context.phone_number.clone(),
-            body: "Selecciona cómo quieres continuar con tu pedido.".to_string(),
-            button_text: "Ver opciones".to_string(),
+            body: messages.summary_list_body.clone(),
+            button_text: messages.summary_list_button_text.clone(),
             sections: vec![ListSection {
-                title: "Pago y pedido".to_string(),
+                title: messages.summary_section_title.clone(),
                 rows: vec![
                     ListRow {
                         id: CASH_ON_DELIVERY.to_string(),
-                        title: "Contra Entrega".to_string(),
-                        description: "Pagar al recibir el pedido".to_string(),
+                        title: messages.cash_on_delivery_title.clone(),
+                        description: messages.cash_on_delivery_description.clone(),
                     },
                     ListRow {
                         id: PAY_NOW.to_string(),
-                        title: "Pago Ahora".to_string(),
-                        description: "Transferencia y envío de comprobante".to_string(),
+                        title: messages.pay_now_title.clone(),
+                        description: messages.pay_now_description.clone(),
                     },
                     ListRow {
                         id: MODIFY_ORDER.to_string(),
-                        title: "Modificar Pedido".to_string(),
-                        description: "Borrar items y volver a elegir sabores".to_string(),
+                        title: messages.modify_order_title.clone(),
+                        description: messages.modify_order_description.clone(),
                     },
                     ListRow {
                         id: CANCEL_ORDER.to_string(),
-                        title: "Cancelar Pedido".to_string(),
-                        description: "Salir y volver al menú principal".to_string(),
+                        title: messages.cancel_order_title.clone(),
+                        description: messages.cancel_order_description.clone(),
                     },
                 ],
             }],
@@ -266,18 +266,22 @@ pub fn show_summary_actions(context: &ConversationContext) -> Vec<BotAction> {
 }
 
 pub fn confirm_address_actions(context: &ConversationContext) -> Vec<BotAction> {
+    let messages = &client_messages().checkout;
     vec![BotAction::SendButtons {
         to: context.phone_number.clone(),
-        body: format!(
-            "Tu dirección de entrega es:\n{}\n\n¿Es correcta?",
-            context
-                .delivery_address
-                .as_deref()
-                .unwrap_or("pendiente por confirmar")
+        body: render_template(
+            &messages.confirm_address_template,
+            &[(
+                "address",
+                context
+                    .delivery_address
+                    .as_deref()
+                    .unwrap_or("pendiente por confirmar"),
+            )],
         ),
         buttons: vec![
-            reply_button(CONFIRM_ADDRESS, "Si, correcta"),
-            reply_button(CHANGE_ADDRESS, "Cambiar direccion"),
+            reply_button(CONFIRM_ADDRESS, &messages.confirm_address_button),
+            reply_button(CHANGE_ADDRESS, &messages.change_address_button),
         ],
     }]
 }
@@ -292,8 +296,7 @@ fn wait_receipt_entry_actions(context: &ConversationContext) -> Vec<BotAction> {
         },
         BotAction::SendText {
             to: context.phone_number.clone(),
-            body: "Envía una foto del comprobante en los próximos 10 minutos para continuar."
-                .to_string(),
+            body: client_messages().checkout.wait_receipt_prompt.clone(),
         },
         BotAction::StartTimer {
             timer_type: TimerType::ReceiptUpload,
@@ -304,12 +307,16 @@ fn wait_receipt_entry_actions(context: &ConversationContext) -> Vec<BotAction> {
 }
 
 fn receipt_timeout_repeat_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().checkout;
     vec![BotAction::SendButtons {
         to: phone.to_string(),
-        body: "El tiempo para el comprobante ya venció. Puedes cambiar la forma de pago o cancelar el pedido.".to_string(),
+        body: messages.receipt_timeout_body.clone(),
         buttons: vec![
-            reply_button(CHANGE_PAYMENT_METHOD, "Cambiar pago"),
-            reply_button(CANCEL_ORDER, "Cancelar"),
+            reply_button(
+                CHANGE_PAYMENT_METHOD,
+                &messages.receipt_timeout_change_payment_button,
+            ),
+            reply_button(CANCEL_ORDER, &messages.receipt_timeout_cancel_button),
         ],
     }]
 }
@@ -349,56 +356,80 @@ fn render_summary(
     context: &ConversationContext,
     pedido: &crate::bot::pricing::PedidoCalculado,
 ) -> String {
+    let messages = &client_messages().checkout;
     let entrega = match context.delivery_type.as_deref() {
-        Some("immediate") => "Inmediata".to_string(),
-        Some("scheduled") => format!(
-            "Programada\nFecha: {}\nHora: {}",
-            context.scheduled_date.as_deref().unwrap_or("pendiente"),
-            context.scheduled_time.as_deref().unwrap_or("pendiente")
+        Some("immediate") => messages.summary_delivery_immediate.clone(),
+        Some("scheduled") => render_template(
+            &messages.summary_delivery_scheduled_template,
+            &[
+                ("date", context.scheduled_date.as_deref().unwrap_or("pendiente")),
+                ("time", context.scheduled_time.as_deref().unwrap_or("pendiente")),
+            ],
         ),
         Some(other) => other.to_string(),
-        None => "Pendiente".to_string(),
+        None => messages.summary_delivery_pending.clone(),
     };
 
-    format!(
-        "RESUMEN DEL PEDIDO\n\nCliente: {}\nTeléfono: {}\nDirección: {}\nEntrega: {}\n\nItems:\n{}\n\nTotal estimado: {}\n\nNota: el domicilio no está incluido. Si el pedido es inmediato, un asesor lo define después de revisar tu pedido.",
-        context.customer_name.as_deref().unwrap_or("pendiente"),
-        context.customer_phone.as_deref().unwrap_or("pendiente"),
-        context.delivery_address.as_deref().unwrap_or("pendiente"),
-        entrega,
-        render_items(&pedido.items_detalle),
-        format_currency(pedido.total_estimado),
+    render_template(
+        &messages.summary_template,
+        &[
+            (
+                "customer_name",
+                context.customer_name.as_deref().unwrap_or("pendiente"),
+            ),
+            (
+                "customer_phone",
+                context.customer_phone.as_deref().unwrap_or("pendiente"),
+            ),
+            (
+                "delivery_address",
+                context.delivery_address.as_deref().unwrap_or("pendiente"),
+            ),
+            ("delivery", &entrega),
+            ("items", &render_items(&pedido.items_detalle)),
+            ("total_estimated", &format_currency(pedido.total_estimado)),
+        ],
     )
 }
 
 fn render_items(items: &[ItemCalculated]) -> String {
+    let messages = &client_messages().checkout;
     if items.is_empty() {
-        return "- Sin items".to_string();
+        return messages.summary_items_empty.clone();
     }
 
     items
         .iter()
         .map(|item| {
             let tipo = if item.has_liquor {
-                "con licor"
+                messages.summary_item_kind_with_liquor.as_str()
             } else {
-                "sin licor"
+                messages.summary_item_kind_without_liquor.as_str()
             };
-            let modo = if item.is_wholesale { "mayor" } else { "detal" };
+            let modo = if item.is_wholesale {
+                messages.summary_item_mode_wholesale.as_str()
+            } else {
+                messages.summary_item_mode_detail.as_str()
+            };
             let promo = if item.promo_units > 0 {
-                format!(" | promo pares en {} unidad(es)", item.promo_units)
+                render_template(
+                    &messages.summary_item_promo_template,
+                    &[("promo_units", &item.promo_units.to_string())],
+                )
             } else {
                 String::new()
             };
 
-            format!(
-                "- {} x {} ({}, {}) -> {}{}",
-                item.quantity,
-                item.flavor,
-                tipo,
-                modo,
-                format_currency(item.subtotal),
-                promo
+            render_template(
+                &messages.summary_item_line_template,
+                &[
+                    ("quantity", &item.quantity.to_string()),
+                    ("flavor", &item.flavor),
+                    ("kind", tipo),
+                    ("mode", modo),
+                    ("subtotal", &format_currency(item.subtotal)),
+                    ("promo", &promo),
+                ],
             )
         })
         .collect::<Vec<_>>()

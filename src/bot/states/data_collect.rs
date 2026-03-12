@@ -4,6 +4,7 @@ use crate::bot::{
     },
     states::order,
 };
+use crate::messages::client_messages;
 
 pub fn handle_collect_name(
     input: &UserInput,
@@ -31,7 +32,7 @@ pub fn handle_collect_name(
             ConversationState::CollectName,
             retry_actions(
                 &context.phone_number,
-                "Escribe tu nombre completo para continuar.",
+                &client_messages().data_collect.retry_name_non_text,
                 collect_name_actions(&context.phone_number),
             ),
         )),
@@ -64,7 +65,7 @@ pub fn handle_collect_phone(
             ConversationState::CollectPhone,
             retry_actions(
                 &context.phone_number,
-                "Escribe un teléfono válido para continuar.",
+                &client_messages().data_collect.retry_phone_non_text,
                 collect_phone_actions(&context.phone_number),
             ),
         )),
@@ -97,7 +98,7 @@ pub fn handle_collect_address(
             ConversationState::CollectAddress,
             retry_actions(
                 &context.phone_number,
-                "Escribe la dirección de entrega para continuar.",
+                &client_messages().data_collect.retry_address_non_text,
                 collect_address_actions(&context.phone_number),
             ),
         )),
@@ -107,21 +108,21 @@ pub fn handle_collect_address(
 pub fn collect_name_actions(phone: &str) -> Vec<BotAction> {
     vec![BotAction::SendText {
         to: phone.to_string(),
-        body: "¿Nombre completo?".to_string(),
+        body: client_messages().data_collect.ask_name.clone(),
     }]
 }
 
 pub fn collect_phone_actions(phone: &str) -> Vec<BotAction> {
     vec![BotAction::SendText {
         to: phone.to_string(),
-        body: "¿Teléfono de contacto?".to_string(),
+        body: client_messages().data_collect.ask_phone.clone(),
     }]
 }
 
 pub fn collect_address_actions(phone: &str) -> Vec<BotAction> {
     vec![BotAction::SendText {
         to: phone.to_string(),
-        body: "¿Dirección de entrega?".to_string(),
+        body: client_messages().data_collect.ask_address.clone(),
     }]
 }
 
@@ -129,7 +130,7 @@ pub fn validate_name(input: &str) -> Result<String, String> {
     let normalized = collapse_spaces(input);
     let length = normalized.chars().count();
     if !(2..=80).contains(&length) {
-        return Err("El nombre debe tener entre 2 y 80 caracteres.".to_string());
+        return Err(client_messages().data_collect.name_length_error.clone());
     }
 
     Ok(normalized)
@@ -138,10 +139,10 @@ pub fn validate_name(input: &str) -> Result<String, String> {
 pub fn validate_phone(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
     if !trimmed.chars().all(|ch| ch.is_ascii_digit()) {
-        return Err("El teléfono debe contener solo dígitos.".to_string());
+        return Err(client_messages().data_collect.phone_digits_error.clone());
     }
     if !(7..=15).contains(&trimmed.len()) {
-        return Err("El teléfono debe tener entre 7 y 15 dígitos.".to_string());
+        return Err(client_messages().data_collect.phone_length_error.clone());
     }
 
     Ok(trimmed.to_string())
@@ -151,7 +152,7 @@ pub fn validate_address(input: &str) -> Result<String, String> {
     let normalized = collapse_spaces(input);
     let length = normalized.chars().count();
     if !(5..=160).contains(&length) {
-        return Err("La dirección debe tener entre 5 y 160 caracteres.".to_string());
+        return Err(client_messages().data_collect.address_length_error.clone());
     }
 
     Ok(normalized)

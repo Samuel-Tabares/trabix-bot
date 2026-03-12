@@ -11,6 +11,7 @@ use crate::{
         },
         states::{data_collect, menu, scheduling},
     },
+    messages::{client_messages, render_template},
     whatsapp::types::{Button, ButtonReplyPayload},
 };
 
@@ -159,7 +160,7 @@ pub fn handle_contact_advisor_name(
             ConversationState::ContactAdvisorName,
             retry_actions(
                 &context.phone_number,
-                "Escribe tu nombre para continuar.",
+                &client_messages().advisor_customer.contact_name_retry_non_text,
                 contact_advisor_name_actions(&context.phone_number),
             ),
         )),
@@ -190,7 +191,7 @@ pub fn handle_contact_advisor_phone(
             ConversationState::ContactAdvisorPhone,
             retry_actions(
                 &context.phone_number,
-                "Escribe un teléfono válido para continuar.",
+                &client_messages().advisor_customer.contact_phone_retry_non_text,
                 contact_advisor_phone_actions(&context.phone_number),
             ),
         )),
@@ -207,7 +208,10 @@ pub fn handle_wait_advisor_contact(
                 ConversationState::LeaveMessage,
                 vec![BotAction::SendText {
                     to: context.phone_number.clone(),
-                    body: "Escribe el mensaje que deseas dejar al asesor.".to_string(),
+                    body: client_messages()
+                        .advisor_customer
+                        .wait_contact_leave_message_prompt
+                        .clone(),
                 }],
             )),
             Some(BACK_MAIN_MENU) => Ok(reset_to_main_menu(context, false)),
@@ -222,8 +226,10 @@ pub fn handle_wait_advisor_contact(
         ConversationState::WaitAdvisorContact,
         vec![BotAction::SendText {
             to: context.phone_number.clone(),
-            body: "Estamos contactando al asesor. Apenas responda, seguimos por este chat."
-                .to_string(),
+            body: client_messages()
+                .advisor_customer
+                .wait_contact_repeat_text
+                .clone(),
         }],
     ))
 }
@@ -243,7 +249,10 @@ pub fn handle_leave_message(
                     },
                     BotAction::SendText {
                         to: context.phone_number.clone(),
-                        body: "Tu mensaje fue enviado al asesor. Te responderán por ese medio cuando estén disponibles.".to_string(),
+                        body: client_messages()
+                            .advisor_customer
+                            .leave_message_success
+                            .clone(),
                     },
                     BotAction::ResetConversation {
                         phone: context.phone_number.clone(),
@@ -257,7 +266,10 @@ pub fn handle_leave_message(
                     &message,
                     vec![BotAction::SendText {
                         to: context.phone_number.clone(),
-                        body: "Escribe el mensaje que deseas dejar al asesor.".to_string(),
+                        body: client_messages()
+                            .advisor_customer
+                            .wait_contact_leave_message_prompt
+                            .clone(),
                     }],
                 ),
             )),
@@ -266,7 +278,7 @@ pub fn handle_leave_message(
             ConversationState::LeaveMessage,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "Por ahora solo puedo reenviar mensajes de texto al asesor.".to_string(),
+                body: client_messages().advisor_customer.leave_message_non_text.clone(),
             }],
         )),
     }
@@ -283,14 +295,17 @@ pub fn handle_client_waiting_state(
             ConversationState::AskDeliveryCost,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "Estamos cerrando el valor final de tu pedido con el asesor.".to_string(),
+                body: client_messages().advisor_customer.wait_delivery_cost_text.clone(),
             }],
         )),
         ConversationState::NegotiateHour => Ok((
             ConversationState::NegotiateHour,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "El asesor está revisando una hora para tu pedido.".to_string(),
+                body: client_messages()
+                    .advisor_customer
+                    .wait_negotiate_hour_text
+                    .clone(),
             }],
         )),
         ConversationState::OfferHourToClient { proposed_hour } => {
@@ -306,14 +321,20 @@ pub fn handle_client_waiting_state(
             },
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "Tu propuesta de hora ya fue enviada al asesor. Estamos esperando su respuesta.".to_string(),
+                body: client_messages()
+                    .advisor_customer
+                    .wait_advisor_hour_decision_text
+                    .clone(),
             }],
         )),
         ConversationState::WaitAdvisorConfirmHour => Ok((
             ConversationState::WaitAdvisorConfirmHour,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "Estamos esperando la confirmación final del asesor.".to_string(),
+                body: client_messages()
+                    .advisor_customer
+                    .wait_advisor_confirm_text
+                    .clone(),
             }],
         )),
         ConversationState::WaitAdvisorMayor => handle_client_wait_advisor_mayor(input, context),
@@ -321,7 +342,7 @@ pub fn handle_client_waiting_state(
             state.clone(),
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "El asesor está atendiendo este caso en este momento.".to_string(),
+                body: client_messages().advisor_customer.wait_general_text.clone(),
             }],
         )),
     }
@@ -438,17 +459,28 @@ pub fn handle_advisor_negotiate_hour(
                         },
                         BotAction::SendText {
                             to: context.phone_number.clone(),
-                            body: format!(
-                                "El asesor propone entregar {}. ¿Aceptas esa hora?",
-                                hour
+                            body: render_template(
+                                &client_messages()
+                                    .advisor_customer
+                                    .proposed_hour_question_template,
+                                &[("hour", &hour)],
                             ),
                         },
                         BotAction::SendButtons {
                             to: context.phone_number.clone(),
-                            body: "Selecciona cómo deseas continuar.".to_string(),
+                            body: client_messages()
+                                .advisor_customer
+                                .proposed_hour_buttons_body
+                                .clone(),
                             buttons: vec![
-                                reply_button(ACCEPT_PROPOSED_HOUR, "Aceptar"),
-                                reply_button(REJECT_PROPOSED_HOUR, "Rechazar"),
+                                reply_button(
+                                    ACCEPT_PROPOSED_HOUR,
+                                    &client_messages().advisor_customer.accept_button,
+                                ),
+                                reply_button(
+                                    REJECT_PROPOSED_HOUR,
+                                    &client_messages().advisor_customer.reject_button,
+                                ),
                             ],
                         },
                     ],
@@ -549,7 +581,7 @@ pub fn handle_advisor_wait_advisor_mayor(
                 ConversationState::RelayMode,
                 relay_entry_actions(
                     context,
-                    "Tu pedido al por mayor ya quedó conectado con el asesor.",
+                    &client_messages().relay_customer.wholesale_connected_text,
                     "Tomaste el pedido al por mayor y el relay quedó activo.",
                     true,
                 ),
@@ -583,7 +615,7 @@ pub fn handle_advisor_wait_advisor_contact(
                 ConversationState::RelayMode,
                 relay_entry_actions(
                     context,
-                    "El asesor ya está disponible. Puedes escribir por este chat y el mensaje será reenviado.",
+                    &client_messages().relay_customer.direct_contact_connected_text,
                     "Comenzó el relay con el cliente.",
                     false,
                 ),
@@ -612,10 +644,18 @@ pub fn handle_advisor_wait_advisor_contact(
                     },
                     BotAction::SendButtons {
                         to: context.phone_number.clone(),
-                        body: "En este momento el asesor no está disponible. Puedes dejar un mensaje o volver al menú.".to_string(),
+                        body: client_messages().timers_customer.contact_timeout_body.clone(),
                         buttons: vec![
-                            reply_button(LEAVE_MESSAGE, "Dejar mensaje"),
-                            reply_button(BACK_MAIN_MENU, "Menú"),
+                            reply_button(
+                                LEAVE_MESSAGE,
+                                &client_messages()
+                                    .timers_customer
+                                    .contact_timeout_leave_message_button,
+                            ),
+                            reply_button(
+                                BACK_MAIN_MENU,
+                                &client_messages().timers_customer.contact_timeout_menu_button,
+                            ),
                         ],
                     },
                 ],
@@ -659,6 +699,7 @@ pub fn advisor_timeout_actions(
     context: &ConversationContext,
     wait_state: ConversationState,
 ) -> Vec<BotAction> {
+    let messages = &client_messages().timers_customer;
     vec![
         BotAction::ClearAdvisorSession {
             advisor_phone: context.advisor_phone.clone(),
@@ -667,34 +708,31 @@ pub fn advisor_timeout_actions(
             to: context.phone_number.clone(),
             body: match wait_state {
                 ConversationState::WaitAdvisorMayor => {
-                    "El asesor no tomó el caso todavía. Puedes reintentar, programar o volver al menú."
-                        .to_string()
+                    messages.advisor_timeout_wholesale_text.clone()
                 }
-                _ => {
-                    "El asesor no respondió a tiempo. Puedes reintentar, programar o volver al menú."
-                        .to_string()
-                }
+                _ => messages.advisor_timeout_text.clone(),
             },
         },
         BotAction::SendButtons {
             to: context.phone_number.clone(),
-            body: "¿Cómo deseas continuar?".to_string(),
+            body: messages.advisor_timeout_buttons_body.clone(),
             buttons: vec![
-                reply_button(TIMEOUT_SCHEDULE, "Programar"),
-                reply_button(TIMEOUT_RETRY, "Reintentar"),
-                reply_button(TIMEOUT_MENU, "Menú"),
+                reply_button(TIMEOUT_SCHEDULE, &messages.advisor_timeout_schedule_button),
+                reply_button(TIMEOUT_RETRY, &messages.advisor_timeout_retry_button),
+                reply_button(TIMEOUT_MENU, &messages.advisor_timeout_menu_button),
             ],
         },
     ]
 }
 
 pub fn wait_advisor_contact_timeout_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().timers_customer;
     vec![BotAction::SendButtons {
         to: phone.to_string(),
-        body: "El asesor no está disponible en este momento. Puedes dejar un mensaje o volver al menú.".to_string(),
+        body: messages.contact_timeout_body.clone(),
         buttons: vec![
-            reply_button(LEAVE_MESSAGE, "Dejar mensaje"),
-            reply_button(BACK_MAIN_MENU, "Menú"),
+            reply_button(LEAVE_MESSAGE, &messages.contact_timeout_leave_message_button),
+            reply_button(BACK_MAIN_MENU, &messages.contact_timeout_menu_button),
         ],
     }]
 }
@@ -702,14 +740,14 @@ pub fn wait_advisor_contact_timeout_actions(phone: &str) -> Vec<BotAction> {
 pub fn contact_advisor_name_actions(phone: &str) -> Vec<BotAction> {
     vec![BotAction::SendText {
         to: phone.to_string(),
-        body: "¿Nombre del cliente?".to_string(),
+        body: client_messages().advisor_customer.contact_name_prompt.clone(),
     }]
 }
 
 pub fn contact_advisor_phone_actions(phone: &str) -> Vec<BotAction> {
     vec![BotAction::SendText {
         to: phone.to_string(),
-        body: "¿Teléfono de contacto?".to_string(),
+        body: client_messages().advisor_customer.contact_phone_prompt.clone(),
     }]
 }
 
@@ -725,8 +763,10 @@ fn handle_client_wait_advisor_response(
         ConversationState::WaitAdvisorResponse,
         vec![BotAction::SendText {
             to: context.phone_number.clone(),
-            body: "Estamos confirmando disponibilidad con el asesor. Apenas responda te avisamos."
-                .to_string(),
+            body: client_messages()
+                .advisor_customer
+                .availability_wait_text
+                .clone(),
         }],
     ))
 }
@@ -743,8 +783,7 @@ fn handle_client_wait_advisor_mayor(
         ConversationState::WaitAdvisorMayor,
         vec![BotAction::SendText {
             to: context.phone_number.clone(),
-            body: "Tu pedido al por mayor ya fue enviado al asesor. Estamos esperando que tome el caso."
-                .to_string(),
+            body: client_messages().advisor_customer.wholesale_wait_text.clone(),
         }],
     ))
 }
@@ -811,7 +850,7 @@ fn handle_offer_hour_to_client(
             ConversationState::WaitClientHour,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "Escribe la hora que te sirve y se la enviamos al asesor.".to_string(),
+                body: client_messages().advisor_customer.client_hour_prompt.clone(),
             }],
         )),
         _ => Ok((
@@ -820,10 +859,19 @@ fn handle_offer_hour_to_client(
             },
             vec![BotAction::SendButtons {
                 to: context.phone_number.clone(),
-                body: format!("El asesor propone entregar {}.", proposed_hour),
+                body: render_template(
+                    &client_messages().advisor_customer.proposed_hour_repeat_template,
+                    &[("hour", proposed_hour)],
+                ),
                 buttons: vec![
-                    reply_button(ACCEPT_PROPOSED_HOUR, "Aceptar"),
-                    reply_button(REJECT_PROPOSED_HOUR, "Rechazar"),
+                    reply_button(
+                        ACCEPT_PROPOSED_HOUR,
+                        &client_messages().advisor_customer.accept_button,
+                    ),
+                    reply_button(
+                        REJECT_PROPOSED_HOUR,
+                        &client_messages().advisor_customer.reject_button,
+                    ),
                 ],
             }],
         )),
@@ -835,7 +883,7 @@ fn handle_wait_client_hour(
     context: &mut ConversationContext,
 ) -> TransitionResult {
     match input {
-        UserInput::TextMessage(text) => match validate_hour_text(text) {
+        UserInput::TextMessage(text) => match validate_client_hour_text(text) {
             Ok(hour) => {
                 context.client_counter_hour = Some(hour.clone());
 
@@ -887,7 +935,10 @@ fn handle_wait_client_hour(
             ConversationState::WaitClientHour,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "Escribe la hora que te sirve para continuar.".to_string(),
+                body: client_messages()
+                    .advisor_customer
+                    .client_hour_retry_non_text
+                    .clone(),
             }],
         )),
     }
@@ -924,8 +975,10 @@ fn start_waiting_for_contact_advisor(
             },
             BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: "Estamos contactando al asesor. Te avisaremos por este chat cuando responda."
-                    .to_string(),
+                body: client_messages()
+                    .advisor_customer
+                    .wait_contact_initial_text
+                    .clone(),
             },
             BotAction::StartTimer {
                 timer_type: TimerType::AdvisorResponse,
@@ -975,11 +1028,12 @@ fn wait_advisor_response_entry_actions(
         BotAction::SendText {
             to: context.phone_number.clone(),
             body: if scheduled {
-                "Tu pedido programado ya fue enviado al asesor. Estamos validando la gestión para la hora acordada."
-                    .to_string()
+                client_messages()
+                    .advisor_customer
+                    .scheduled_order_sent_text
+                    .clone()
             } else {
-                "Tu pedido ya fue enviado al asesor. Estamos confirmando disponibilidad."
-                    .to_string()
+                client_messages().advisor_customer.order_sent_text.clone()
             },
         },
         BotAction::StartTimer {
@@ -1028,8 +1082,10 @@ fn wait_advisor_mayor_entry_actions(
         },
         BotAction::SendText {
             to: context.phone_number.clone(),
-            body: "Tu pedido al por mayor fue enviado al asesor. Estamos esperando que tome el caso."
-                .to_string(),
+            body: client_messages()
+                .advisor_customer
+                .wholesale_order_sent_text
+                .clone(),
         },
         BotAction::StartTimer {
             timer_type: TimerType::AdvisorResponse,
@@ -1215,12 +1271,23 @@ fn render_confirmed_order(
     delivery_cost: i32,
     total_final: i32,
 ) -> String {
-    format!(
-        "Pedido confirmado.\n\nSubtotal: {}\nDomicilio: {}\nTotal final: {}\n\nDirección: {}\nTiempo estimado de entrega: 20 a 40 minutos.",
-        format_currency(pedido.total_estimado),
-        format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
-        format_currency(u32::try_from(total_final).unwrap_or_default()),
-        context.delivery_address.as_deref().unwrap_or("pendiente")
+    render_template(
+        &client_messages().advisor_customer.confirmed_order_template,
+        &[
+            ("subtotal", &format_currency(pedido.total_estimado)),
+            (
+                "delivery_cost",
+                &format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
+            ),
+            (
+                "total_final",
+                &format_currency(u32::try_from(total_final).unwrap_or_default()),
+            ),
+            (
+                "address",
+                context.delivery_address.as_deref().unwrap_or("pendiente"),
+            ),
+        ],
     )
 }
 
@@ -1284,9 +1351,9 @@ fn render_scheduled_confirmation(context: &ConversationContext) -> String {
         .as_deref()
         .unwrap_or("hora por confirmar");
 
-    format!(
-        "Tu pedido fue registrado.\n\nFecha de referencia: {}\nHora acordada: {}\n\nEl día de la entrega te contactaremos para gestionar el despacho.",
-        date, time
+    render_template(
+        &client_messages().advisor_customer.scheduled_confirmation_template,
+        &[("date", date), ("time", time)],
     )
 }
 
@@ -1360,12 +1427,23 @@ fn validate_hour_text(input: &str) -> Result<String, String> {
     Ok(normalized)
 }
 
+fn validate_client_hour_text(input: &str) -> Result<String, String> {
+    let normalized = collapse_spaces(input);
+    let length = normalized.chars().count();
+
+    if !(HOUR_MIN_LEN..=HOUR_MAX_LEN).contains(&length) {
+        return Err(client_messages().advisor_customer.hour_length_error.clone());
+    }
+
+    Ok(normalized)
+}
+
 fn validate_message(input: &str) -> Result<String, String> {
     let normalized = collapse_spaces(input);
     let length = normalized.chars().count();
 
     if !(LEAVE_MESSAGE_MIN_LEN..=LEAVE_MESSAGE_MAX_LEN).contains(&length) {
-        return Err("El mensaje debe tener entre 2 y 500 caracteres.".to_string());
+        return Err(client_messages().advisor_customer.leave_message_length_error.clone());
     }
 
     Ok(normalized)

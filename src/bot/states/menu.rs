@@ -1,4 +1,5 @@
 use crate::{
+    messages::client_messages,
     bot::state_machine::{
         BotAction, ConversationContext, ConversationState, ImageAsset, TransitionResult, UserInput,
     },
@@ -53,7 +54,7 @@ pub fn handle_view_menu(input: &UserInput, context: &mut ConversationContext) ->
         _ => Ok((
             ConversationState::ViewMenu,
             with_retry_message(
-                "Selecciona una opción del menú para continuar.",
+                &client_messages().menu.retry_view_menu,
                 view_menu_actions(&context.phone_number),
             ),
         )),
@@ -76,7 +77,7 @@ pub fn handle_view_schedule(
         _ => Ok((
             ConversationState::ViewSchedule,
             with_retry_message(
-                "Selecciona una opción válida para continuar.",
+                &client_messages().menu.retry_view_schedule,
                 view_schedule_actions(&context.phone_number),
             ),
         )),
@@ -84,37 +85,38 @@ pub fn handle_view_schedule(
 }
 
 pub fn main_menu_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().menu;
     vec![
         BotAction::SendText {
             to: phone.to_string(),
-            body: "Hola, bienvenido a Granizados. Elige una opción del menú principal.".to_string(),
+            body: messages.main_welcome.clone(),
         },
         BotAction::SendList {
             to: phone.to_string(),
-            body: "¿Qué deseas hacer?".to_string(),
-            button_text: "Ver opciones".to_string(),
+            body: messages.main_list_body.clone(),
+            button_text: messages.main_list_button_text.clone(),
             sections: vec![ListSection {
-                title: "Menú Principal".to_string(),
+                title: messages.main_section_title.clone(),
                 rows: vec![
                     ListRow {
                         id: MAKE_ORDER.to_string(),
-                        title: "Hacer Pedido".to_string(),
-                        description: "Arma tu pedido de granizados".to_string(),
+                        title: messages.make_order_title.clone(),
+                        description: messages.make_order_description.clone(),
                     },
                     ListRow {
                         id: VIEW_MENU.to_string(),
-                        title: "Ver Menú".to_string(),
-                        description: "Sabores y precios".to_string(),
+                        title: messages.view_menu_title.clone(),
+                        description: messages.view_menu_description.clone(),
                     },
                     ListRow {
                         id: VIEW_SCHEDULE.to_string(),
-                        title: "Horarios".to_string(),
-                        description: "Horarios de entrega".to_string(),
+                        title: messages.view_schedule_title.clone(),
+                        description: messages.view_schedule_description.clone(),
                     },
                     ListRow {
                         id: CONTACT_ADVISOR.to_string(),
-                        title: "Hablar con Asesor".to_string(),
-                        description: "Atención por asesor".to_string(),
+                        title: messages.contact_advisor_title.clone(),
+                        description: messages.contact_advisor_description.clone(),
                     },
                 ],
             }],
@@ -123,39 +125,41 @@ pub fn main_menu_actions(phone: &str) -> Vec<BotAction> {
 }
 
 pub fn view_menu_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().menu;
     vec![
         BotAction::SendAssetImage {
             to: phone.to_string(),
             asset: ImageAsset::Menu,
-            caption: Some("Menú general de granizados".to_string()),
+            caption: Some(messages.menu_image_caption.clone()),
         },
         BotAction::SendText {
             to: phone.to_string(),
-            body: "MENÚ Y PRECIOS\n\nDETAL:\nCon licor: $8.000\nSegundo con licor: $4.000\nSin licor: $7.000 c/u\n\nAL MAYOR (20+ del mismo tipo):\nCon licor: 20-49u $4.900 | 50-99u $4.700 | 100+u $4.500\nSin licor: 20-49u $4.800 | 50-99u $4.500 | 100+u $4.200".to_string(),
+            body: messages.menu_text.clone(),
         },
         BotAction::SendButtons {
             to: phone.to_string(),
-            body: "¿Qué deseas hacer ahora?".to_string(),
+            body: messages.view_menu_buttons_body.clone(),
             buttons: vec![
-                reply_button(MAKE_ORDER, "Hacer Pedido"),
-                reply_button(BACK_MAIN_MENU, "Volver al Menú"),
+                reply_button(MAKE_ORDER, &messages.view_menu_make_order_button),
+                reply_button(BACK_MAIN_MENU, &messages.view_menu_back_button),
             ],
         },
     ]
 }
 
 pub fn view_schedule_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().menu;
     vec![
         BotAction::SendText {
             to: phone.to_string(),
-            body: "HORARIOS\nEntrega inmediata: 8:00 AM - 11:00 PM\n\nSi estás fuera de este horario, aún podemos intentar programar tu pedido o dejarlo listo para asesor.".to_string(),
+            body: messages.schedule_text.clone(),
         },
         BotAction::SendButtons {
             to: phone.to_string(),
-            body: "¿Deseas hacer un pedido?".to_string(),
+            body: messages.schedule_buttons_body.clone(),
             buttons: vec![
-                reply_button(MAKE_ORDER, "Hacer Pedido"),
-                reply_button(BACK_MAIN_MENU, "Volver al Menú"),
+                reply_button(MAKE_ORDER, &messages.schedule_make_order_button),
+                reply_button(BACK_MAIN_MENU, &messages.schedule_back_button),
             ],
         },
     ]

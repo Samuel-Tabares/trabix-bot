@@ -11,6 +11,7 @@ use crate::{
             get_conversation, list_active_timer_conversations, reset_conversation, update_state,
         },
     },
+    messages::client_messages,
     whatsapp::types::{Button, ButtonReplyPayload},
     AppState,
 };
@@ -198,7 +199,7 @@ pub async fn expire_receipt_timer(
         .wa_client
         .send_text(
             &phone_number,
-            "No recibimos el comprobante dentro de los 10 minutos. Puedes cambiar la forma de pago o cancelar el pedido.",
+            &client_messages().timers_customer.receipt_timeout_text,
         )
         .await?;
     state
@@ -244,24 +245,26 @@ pub async fn expire_advisor_timer(
                 .wa_client
                 .send_buttons(
                     &phone_number,
-                    "El asesor no está disponible en este momento. Puedes dejar un mensaje o volver al menú.",
+                    &client_messages().timers_customer.contact_timeout_body,
                     contact_timeout_buttons(),
                 )
                 .await?;
         }
         _ => {
+            let timeout_text = if conversation.state == "wait_advisor_mayor" {
+                &client_messages().timers_customer.advisor_timeout_wholesale_text
+            } else {
+                &client_messages().timers_customer.advisor_timeout_text
+            };
             state
                 .wa_client
-                .send_text(
-                    &phone_number,
-                    "El asesor no respondió a tiempo. Puedes programar, reintentar o volver al menú.",
-                )
+                .send_text(&phone_number, timeout_text)
                 .await?;
             state
                 .wa_client
                 .send_buttons(
                     &phone_number,
-                    "Selecciona cómo quieres continuar.",
+                    &client_messages().timers_customer.advisor_timeout_buttons_body,
                     advisor_timeout_buttons(),
                 )
                 .await?;
@@ -289,7 +292,7 @@ pub async fn expire_relay_timer(
         .wa_client
         .send_text(
             &phone_number,
-            "La conversación con el asesor se cerró por inactividad.",
+            &client_messages().timers_customer.relay_timeout_text,
         )
         .await?;
     state
@@ -343,23 +346,48 @@ async fn clear_advisor_session(
 
 fn receipt_timeout_buttons() -> Vec<Button> {
     vec![
-        reply_button("change_payment_method", "Cambiar pago"),
-        reply_button("cancel_order", "Cancelar"),
+        reply_button(
+            "change_payment_method",
+            &client_messages()
+                .checkout
+                .receipt_timeout_change_payment_button,
+        ),
+        reply_button(
+            "cancel_order",
+            &client_messages().checkout.receipt_timeout_cancel_button,
+        ),
     ]
 }
 
 fn advisor_timeout_buttons() -> Vec<Button> {
     vec![
-        reply_button("advisor_timeout_schedule", "Programar"),
-        reply_button("advisor_timeout_retry", "Reintentar"),
-        reply_button("advisor_timeout_menu", "Menú"),
+        reply_button(
+            "advisor_timeout_schedule",
+            &client_messages().timers_customer.advisor_timeout_schedule_button,
+        ),
+        reply_button(
+            "advisor_timeout_retry",
+            &client_messages().timers_customer.advisor_timeout_retry_button,
+        ),
+        reply_button(
+            "advisor_timeout_menu",
+            &client_messages().timers_customer.advisor_timeout_menu_button,
+        ),
     ]
 }
 
 fn contact_timeout_buttons() -> Vec<Button> {
     vec![
-        reply_button("leave_message", "Dejar mensaje"),
-        reply_button("back_main_menu", "Menú"),
+        reply_button(
+            "leave_message",
+            &client_messages()
+                .timers_customer
+                .contact_timeout_leave_message_button,
+        ),
+        reply_button(
+            "back_main_menu",
+            &client_messages().timers_customer.contact_timeout_menu_button,
+        ),
     ]
 }
 
