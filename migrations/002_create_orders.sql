@@ -4,8 +4,6 @@ CREATE TABLE orders (
     delivery_type     VARCHAR(20) NOT NULL,
     scheduled_date    DATE,
     scheduled_time    TIME,
-    scheduled_date_text TEXT,
-    scheduled_time_text TEXT,
     payment_method    VARCHAR(20) NOT NULL,
     receipt_media_id  VARCHAR(100),
     delivery_cost     INT,
