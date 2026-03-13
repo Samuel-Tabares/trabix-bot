@@ -6,13 +6,12 @@ pub struct WebhookPayload {
 }
 
 impl WebhookPayload {
-    pub fn first_message(&self) -> Option<&IncomingMessage> {
+    pub fn messages(&self) -> impl Iterator<Item = &IncomingMessage> {
         self.entry
             .iter()
             .flat_map(|entry| entry.changes.iter())
             .filter_map(|change| change.value.messages.as_ref())
             .flat_map(|messages| messages.iter())
-            .next()
     }
 }
 
@@ -199,4 +198,56 @@ pub struct MarkAsRead {
     pub messaging_product: String,
     pub status: String,
     pub message_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Change, Entry, IncomingMessage, TextContent, Value, WebhookPayload};
+
+    fn text_message(id: &str, from: &str, body: &str) -> IncomingMessage {
+        IncomingMessage {
+            from: from.to_string(),
+            id: id.to_string(),
+            kind: "text".to_string(),
+            text: Some(TextContent {
+                body: body.to_string(),
+            }),
+            interactive: None,
+            image: None,
+        }
+    }
+
+    #[test]
+    fn webhook_payload_iterates_all_messages_in_order() {
+        let payload = WebhookPayload {
+            entry: vec![
+                Entry {
+                    changes: vec![Change {
+                        value: Value {
+                            messages: Some(vec![
+                                text_message("wamid-1", "573001111111", "hola"),
+                                text_message("wamid-2", "573001111111", "quiero pedir"),
+                            ]),
+                            contacts: None,
+                        },
+                    }],
+                },
+                Entry {
+                    changes: vec![Change {
+                        value: Value {
+                            messages: Some(vec![text_message("wamid-3", "573002222222", "menu")]),
+                            contacts: None,
+                        },
+                    }],
+                },
+            ],
+        };
+
+        let message_ids = payload
+            .messages()
+            .map(|message| message.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(message_ids, vec!["wamid-1", "wamid-2", "wamid-3"]);
+    }
 }

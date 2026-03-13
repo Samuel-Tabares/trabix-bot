@@ -122,11 +122,16 @@ pub fn resume_after_schedule_confirmation(
     context.relay_kind = None;
 
     let pedido = calcular_pedido(&context.items);
-    let _legacy_wait_state = target;
-    (
-        ConversationState::WaitAdvisorResponse,
-        wait_advisor_response_entry_actions(context, &pedido),
-    )
+    match target.as_str() {
+        "wait_advisor_mayor" => (
+            ConversationState::WaitAdvisorMayor,
+            wait_advisor_mayor_entry_actions(context, &pedido),
+        ),
+        _ => (
+            ConversationState::WaitAdvisorResponse,
+            wait_advisor_response_entry_actions(context, &pedido),
+        ),
+    }
 }
 
 pub fn handle_contact_advisor_name(
@@ -160,7 +165,9 @@ pub fn handle_contact_advisor_name(
             ConversationState::ContactAdvisorName,
             retry_actions(
                 &context.phone_number,
-                &client_messages().advisor_customer.contact_name_retry_non_text,
+                &client_messages()
+                    .advisor_customer
+                    .contact_name_retry_non_text,
                 contact_advisor_name_actions(&context.phone_number),
             ),
         )),
@@ -191,7 +198,9 @@ pub fn handle_contact_advisor_phone(
             ConversationState::ContactAdvisorPhone,
             retry_actions(
                 &context.phone_number,
-                &client_messages().advisor_customer.contact_phone_retry_non_text,
+                &client_messages()
+                    .advisor_customer
+                    .contact_phone_retry_non_text,
                 contact_advisor_phone_actions(&context.phone_number),
             ),
         )),
@@ -278,7 +287,10 @@ pub fn handle_leave_message(
             ConversationState::LeaveMessage,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: client_messages().advisor_customer.leave_message_non_text.clone(),
+                body: client_messages()
+                    .advisor_customer
+                    .leave_message_non_text
+                    .clone(),
             }],
         )),
     }
@@ -290,12 +302,17 @@ pub fn handle_client_waiting_state(
     context: &mut ConversationContext,
 ) -> TransitionResult {
     match state {
-        ConversationState::WaitAdvisorResponse => handle_client_wait_advisor_response(input, context),
+        ConversationState::WaitAdvisorResponse => {
+            handle_client_wait_advisor_response(input, context)
+        }
         ConversationState::AskDeliveryCost => Ok((
             ConversationState::AskDeliveryCost,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: client_messages().advisor_customer.wait_delivery_cost_text.clone(),
+                body: client_messages()
+                    .advisor_customer
+                    .wait_delivery_cost_text
+                    .clone(),
             }],
         )),
         ConversationState::NegotiateHour => Ok((
@@ -372,9 +389,7 @@ pub fn handle_advisor_wait_advisor_response(
 
     match advisor_button_action(input).expect("checked above") {
         AdvisorButtonAction::Confirm => finalize_or_ask_delivery_cost(context),
-        AdvisorButtonAction::Cannot => {
-            transition_immediate_order_to_scheduled(context)
-        }
+        AdvisorButtonAction::Cannot => transition_immediate_order_to_scheduled(context),
         _ => unreachable!(),
     }
 }
@@ -387,8 +402,8 @@ pub fn handle_advisor_ask_delivery_cost(
         UserInput::TextMessage(text) => match parse_delivery_cost(text) {
             Ok(delivery_cost) => {
                 let pedido = calcular_pedido(&context.items);
-                let total_final = i32::try_from(pedido.total_estimado).unwrap_or(i32::MAX)
-                    + delivery_cost;
+                let total_final =
+                    i32::try_from(pedido.total_estimado).unwrap_or(i32::MAX) + delivery_cost;
 
                 Ok((
                     ConversationState::OrderComplete,
@@ -411,7 +426,12 @@ pub fn handle_advisor_ask_delivery_cost(
                         },
                         BotAction::SendText {
                             to: context.phone_number.clone(),
-                            body: render_confirmed_order(context, &pedido, delivery_cost, total_final),
+                            body: render_confirmed_order(
+                                context,
+                                &pedido,
+                                delivery_cost,
+                                total_final,
+                            ),
                         },
                         BotAction::ResetConversation {
                             phone: context.phone_number.clone(),
@@ -615,7 +635,9 @@ pub fn handle_advisor_wait_advisor_contact(
                 ConversationState::RelayMode,
                 relay_entry_actions(
                     context,
-                    &client_messages().relay_customer.direct_contact_connected_text,
+                    &client_messages()
+                        .relay_customer
+                        .direct_contact_connected_text,
                     "Comenzó el relay con el cliente.",
                     false,
                 ),
@@ -644,7 +666,10 @@ pub fn handle_advisor_wait_advisor_contact(
                     },
                     BotAction::SendButtons {
                         to: context.phone_number.clone(),
-                        body: client_messages().timers_customer.contact_timeout_body.clone(),
+                        body: client_messages()
+                            .timers_customer
+                            .contact_timeout_body
+                            .clone(),
                         buttons: vec![
                             reply_button(
                                 LEAVE_MESSAGE,
@@ -654,7 +679,9 @@ pub fn handle_advisor_wait_advisor_contact(
                             ),
                             reply_button(
                                 BACK_MAIN_MENU,
-                                &client_messages().timers_customer.contact_timeout_menu_button,
+                                &client_messages()
+                                    .timers_customer
+                                    .contact_timeout_menu_button,
                             ),
                         ],
                     },
@@ -731,7 +758,10 @@ pub fn wait_advisor_contact_timeout_actions(phone: &str) -> Vec<BotAction> {
         to: phone.to_string(),
         body: messages.contact_timeout_body.clone(),
         buttons: vec![
-            reply_button(LEAVE_MESSAGE, &messages.contact_timeout_leave_message_button),
+            reply_button(
+                LEAVE_MESSAGE,
+                &messages.contact_timeout_leave_message_button,
+            ),
             reply_button(BACK_MAIN_MENU, &messages.contact_timeout_menu_button),
         ],
     }]
@@ -740,14 +770,20 @@ pub fn wait_advisor_contact_timeout_actions(phone: &str) -> Vec<BotAction> {
 pub fn contact_advisor_name_actions(phone: &str) -> Vec<BotAction> {
     vec![BotAction::SendText {
         to: phone.to_string(),
-        body: client_messages().advisor_customer.contact_name_prompt.clone(),
+        body: client_messages()
+            .advisor_customer
+            .contact_name_prompt
+            .clone(),
     }]
 }
 
 pub fn contact_advisor_phone_actions(phone: &str) -> Vec<BotAction> {
     vec![BotAction::SendText {
         to: phone.to_string(),
-        body: client_messages().advisor_customer.contact_phone_prompt.clone(),
+        body: client_messages()
+            .advisor_customer
+            .contact_phone_prompt
+            .clone(),
     }]
 }
 
@@ -756,7 +792,11 @@ fn handle_client_wait_advisor_response(
     context: &mut ConversationContext,
 ) -> TransitionResult {
     if context.advisor_timer_expired {
-        return handle_advisor_timeout_selection(input, context, ConversationState::WaitAdvisorResponse);
+        return handle_advisor_timeout_selection(
+            input,
+            context,
+            ConversationState::WaitAdvisorResponse,
+        );
     }
 
     Ok((
@@ -776,14 +816,21 @@ fn handle_client_wait_advisor_mayor(
     context: &mut ConversationContext,
 ) -> TransitionResult {
     if context.advisor_timer_expired {
-        return handle_advisor_timeout_selection(input, context, ConversationState::WaitAdvisorMayor);
+        return handle_advisor_timeout_selection(
+            input,
+            context,
+            ConversationState::WaitAdvisorMayor,
+        );
     }
 
     Ok((
         ConversationState::WaitAdvisorMayor,
         vec![BotAction::SendText {
             to: context.phone_number.clone(),
-            body: client_messages().advisor_customer.wholesale_wait_text.clone(),
+            body: client_messages()
+                .advisor_customer
+                .wholesale_wait_text
+                .clone(),
         }],
     ))
 }
@@ -815,7 +862,10 @@ fn handle_advisor_timeout_selection(
             ))
         }
         Some(TIMEOUT_MENU) => Ok(reset_to_main_menu(context, true)),
-        _ => Ok((wait_state.clone(), advisor_timeout_actions(context, wait_state))),
+        _ => Ok((
+            wait_state.clone(),
+            advisor_timeout_actions(context, wait_state),
+        )),
     }
 }
 
@@ -850,7 +900,10 @@ fn handle_offer_hour_to_client(
             ConversationState::WaitClientHour,
             vec![BotAction::SendText {
                 to: context.phone_number.clone(),
-                body: client_messages().advisor_customer.client_hour_prompt.clone(),
+                body: client_messages()
+                    .advisor_customer
+                    .client_hour_prompt
+                    .clone(),
             }],
         )),
         _ => Ok((
@@ -860,7 +913,9 @@ fn handle_offer_hour_to_client(
             vec![BotAction::SendButtons {
                 to: context.phone_number.clone(),
                 body: render_template(
-                    &client_messages().advisor_customer.proposed_hour_repeat_template,
+                    &client_messages()
+                        .advisor_customer
+                        .proposed_hour_repeat_template,
                     &[("hour", proposed_hour)],
                 ),
                 buttons: vec![
@@ -1103,12 +1158,10 @@ fn relay_entry_actions(
     advisor_message: &str,
     update_order_status: bool,
 ) -> Vec<BotAction> {
-    let mut actions = vec![
-        BotAction::CancelTimer {
-            timer_type: TimerType::AdvisorResponse,
-            phone: context.phone_number.clone(),
-        },
-    ];
+    let mut actions = vec![BotAction::CancelTimer {
+        timer_type: TimerType::AdvisorResponse,
+        phone: context.phone_number.clone(),
+    }];
 
     if update_order_status {
         actions.push(BotAction::FinalizeCurrentOrder {
@@ -1152,9 +1205,7 @@ fn relay_entry_actions(
     actions
 }
 
-fn finalize_or_ask_delivery_cost(
-    context: &mut ConversationContext,
-) -> TransitionResult {
+fn finalize_or_ask_delivery_cost(context: &mut ConversationContext) -> TransitionResult {
     let immediate = context.delivery_type.as_deref() == Some("immediate");
     if immediate {
         Ok((
@@ -1310,9 +1361,7 @@ fn advisor_order_buttons(context: &ConversationContext, scheduled: bool) -> Vec<
     }
 }
 
-fn transition_immediate_order_to_scheduled(
-    context: &mut ConversationContext,
-) -> TransitionResult {
+fn transition_immediate_order_to_scheduled(context: &mut ConversationContext) -> TransitionResult {
     context.delivery_type = Some("scheduled".to_string());
     context.scheduled_date = Some(today_bogota_iso_date());
     context.scheduled_time = None;
@@ -1342,17 +1391,16 @@ fn transition_immediate_order_to_scheduled(
 }
 
 fn render_scheduled_confirmation(context: &ConversationContext) -> String {
-    let date = context
-        .scheduled_date
-        .as_deref()
-        .unwrap_or("hoy");
+    let date = context.scheduled_date.as_deref().unwrap_or("hoy");
     let time = context
         .scheduled_time
         .as_deref()
         .unwrap_or("hora por confirmar");
 
     render_template(
-        &client_messages().advisor_customer.scheduled_confirmation_template,
+        &client_messages()
+            .advisor_customer
+            .scheduled_confirmation_template,
         &[("date", date), ("time", time)],
     )
 }
@@ -1404,10 +1452,9 @@ fn advisor_button_action(input: &UserInput) -> Option<AdvisorButtonAction> {
 }
 
 fn parse_delivery_cost(input: &str) -> Result<i32, String> {
-    let cost = input
-        .trim()
-        .parse::<i32>()
-        .map_err(|_| "Por favor envíe solo el valor numérico del domicilio (ej: 5000).".to_string())?;
+    let cost = input.trim().parse::<i32>().map_err(|_| {
+        "Por favor envíe solo el valor numérico del domicilio (ej: 5000).".to_string()
+    })?;
 
     if cost <= 0 {
         return Err("El domicilio debe ser un número entero positivo.".to_string());
@@ -1443,7 +1490,10 @@ fn validate_message(input: &str) -> Result<String, String> {
     let length = normalized.chars().count();
 
     if !(LEAVE_MESSAGE_MIN_LEN..=LEAVE_MESSAGE_MAX_LEN).contains(&length) {
-        return Err(client_messages().advisor_customer.leave_message_length_error.clone());
+        return Err(client_messages()
+            .advisor_customer
+            .leave_message_length_error
+            .clone());
     }
 
     Ok(normalized)
@@ -1597,7 +1647,10 @@ mod tests {
     fn parses_button_target_phone() {
         let parsed = parse_advisor_button_id("advisor_confirm_573001234567").expect("button");
 
-        assert_eq!(parsed, (AdvisorButtonAction::Confirm, "573001234567".to_string()));
+        assert_eq!(
+            parsed,
+            (AdvisorButtonAction::Confirm, "573001234567".to_string())
+        );
     }
 
     #[test]
@@ -1611,7 +1664,10 @@ mod tests {
         .expect("transition");
 
         assert_eq!(state, ConversationState::AskDeliveryCost);
-        assert!(actions.iter().any(|action| matches!(action, crate::bot::state_machine::BotAction::BindAdvisorSession { .. })));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::BindAdvisorSession { .. }
+        )));
     }
 
     #[test]
@@ -1629,7 +1685,10 @@ mod tests {
 
         assert_eq!(state, ConversationState::OrderComplete);
         assert!(actions.iter().any(|action| matches!(action, crate::bot::state_machine::BotAction::FinalizeCurrentOrder { status } if status == "confirmed")));
-        assert!(actions.iter().any(|action| matches!(action, crate::bot::state_machine::BotAction::ResetConversation { .. })));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::ResetConversation { .. }
+        )));
     }
 
     #[test]
@@ -1667,21 +1726,40 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_resume_preserves_wholesale_wait_state() {
+        let mut context = context();
+        context.schedule_resume_target = Some("wait_advisor_mayor".to_string());
+
+        let (state, actions) = super::resume_after_schedule_confirmation(&mut context);
+
+        assert_eq!(state, ConversationState::WaitAdvisorMayor);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::SendButtons { buttons, .. }
+                if buttons.iter().any(|button| button.reply.id == "advisor_take_573001234567")
+        )));
+    }
+
+    #[test]
     fn start_contact_advisor_skips_data_if_already_present() {
         let mut context = context();
 
         let (state, actions) = start_contact_advisor(&mut context);
 
         assert_eq!(state, ConversationState::WaitAdvisorContact);
-        assert!(actions.iter().any(|action| matches!(action, crate::bot::state_machine::BotAction::StartTimer { .. })));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::StartTimer { .. }
+        )));
     }
 
     #[test]
     fn leave_message_requires_text() {
         let mut context = context();
 
-        let (state, _actions) = handle_leave_message(&UserInput::ImageMessage("x".to_string()), &mut context)
-            .expect("transition");
+        let (state, _actions) =
+            handle_leave_message(&UserInput::ImageMessage("x".to_string()), &mut context)
+                .expect("transition");
 
         assert_eq!(state, ConversationState::LeaveMessage);
     }

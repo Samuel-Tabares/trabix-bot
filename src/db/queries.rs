@@ -120,6 +120,8 @@ pub async fn create_order(
     delivery_type: &str,
     scheduled_date: Option<NaiveDate>,
     scheduled_time: Option<NaiveTime>,
+    scheduled_date_text: Option<&str>,
+    scheduled_time_text: Option<&str>,
     payment_method: &str,
     receipt_media_id: Option<&str>,
     total_estimated: i32,
@@ -128,10 +130,12 @@ pub async fn create_order(
         r#"
         INSERT INTO orders (
             conversation_id, delivery_type, scheduled_date, scheduled_time,
+            scheduled_date_text, scheduled_time_text,
             payment_method, receipt_media_id, total_estimated
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id, conversation_id, delivery_type, scheduled_date, scheduled_time,
+                  scheduled_date_text, scheduled_time_text,
                   payment_method, receipt_media_id, delivery_cost, total_estimated,
                   total_final, status, created_at
         "#,
@@ -140,6 +144,8 @@ pub async fn create_order(
     .bind(delivery_type)
     .bind(scheduled_date)
     .bind(scheduled_time)
+    .bind(scheduled_date_text)
+    .bind(scheduled_time_text)
     .bind(payment_method)
     .bind(receipt_media_id)
     .bind(total_estimated)
@@ -153,6 +159,8 @@ pub async fn update_order(
     delivery_type: &str,
     scheduled_date: Option<NaiveDate>,
     scheduled_time: Option<NaiveTime>,
+    scheduled_date_text: Option<&str>,
+    scheduled_time_text: Option<&str>,
     payment_method: &str,
     receipt_media_id: Option<&str>,
     total_estimated: i32,
@@ -164,12 +172,15 @@ pub async fn update_order(
         SET delivery_type = $2,
             scheduled_date = $3,
             scheduled_time = $4,
-            payment_method = $5,
-            receipt_media_id = $6,
-            total_estimated = $7,
-            status = $8
+            scheduled_date_text = $5,
+            scheduled_time_text = $6,
+            payment_method = $7,
+            receipt_media_id = $8,
+            total_estimated = $9,
+            status = $10
         WHERE id = $1
         RETURNING id, conversation_id, delivery_type, scheduled_date, scheduled_time,
+                  scheduled_date_text, scheduled_time_text,
                   payment_method, receipt_media_id, delivery_cost, total_estimated,
                   total_final, status, created_at
         "#,
@@ -178,6 +189,8 @@ pub async fn update_order(
     .bind(delivery_type)
     .bind(scheduled_date)
     .bind(scheduled_time)
+    .bind(scheduled_date_text)
+    .bind(scheduled_time_text)
     .bind(payment_method)
     .bind(receipt_media_id)
     .bind(total_estimated)
@@ -312,6 +325,7 @@ pub async fn get_order(pool: &PgPool, order_id: i32) -> Result<Option<Order>, sq
     sqlx::query_as::<_, Order>(
         r#"
         SELECT id, conversation_id, delivery_type, scheduled_date, scheduled_time,
+               scheduled_date_text, scheduled_time_text,
                payment_method, receipt_media_id, delivery_cost, total_estimated,
                total_final, status, created_at
         FROM orders

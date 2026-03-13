@@ -21,7 +21,10 @@ use crate::{
             ConversationState, ImageAsset, TimerType, UserInput,
         },
         states::advisor::parse_advisor_button_id,
-        timers::{cancel_timer, expire_advisor_timer, expire_receipt_timer, expire_relay_timer, start_timer},
+        timers::{
+            cancel_timer, expire_advisor_timer, expire_receipt_timer, expire_relay_timer,
+            start_timer,
+        },
     },
     db::{
         models::{Conversation, ConversationStateData},
@@ -112,14 +115,39 @@ pub fn verify_signature(
 
 async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Error + Send + Sync>> {
     let payload: WebhookPayload = serde_json::from_slice(&body)?;
-    let Some(message) = payload.first_message() else {
+    let mut first_error: Option<Box<dyn Error + Send + Sync>> = None;
+    let mut processed_any_message = false;
+
+    for message in payload.messages().cloned() {
+        processed_any_message = true;
+
+        if let Err(err) = process_incoming_message(state.clone(), message).await {
+            tracing::error!("failed to process inbound whatsapp message: {}", err);
+            if first_error.is_none() {
+                first_error = Some(err);
+            }
+        }
+    }
+
+    if !processed_any_message {
         tracing::info!("webhook without incoming messages ignored");
         return Ok(());
-    };
+    }
 
+    if let Some(err) = first_error {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+async fn process_incoming_message(
+    state: AppState,
+    message: crate::whatsapp::types::IncomingMessage,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let from = message.from.clone();
     let message_id = message.id.clone();
-    let input = extract_input(message);
+    let input = extract_input(&message);
     let (message_type, content) = describe_input(&input);
 
     tracing::info!(
@@ -370,10 +398,7 @@ async fn execute_actions(
                 } else {
                     configured
                 };
-                state
-                    .wa_client
-                    .send_text(to, body)
-                    .await?;
+                state.wa_client.send_text(to, body).await?;
             }
             BotAction::ResetConversation { phone } => {
                 reset_conversation(&state.pool, phone).await?;
@@ -490,8 +515,7 @@ async fn upsert_order_from_context(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let delivery_type = required_field(&context.delivery_type, "delivery_type")?;
     let payment_method = required_field(&context.payment_method, "payment_method")?;
-    let scheduled_date = parse_optional_date(context.scheduled_date.as_deref());
-    let scheduled_time = parse_optional_time(context.scheduled_time.as_deref());
+    let schedule_values = schedule_values_for_persistence(context);
     let pedido = calcular_pedido(&context.items);
     let total_estimated = i32::try_from(pedido.total_estimado)
         .map_err(|_| IoError::new(ErrorKind::InvalidData, "total_estimated out of range"))?;
@@ -503,8 +527,10 @@ async fn upsert_order_from_context(
                 pool,
                 order_id,
                 delivery_type,
-                scheduled_date,
-                scheduled_time,
+                schedule_values.typed_date,
+                schedule_values.typed_time,
+                schedule_values.raw_date.as_deref(),
+                schedule_values.raw_time.as_deref(),
                 payment_method,
                 receipt_media_id,
                 total_estimated,
@@ -517,8 +543,10 @@ async fn upsert_order_from_context(
                 pool,
                 conversation_id,
                 delivery_type,
-                scheduled_date,
-                scheduled_time,
+                schedule_values.typed_date,
+                schedule_values.typed_time,
+                schedule_values.raw_date.as_deref(),
+                schedule_values.raw_time.as_deref(),
                 payment_method,
                 receipt_media_id,
                 total_estimated,
@@ -565,32 +593,139 @@ fn required_field<'a>(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PersistedScheduleValues {
+    typed_date: Option<chrono::NaiveDate>,
+    typed_time: Option<chrono::NaiveTime>,
+    raw_date: Option<String>,
+    raw_time: Option<String>,
+}
+
+fn schedule_values_for_persistence(context: &ConversationContext) -> PersistedScheduleValues {
+    if context.delivery_type.as_deref() != Some("scheduled") {
+        return PersistedScheduleValues {
+            typed_date: None,
+            typed_time: None,
+            raw_date: None,
+            raw_time: None,
+        };
+    }
+
+    PersistedScheduleValues {
+        typed_date: parse_optional_date(context.scheduled_date.as_deref()),
+        typed_time: parse_optional_time(context.scheduled_time.as_deref()),
+        raw_date: normalized_schedule_text(context.scheduled_date.as_deref()),
+        raw_time: normalized_schedule_text(context.scheduled_time.as_deref()),
+    }
+}
+
+fn normalized_schedule_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
 fn parse_optional_date(value: Option<&str>) -> Option<chrono::NaiveDate> {
     let raw = value?;
 
-    [
-        "%Y-%m-%d",
-        "%d/%m/%Y",
-        "%d-%m-%Y",
-        "%Y/%m/%d",
-    ]
-    .iter()
-    .find_map(|format| chrono::NaiveDate::parse_from_str(raw, format).ok())
+    ["%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"]
+        .iter()
+        .find_map(|format| chrono::NaiveDate::parse_from_str(raw, format).ok())
 }
 
 fn parse_optional_time(value: Option<&str>) -> Option<chrono::NaiveTime> {
     let raw = value?;
 
-    [
-        "%H:%M",
-        "%H:%M:%S",
-        "%I:%M%P",
-        "%I:%M %P",
-        "%I%P",
-        "%I %P",
-    ]
-    .iter()
-    .find_map(|format| chrono::NaiveTime::parse_from_str(raw, format).ok())
+    ["%H:%M", "%H:%M:%S", "%I:%M%P", "%I:%M %P", "%I%P", "%I %P"]
+        .iter()
+        .find_map(|format| chrono::NaiveTime::parse_from_str(raw, format).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::bot::state_machine::ConversationContext;
+
+    use super::schedule_values_for_persistence;
+
+    fn context() -> ConversationContext {
+        ConversationContext {
+            phone_number: "573001234567".to_string(),
+            advisor_phone: "573009999999".to_string(),
+            customer_name: Some("Ana".to_string()),
+            customer_phone: Some("3001234567".to_string()),
+            delivery_address: Some("Cra 15 #20-30 Armenia".to_string()),
+            items: vec![],
+            delivery_type: Some("scheduled".to_string()),
+            scheduled_date: None,
+            scheduled_time: None,
+            payment_method: Some("cash_on_delivery".to_string()),
+            receipt_media_id: None,
+            receipt_timer_started_at: None,
+            advisor_target_phone: None,
+            advisor_timer_started_at: None,
+            advisor_timer_expired: false,
+            relay_timer_started_at: None,
+            relay_kind: None,
+            advisor_proposed_hour: None,
+            client_counter_hour: None,
+            schedule_resume_target: None,
+            current_order_id: None,
+            editing_address: false,
+            receipt_timer_expired: false,
+            pending_has_liquor: None,
+            pending_flavor: None,
+        }
+    }
+
+    #[test]
+    fn schedule_values_keep_flexible_text_when_parsing_fails() {
+        let mut context = context();
+        context.scheduled_date = Some("mañna despuesito".to_string());
+        context.scheduled_time = Some("como a las 3 o 4".to_string());
+
+        let values = schedule_values_for_persistence(&context);
+
+        assert_eq!(values.typed_date, None);
+        assert_eq!(values.typed_time, None);
+        assert_eq!(values.raw_date.as_deref(), Some("mañna despuesito"));
+        assert_eq!(values.raw_time.as_deref(), Some("como a las 3 o 4"));
+    }
+
+    #[test]
+    fn schedule_values_store_typed_and_raw_values_when_format_matches() {
+        let mut context = context();
+        context.scheduled_date = Some("2030-12-24".to_string());
+        context.scheduled_time = Some("4:00 pm".to_string());
+
+        let values = schedule_values_for_persistence(&context);
+
+        assert_eq!(
+            values.typed_date,
+            Some(chrono::NaiveDate::from_ymd_opt(2030, 12, 24).expect("valid test date"))
+        );
+        assert_eq!(
+            values.typed_time,
+            Some(chrono::NaiveTime::from_hms_opt(16, 0, 0).expect("valid test time"))
+        );
+        assert_eq!(values.raw_date.as_deref(), Some("2030-12-24"));
+        assert_eq!(values.raw_time.as_deref(), Some("4:00 pm"));
+    }
+
+    #[test]
+    fn schedule_values_ignore_stale_schedule_fields_for_immediate_orders() {
+        let mut context = context();
+        context.delivery_type = Some("immediate".to_string());
+        context.scheduled_date = Some("2030-12-24".to_string());
+        context.scheduled_time = Some("4:00 pm".to_string());
+
+        let values = schedule_values_for_persistence(&context);
+
+        assert_eq!(values.typed_date, None);
+        assert_eq!(values.typed_time, None);
+        assert_eq!(values.raw_date, None);
+        assert_eq!(values.raw_time, None);
+    }
 }
 
 fn describe_input(input: &UserInput) -> (&'static str, String) {

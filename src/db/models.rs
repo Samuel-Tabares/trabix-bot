@@ -83,6 +83,8 @@ pub struct Order {
     pub delivery_type: String,
     pub scheduled_date: Option<NaiveDate>,
     pub scheduled_time: Option<NaiveTime>,
+    pub scheduled_date_text: Option<String>,
+    pub scheduled_time_text: Option<String>,
     pub payment_method: String,
     pub receipt_media_id: Option<String>,
     pub delivery_cost: Option<i32>,

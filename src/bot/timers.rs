@@ -206,7 +206,9 @@ pub async fn expire_receipt_timer(
         .wa_client
         .send_buttons(
             &phone_number,
-            "Selecciona cómo quieres continuar.",
+            &client_messages()
+                .timers_customer
+                .receipt_timeout_buttons_body,
             receipt_timeout_buttons(),
         )
         .await?;
@@ -252,7 +254,9 @@ pub async fn expire_advisor_timer(
         }
         _ => {
             let timeout_text = if conversation.state == "wait_advisor_mayor" {
-                &client_messages().timers_customer.advisor_timeout_wholesale_text
+                &client_messages()
+                    .timers_customer
+                    .advisor_timeout_wholesale_text
             } else {
                 &client_messages().timers_customer.advisor_timeout_text
             };
@@ -264,7 +268,9 @@ pub async fn expire_advisor_timer(
                 .wa_client
                 .send_buttons(
                     &phone_number,
-                    &client_messages().timers_customer.advisor_timeout_buttons_body,
+                    &client_messages()
+                        .timers_customer
+                        .advisor_timeout_buttons_body,
                     advisor_timeout_buttons(),
                 )
                 .await?;
@@ -299,7 +305,10 @@ pub async fn expire_relay_timer(
         .wa_client
         .send_text(
             &state.config.advisor_phone,
-            &format!("Relay {} cerrado por inactividad.", phone_marker(&phone_number)),
+            &format!(
+                "Relay {} cerrado por inactividad.",
+                phone_marker(&phone_number)
+            ),
         )
         .await?;
 
@@ -363,15 +372,21 @@ fn advisor_timeout_buttons() -> Vec<Button> {
     vec![
         reply_button(
             "advisor_timeout_schedule",
-            &client_messages().timers_customer.advisor_timeout_schedule_button,
+            &client_messages()
+                .timers_customer
+                .advisor_timeout_schedule_button,
         ),
         reply_button(
             "advisor_timeout_retry",
-            &client_messages().timers_customer.advisor_timeout_retry_button,
+            &client_messages()
+                .timers_customer
+                .advisor_timeout_retry_button,
         ),
         reply_button(
             "advisor_timeout_menu",
-            &client_messages().timers_customer.advisor_timeout_menu_button,
+            &client_messages()
+                .timers_customer
+                .advisor_timeout_menu_button,
         ),
     ]
 }
@@ -386,7 +401,9 @@ fn contact_timeout_buttons() -> Vec<Button> {
         ),
         reply_button(
             "back_main_menu",
-            &client_messages().timers_customer.contact_timeout_menu_button,
+            &client_messages()
+                .timers_customer
+                .contact_timeout_menu_button,
         ),
     ]
 }
