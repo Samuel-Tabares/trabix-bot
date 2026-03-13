@@ -108,6 +108,57 @@ Operational notes:
 - If sending works but no real inbound message appears in Railway logs, first verify `GET /{WABA_ID}/subscribed_apps` before debugging Rust code.
 - Meta review/live approval now depends on the public legal pages served by this app: `/privacy-policy` and `/terms-of-service`.
 
+## Traceability & Change Discipline
+Every meaningful code change should leave a clear trace in the repository history.
+
+- Start every work session with `git status --short --branch` and review unexpected local changes before editing.
+- Keep commits focused. Do not mix runtime fixes, docs cleanup, refactors, and release metadata in the same commit unless they are inseparable.
+- Before committing, inspect the exact diff with `git diff` and ensure unrelated files are not included by accident.
+- If a change affects runtime behavior, persistence, pricing, timers, or WhatsApp flow, add or update tests in the same work cycle.
+- If a change affects customer-facing copy, note whether it came from `config/messages.toml`, `.env` fallback behavior, or hardcoded runtime text.
+- If a bug is found in production, document the root cause in the commit message or changelog entry, not only in chat or deployment logs.
+
+## Database & Migration Safety
+This project uses SQLx migrations at startup. Migration discipline is mandatory.
+
+- Never edit the contents of an existing migration that may already have run in Railway or any shared PostgreSQL instance.
+- To change schema after deployment, always add a new migration file with the next numeric prefix.
+- Editing an already-applied migration can crash startup with a SQLx checksum error such as `VersionMismatch(n)`.
+- If a migration adds new columns needed by fresh installs, keep the original table-creation migration unchanged once deployed and add the new columns in a later migration as well.
+- Before pushing schema changes, verify local startup still works with `cargo check` and `cargo test`.
+- After adding a migration, confirm the code paths that read and write the new fields are updated together: model, queries, runtime logic, and tests.
+
+## Versioning & Releases
+This repository now uses release versions and tags.
+
+- Stable release line:
+  - `v1` / `v1.0.0`: baseline project state before the post-release workflow fixes
+  - `v1.1` / `v1.1.0`: workflow bugfix release
+  - `v1.1.1`: migration-checksum hotfix for Railway deployment safety
+- Use semantic versioning from this point forward:
+  - `MAJOR` for breaking changes or major product resets
+  - `MINOR` for backward-compatible feature releases
+  - `PATCH` for backward-compatible bugfixes and deployment hotfixes
+- Update `Cargo.toml`, `Cargo.lock`, and `CHANGELOG.md` together for every release commit.
+- Release commits should use a dedicated message such as `chore: release v1.1.1`.
+- Create annotated tags for releases, for example `git tag -a v1.1.1 -m "Release v1.1.1"`.
+- Do not create a release tag for unvalidated code. Run the required checks first.
+
+## Push & Deploy Workflow
+Use this sequence whenever a change is meant to go live.
+
+- 1. Review the tree with `git status --short` and confirm only intended files are staged.
+- 2. Run validation at minimum with `cargo check` and `cargo test`.
+- 3. Commit the functional change.
+- 4. If this is a release, bump version files and create a dedicated release commit.
+- 5. Tag the release with an annotated tag.
+- 6. Push branch and tags explicitly:
+  - `git push origin master`
+  - `git push origin <tag>`
+- 7. Redeploy Railway only after the push succeeds and the intended commit is visible on GitHub.
+- 8. If Railway crashes on startup after a deploy, inspect migrations first before assuming the Rust logic is wrong.
+- Never push unrelated local deletions or experimental files together with a production hotfix.
+
 ## Coding Style & Naming Conventions
 Keep Markdown concise, task-oriented, and aligned with the existing Spanish project documents. Use clear section headings and short paragraphs. For Mermaid, prefer readable node labels and grouped flow sections.
 
@@ -148,9 +199,25 @@ For manual WhatsApp validation:
 ## Commit & Pull Request Guidelines
 The current history is minimal and uses a plain descriptive subject (`setting AGENTS.MD and secuencial phase of the project`). Keep future commit subjects short, imperative, and specific. Prefer patterns like `docs: refine implementation phases` or `feat: scaffold webhook routes` over vague multi-topic messages.
 
+Recommended commit prefixes for this repository:
+
+- `feat:` new customer-facing or advisor-facing behavior
+- `fix:` runtime bugfix, persistence fix, webhook fix, or deploy correction
+- `docs:` documentation-only changes
+- `test:` test-only additions or corrections
+- `refactor:` internal cleanup without intended behavior change
+- `chore:` release/versioning, dependency, or operational maintenance
+
 Pull requests should include:
 
 - a short summary of the change,
 - affected documents or modules,
 - linked issue or requirement section when available,
 - screenshots or rendered Mermaid output when a flow diagram changes.
+
+For release or hotfix pull requests, also include:
+
+- target version or tag,
+- validation commands executed,
+- migration impact and whether Railway/shared PostgreSQL requires new schema application,
+- rollout or redeploy notes when applicable.
