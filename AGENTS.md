@@ -21,7 +21,7 @@ Current source-of-truth areas:
 
 Current code layout:
 
-- `src/routes/`: webhook verification and inbound WhatsApp handling.
+- `src/routes/`: webhook verification, inbound WhatsApp handling, and public legal pages for Meta review.
 - `src/whatsapp/`: Meta Cloud API client, button/list builders, and payload types.
 - `src/bot/`: state machine and per-state handlers.
 - `src/db/`: SQLx models and conversation queries.
@@ -52,7 +52,7 @@ Current implementation status:
   - order draft/final persistence in `orders` and `order_items`
   - conversation persistence of payment context, receipt state, and timer rehydration data
   - handoff persistence into `pending_advisor`
-- Phase 4 is implemented in code and pending full end-to-end WhatsApp validation:
+- Phase 4 is implemented and now working as the current production runtime:
   - real advisor routing in `webhook.rs`, including per-client advisor buttons and active advisor session binding
   - advisor detail flow: confirmation, delivery-cost capture, total final update, and closure back to `MainMenu`
   - advisor hour negotiation for detail and scheduled orders
@@ -61,7 +61,17 @@ Current implementation status:
   - wholesale relay mode with 30-minute inactivity timeout and advisor-side finish button
   - `Hablar con Asesor` path with advisor attend/unavailable flow plus leave-message fallback
   - timer restoration after restart for `wait_advisor_response`, `wait_advisor_mayor`, `wait_advisor_contact`, and `relay_mode`
-- Phase 4 validation should now be run against `general_info/phase_planning/phase4validation.md`.
+  - production number receiving real public WhatsApp messages once the Meta app is in `Live` mode and subscribed to the WABA
+  - public legal endpoints for Meta review: `/privacy-policy` and `/terms-of-service`
+- Phase 4 validation remains documented in `general_info/phase_planning/phase4validation.md`, but the runtime is now proven against real inbound and outbound production traffic.
+
+Current real runtime behavior:
+
+- Any public user can message the production WhatsApp number when the Meta app is in `Live` mode and the WABA is correctly subscribed to the app.
+- Messages from `ADVISOR_PHONE` are never treated as customer messages; they always enter the advisor flow.
+- If the advisor writes without first selecting a pending case, the bot should answer with the advisor guidance message rather than the customer menu.
+- The bot replies with text, buttons, lists, and images through Meta Cloud API, and persists conversation/order state in PostgreSQL.
+- `mark_as_read` is best-effort only. If Meta rejects the read receipt request, the bot logs a warning and continues processing the message.
 
 ## Build, Test, and Development Commands
 Use these commands regularly:
@@ -76,6 +86,9 @@ Use these commands regularly:
 - `cargo test --test live_whatsapp -- --ignored --test-threads=1`: run live WhatsApp transport smoke tests.
 - `cargo run --bin granizado-bot`: run the local bot service.
 - `cargo run --bin upload_media -- /ruta/local/menu.jpg`: upload a local media file to Meta and print the `media_id`.
+- `curl -H "Authorization: Bearer $WHATSAPP_TOKEN" "https://graph.facebook.com/v21.0/$WABA_ID/phone_numbers"`: confirm which phone numbers the current token can operate.
+- `curl -H "Authorization: Bearer $WHATSAPP_TOKEN" "https://graph.facebook.com/v21.0/$WABA_ID/subscribed_apps"`: confirm the WABA is subscribed to the current Meta app.
+- `curl -X POST -H "Authorization: Bearer $WHATSAPP_TOKEN" "https://graph.facebook.com/v21.0/$WABA_ID/subscribed_apps"`: subscribe the app to the WABA when real inbound events are not reaching the webhook.
 
 Operational notes:
 
@@ -87,6 +100,13 @@ Operational notes:
 - Keep `ADVISOR_PHONE` different from `WHATSAPP_TEST_RECIPIENT` during local WhatsApp validation, otherwise tester messages are routed as advisor messages.
 - Large menu images may be rejected by Meta. If needed, compress or resize locally before upload.
 - Operational menu images should not live under `src/` as tracked source code; the bot only needs the resulting `media_id`.
+- The production webhook callback URL is `/webhook`. Do not configure `/webhooks`, trailing variants, or alternate paths in Meta.
+- For public production traffic, the Meta app must be in `Live` mode. `Development` mode restricts inbound traffic to approved testers only.
+- A verified webhook and a connected production number are not sufficient by themselves. The WABA must also be subscribed to the app through `/{WABA_ID}/subscribed_apps`, or real user messages may never reach Railway even if Meta webhook test events work.
+- The token used by Railway must be a permanent system-user token with access to the same WABA and `WHATSAPP_PHONE_ID` used by the production number.
+- `WHATSAPP_TEST_RECIPIENT` is only for live smoke tests and does not control which number the bot listens on. Runtime inbound traffic is determined by Meta's WABA, app subscription, and `WHATSAPP_PHONE_ID`.
+- If sending works but no real inbound message appears in Railway logs, first verify `GET /{WABA_ID}/subscribed_apps` before debugging Rust code.
+- Meta review/live approval now depends on the public legal pages served by this app: `/privacy-policy` and `/terms-of-service`.
 
 ## Coding Style & Naming Conventions
 Keep Markdown concise, task-oriented, and aligned with the existing Spanish project documents. Use clear section headings and short paragraphs. For Mermaid, prefer readable node labels and grouped flow sections.
@@ -116,7 +136,12 @@ Current important coverage areas:
 For manual WhatsApp validation:
 
 - confirm the webhook points to the active service
+- confirm Meta is using the exact `/webhook` callback URL
+- confirm the app is in `Live` mode when testing with non-tester public numbers
+- confirm `GET /{WABA_ID}/subscribed_apps` returns the active app before investigating missing inbound logs
 - validate behavior from the tester phone, not just transport
+- validate behavior from a non-advisor public number when confirming open production access
+- do not use `ADVISOR_PHONE` to validate the customer flow; it is routed through advisor logic by design
 - check PostgreSQL state when the acceptance criteria require persistence evidence
 - use `general_info/phase_planning/phase4validation.md` as the current checklist for advisor, timeout, relay, and restart scenarios
 
