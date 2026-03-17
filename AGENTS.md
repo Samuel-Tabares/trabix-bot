@@ -6,17 +6,10 @@ This repository started as documentation-first, but it now contains a working Ru
 Current source-of-truth areas:
 
 - `AGENTS.md`: contributor instructions for this repository.
-- `general_info/Business_Requirements_Document.md`: business rules, operations, costs, and phased scope.
-- `general_info/Flow_Design_Diagram.mermaid`: end-to-end conversation flow.
-- `general_info/Software_Design_Document.md`: target Rust architecture, data model, state machine, and webhook contract.
-- `general_info/Implementation_&_Deployment_Document.md`: phased build plan and acceptance criteria.
-- `general_info/phase_planning/phase1.md`: approved Phase 1 implementation plan.
+- `general_info/Flow_Design_Diagram_v2.mermaid`: end-to-end conversation flow.
 - `general_info/phase_planning/phase1validation.md`: Phase 1 validation notes.
-- `general_info/phase_planning/phase2.md`: approved Phase 2 implementation plan.
 - `general_info/phase_planning/phase2validation.md`: Phase 2 validation checklist and evidence guide.
-- `general_info/phase_planning/phase3.md`: approved Phase 3 planning baseline.
 - `general_info/phase_planning/phase3validation.md`: Phase 3 validation checklist, evidence guide, and manual test setup.
-- `general_info/phase_planning/phase4.md`: approved Phase 4 implementation plan.
 - `general_info/phase_planning/phase4validation.md`: Phase 4 validation checklist, evidence guide, manual relay/advisor scenarios, and restart checks.
 
 Current code layout:
@@ -42,7 +35,7 @@ Current implementation status:
   - flexible text capture for programmed date/time with minimal length validation
   - flavor selection through WhatsApp lists after choosing `Con Licor` or `Sin Licor`
   - single menu image sent only in `Ver Menú`
-- Phase 3 is implemented and partially validated as the checkout foundation:
+- Phase 3 is implemented and validated as the checkout foundation:
   - real price calculation in `pricing.rs`, including liquor pair promo and wholesale tiers
   - `ShowSummary` with estimated total excluding delivery cost
   - payment choice: `Contra Entrega` or `Pago Ahora`
@@ -81,8 +74,6 @@ Use these commands regularly:
 - `sed -n '1,120p' general_info/Business_Requirements_Document.md`: inspect a document section before editing.
 - `cargo check`: verify the Rust project compiles.
 - `cargo test`: run local unit and integration coverage.
-- `cargo test --test phase2_flow`: run the Phase 2 end-to-end state-machine flow.
-- `cargo test --test live_db -- --ignored --test-threads=1`: run live PostgreSQL smoke tests.
 - `cargo test --test live_whatsapp -- --ignored --test-threads=1`: run live WhatsApp transport smoke tests.
 - `cargo run --bin granizado-bot`: run the local bot service.
 - `cargo run --bin upload_media -- /ruta/local/menu.jpg`: upload a local media file to Meta and print the `media_id`.
@@ -129,7 +120,7 @@ This project uses SQLx migrations at startup. Migration discipline is mandatory.
 - After adding a migration, confirm the code paths that read and write the new fields are updated together: model, queries, runtime logic, and tests.
 
 ## Versioning & Releases
-This repository now uses release versions and tags.
+This repository now uses release versions and tags, every change made on the project is named and versioned so we can keep a full audit, every change made is also updated on these 3 files: AGENTS.md ; CHANGELOG.md ; Flow_Design_Diagram_v2.mermaid.
 
 - Stable release line:
   - `v1` / `v1.0.0`: baseline project state before the post-release workflow fixes
@@ -170,8 +161,6 @@ Persisted conversation state uses `snake_case` strings in the database. Any tran
 Automated coverage already exists and should be extended with each phase:
 
 - `src/` unit tests cover webhook parsing, config loading, state serialization, validations, and state transitions.
-- `tests/phase2_flow.rs` covers the current customer flow, including persistence/rehydration between steps and list-based flavor selection.
-- `tests/live_db.rs` covers live database persistence and migrations.
 - `tests/live_whatsapp.rs` covers live transport to Meta for text, buttons, and lists.
 
 When adding Phase 3+ work, prefer tests named by behavior, for example `applies_liquor_pair_discount` or `handles_transfer_payment_without_receipt`.
