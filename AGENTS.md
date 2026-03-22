@@ -54,6 +54,7 @@ Current implementation status:
   - wholesale relay mode with 30-minute inactivity timeout and advisor-side finish button
   - `Hablar con Asesor` path with advisor attend/unavailable flow plus leave-message fallback
   - timer restoration after restart for `wait_advisor_response`, `wait_advisor_mayor`, `wait_advisor_contact`, and `relay_mode`
+  - periodic database-backed timer sweep so missed in-memory tasks still expire receipt, advisor, and relay waits
   - production number receiving real public WhatsApp messages once the Meta app is in `Live` mode and subscribed to the WABA
   - public legal endpoints for Meta review: `/privacy-policy` and `/terms-of-service`
 - Phase 4 validation remains documented in `general_info/phase_planning/phase4validation.md`, but the runtime is now proven against real inbound and outbound production traffic.
@@ -126,6 +127,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1` / `v1.0.0`: baseline project state before the post-release workflow fixes
   - `v1.1` / `v1.1.0`: workflow bugfix release
   - `v1.1.1`: migration-checksum hotfix for Railway deployment safety
+  - `v1.1.2`: timer-sweep hotfix for missed in-memory expirations
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases
@@ -172,6 +174,7 @@ Current important coverage areas:
 - `src/bot/states/advisor.rs`: advisor button parsing, delivery-cost capture, hour negotiation, timeout retry/programming, and contact-advisor flow.
 - `src/bot/states/relay.rs`: wholesale relay, advisor-contact relay, finish button, and text-only forwarding rules.
 - `src/bot/timers.rs`: receipt timeout, advisor timeout, relay inactivity timeout, and timer restoration after restart.
+  - also includes the periodic database-backed sweep that catches missed expirations after deploys or runtime interruptions
 
 For manual WhatsApp validation:
 

@@ -1,6 +1,8 @@
 use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
+use chrono::{DateTime, Utc};
 use tokio::sync::Mutex;
+use tokio::time::{interval, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -22,6 +24,7 @@ pub type TimerMap = Arc<Mutex<HashMap<TimerKey, CancellationToken>>>;
 pub const RECEIPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 pub const RELAY_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const TIMER_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
 pub fn new_timer_map() -> TimerMap {
     Arc::new(Mutex::new(HashMap::new()))
@@ -78,51 +81,68 @@ pub async fn restore_pending_timers(state: AppState) -> Result<(), sqlx::Error> 
     .await?;
 
     for conversation in conversations {
-        let state_data = &conversation.state_data.0;
-        match conversation.state.as_str() {
-            "wait_receipt" if !state_data.receipt_timer_expired => {
+        match timer_recovery(&conversation, Utc::now()) {
+            Some(TimerRecovery::Expired(timer_type)) => {
+                expire_timer_now(state.clone(), conversation.phone_number.clone(), timer_type)
+                    .await;
+            }
+            Some(TimerRecovery::Active {
+                timer_type,
+                timeout,
+                started_at,
+            }) => {
                 restore_timer(
                     state.clone(),
                     conversation.phone_number.clone(),
-                    TimerType::ReceiptUpload,
-                    RECEIPT_TIMEOUT,
-                    state_data
-                        .receipt_timer_started_at
-                        .unwrap_or(conversation.last_message_at),
+                    timer_type,
+                    timeout,
+                    started_at,
                 )
                 .await;
             }
-            "wait_advisor_response" | "wait_advisor_mayor" | "wait_advisor_contact"
-                if !state_data.advisor_timer_expired =>
-            {
-                restore_timer(
-                    state.clone(),
-                    conversation.phone_number.clone(),
-                    TimerType::AdvisorResponse,
-                    ADVISOR_RESPONSE_TIMEOUT,
-                    state_data
-                        .advisor_timer_started_at
-                        .unwrap_or(conversation.last_message_at),
-                )
-                .await;
-            }
-            "relay_mode" => {
-                restore_timer(
-                    state.clone(),
-                    conversation.phone_number.clone(),
-                    TimerType::RelayInactivity,
-                    RELAY_INACTIVITY_TIMEOUT,
-                    state_data
-                        .relay_timer_started_at
-                        .unwrap_or(conversation.last_message_at),
-                )
-                .await;
-            }
-            _ => {}
+            None => {}
         }
     }
 
     Ok(())
+}
+
+pub async fn sweep_expired_timers(state: AppState) -> Result<(), sqlx::Error> {
+    let conversations = list_active_timer_conversations(
+        &state.pool,
+        &[
+            "wait_receipt",
+            "wait_advisor_response",
+            "wait_advisor_mayor",
+            "wait_advisor_contact",
+            "relay_mode",
+        ],
+    )
+    .await?;
+
+    for conversation in conversations {
+        if let Some(TimerRecovery::Expired(timer_type)) = timer_recovery(&conversation, Utc::now())
+        {
+            expire_timer_now(state.clone(), conversation.phone_number.clone(), timer_type).await;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn spawn_timer_sweeper(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = interval(TIMER_SWEEP_INTERVAL);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+        loop {
+            ticker.tick().await;
+
+            if let Err(err) = sweep_expired_timers(state.clone()).await {
+                tracing::error!(error = %err, "failed to sweep expired timers");
+            }
+        }
+    })
 }
 
 async fn restore_timer(
@@ -152,6 +172,72 @@ async fn restore_timer(
         },
     )
     .await;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TimerRecovery {
+    Active {
+        timer_type: TimerType,
+        timeout: Duration,
+        started_at: DateTime<Utc>,
+    },
+    Expired(TimerType),
+}
+
+fn timer_recovery(
+    conversation: &crate::db::queries::ActiveTimerConversation,
+    now: DateTime<Utc>,
+) -> Option<TimerRecovery> {
+    let state_data = &conversation.state_data.0;
+
+    match conversation.state.as_str() {
+        "wait_receipt" if !state_data.receipt_timer_expired => timer_recovery_for(
+            TimerType::ReceiptUpload,
+            RECEIPT_TIMEOUT,
+            state_data
+                .receipt_timer_started_at
+                .unwrap_or(conversation.last_message_at),
+            now,
+        ),
+        "wait_advisor_response" | "wait_advisor_mayor" | "wait_advisor_contact"
+            if !state_data.advisor_timer_expired =>
+        {
+            timer_recovery_for(
+                TimerType::AdvisorResponse,
+                ADVISOR_RESPONSE_TIMEOUT,
+                state_data
+                    .advisor_timer_started_at
+                    .unwrap_or(conversation.last_message_at),
+                now,
+            )
+        }
+        "relay_mode" => timer_recovery_for(
+            TimerType::RelayInactivity,
+            RELAY_INACTIVITY_TIMEOUT,
+            state_data
+                .relay_timer_started_at
+                .unwrap_or(conversation.last_message_at),
+            now,
+        ),
+        _ => None,
+    }
+}
+
+fn timer_recovery_for(
+    timer_type: TimerType,
+    timeout: Duration,
+    started_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Option<TimerRecovery> {
+    if elapsed_since(started_at, now) >= timeout {
+        Some(TimerRecovery::Expired(timer_type))
+    } else {
+        Some(TimerRecovery::Active {
+            timer_type,
+            timeout,
+            started_at,
+        })
+    }
 }
 
 async fn expire_timer_now(state: AppState, phone_number: String, timer_type: TimerType) {
@@ -425,4 +511,88 @@ fn phone_marker(phone: &str) -> String {
         phone
     };
     format!("[...{suffix}]")
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Duration as ChronoDuration;
+    use sqlx::types::Json;
+
+    use super::{timer_recovery, TimerRecovery};
+    use crate::{
+        bot::state_machine::TimerType,
+        db::{models::ConversationStateData, queries::ActiveTimerConversation},
+    };
+
+    fn active_timer_conversation(
+        state: &str,
+        state_data: ConversationStateData,
+        last_message_at: chrono::DateTime<chrono::Utc>,
+    ) -> ActiveTimerConversation {
+        ActiveTimerConversation {
+            id: 1,
+            phone_number: "573001234567".to_string(),
+            state: state.to_string(),
+            state_data: Json(state_data),
+            customer_name: Some("Ana".to_string()),
+            customer_phone: Some("3001234567".to_string()),
+            delivery_address: Some("Cra 15 #20-30".to_string()),
+            last_message_at,
+        }
+    }
+
+    #[test]
+    fn timer_recovery_marks_expired_relay_as_overdue() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "relay_mode",
+            ConversationStateData {
+                relay_timer_started_at: Some(now - ChronoDuration::minutes(31)),
+                ..Default::default()
+            },
+            now,
+        );
+
+        let recovery = timer_recovery(&conversation, now);
+
+        assert_eq!(
+            recovery,
+            Some(TimerRecovery::Expired(TimerType::RelayInactivity))
+        );
+    }
+
+    #[test]
+    fn timer_recovery_uses_last_message_when_start_timestamp_is_missing() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "wait_advisor_response",
+            ConversationStateData::default(),
+            now - ChronoDuration::minutes(3),
+        );
+
+        let recovery = timer_recovery(&conversation, now);
+
+        assert_eq!(
+            recovery,
+            Some(TimerRecovery::Expired(TimerType::AdvisorResponse))
+        );
+    }
+
+    #[test]
+    fn timer_recovery_skips_already_expired_receipt_waits() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "wait_receipt",
+            ConversationStateData {
+                receipt_timer_started_at: Some(now - ChronoDuration::minutes(20)),
+                receipt_timer_expired: true,
+                ..Default::default()
+            },
+            now,
+        );
+
+        let recovery = timer_recovery(&conversation, now);
+
+        assert!(recovery.is_none());
+    }
 }

@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::Router;
 use granizado_bot::{
-    bot::timers::{new_timer_map, restore_pending_timers},
+    bot::timers::{new_timer_map, restore_pending_timers, spawn_timer_sweeper},
     config::Config,
     db::init_pool,
     messages::{set_client_messages, ClientMessages},
@@ -41,6 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     restore_pending_timers(app_state.clone()).await?;
+    let _timer_sweeper = spawn_timer_sweeper(app_state.clone());
 
     let app: Router = routes::router().with_state(app_state);
 

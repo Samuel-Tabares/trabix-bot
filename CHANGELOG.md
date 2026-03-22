@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.2] - 2026-03-22
+
+- Add a periodic database-backed timer sweep so receipt, advisor, and relay expirations still fire if an in-memory task is missed.
+- Keep the existing boot-time timer restoration and make timeout handling more resilient after deploys or runtime interruptions.
+
 ## [1.1.1] - 2026-03-13
 
 - Fix Railway startup by restoring the original checksum for migration `002_create_orders.sql`.

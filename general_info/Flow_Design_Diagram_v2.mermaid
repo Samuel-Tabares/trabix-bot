@@ -19,7 +19,7 @@ graph TD
         Conversations["🗂️ conversations<br/>- phone_number<br/>- state<br/>- state_data JSONB<br/>- customer_name<br/>- customer_phone<br/>- delivery_address<br/>- last_message_at"]
         Orders["🧾 orders<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- receipt_media_id<br/>- delivery_cost<br/>- total_estimated<br/>- total_final<br/>- status"]
         OrderItems["🧊 order_items<br/>- flavor<br/>- has_liquor<br/>- quantity<br/>- unit_price<br/>- subtotal"]
-        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- relay_inactivity 30m<br/>- restore_pending_timers()"]
+        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- relay_inactivity 30m<br/>- restore_pending_timers()<br/>- sweep_expired_timers()"]
     end
 
     Route -->|Cliente| LoadClient["load_or_create_conversation + rehydrate context"]
@@ -161,6 +161,7 @@ graph TD
         WaitAdvisorResponse --> Timers
         WaitAdvisorContact --> Timers
         RelayMode --> Timers
+        Timers --> Sweep["⏲️ sweep_expired_timers()<br/>cada 60s"]
 
         Timers --> ReceiptExpire["expire_receipt_timer\nCliente: no llego comprobante\nBotones Cambiar pago / Cancelar"]
         Timers --> AdvisorExpire["expire_advisor_timer\nCliente: Programar / Reintentar / Menu\nO Dejar mensaje / Menu en contact"]
