@@ -130,7 +130,10 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
     }
 
     if !processed_any_message {
-        tracing::info!("webhook without incoming messages ignored");
+        tracing::info!(
+            body = %String::from_utf8_lossy(&body),
+            "webhook without incoming messages ignored"
+        );
         return Ok(());
     }
 
