@@ -362,8 +362,14 @@ fn render_summary(
         Some("scheduled") => render_template(
             &messages.summary_delivery_scheduled_template,
             &[
-                ("date", context.scheduled_date.as_deref().unwrap_or("pendiente")),
-                ("time", context.scheduled_time.as_deref().unwrap_or("pendiente")),
+                (
+                    "date",
+                    context.scheduled_date.as_deref().unwrap_or("pendiente"),
+                ),
+                (
+                    "time",
+                    context.scheduled_time.as_deref().unwrap_or("pendiente"),
+                ),
             ],
         ),
         Some(other) => other.to_string(),

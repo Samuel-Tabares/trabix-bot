@@ -490,7 +490,9 @@ pub fn transition_advisor(
         ConversationState::WaitAdvisorResponse => {
             advisor::handle_advisor_wait_advisor_response(input, context)
         }
-        ConversationState::AskDeliveryCost => advisor::handle_advisor_ask_delivery_cost(input, context),
+        ConversationState::AskDeliveryCost => {
+            advisor::handle_advisor_ask_delivery_cost(input, context)
+        }
         ConversationState::NegotiateHour => advisor::handle_advisor_negotiate_hour(input, context),
         ConversationState::WaitAdvisorHourDecision { .. } => {
             advisor::handle_advisor_hour_decision(input, context)

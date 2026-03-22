@@ -178,7 +178,11 @@ pub fn select_flavor_actions(phone: &str, has_liquor: bool) -> Vec<BotAction> {
     let (body, rows) = if has_liquor {
         (
             messages.select_flavor_with_liquor_body.clone(),
-            flavor_rows(&LIQUOR_FLAVOR_IDS, &messages.flavors_with_liquor, &messages.flavor_row_description),
+            flavor_rows(
+                &LIQUOR_FLAVOR_IDS,
+                &messages.flavors_with_liquor,
+                &messages.flavor_row_description,
+            ),
         )
     } else {
         (

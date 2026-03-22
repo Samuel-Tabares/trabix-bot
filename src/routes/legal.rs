@@ -242,4 +242,3 @@ fn render_page(title: &str, content: &str) -> String {
         .replace("{title}", title)
         .replace("{content}", content)
 }
-

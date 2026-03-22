@@ -15,10 +15,7 @@ use crate::{
 const RELAY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const ADVISOR_FINISH_PREFIX: &str = "advisor_finish_";
 
-pub fn handle_relay_mode(
-    input: &UserInput,
-    context: &mut ConversationContext,
-) -> TransitionResult {
+pub fn handle_relay_mode(input: &UserInput, context: &mut ConversationContext) -> TransitionResult {
     match input {
         UserInput::TextMessage(text) if !text.trim().is_empty() => {
             context.relay_timer_started_at = Some(chrono::Utc::now());
@@ -33,7 +30,11 @@ pub fn handle_relay_mode(
                     BotAction::RelayMessage {
                         from: context.phone_number.clone(),
                         to: context.advisor_phone.clone(),
-                        body: format!("[CLIENTE {}]: {}", phone_marker(&context.phone_number), text.trim()),
+                        body: format!(
+                            "[CLIENTE {}]: {}",
+                            phone_marker(&context.phone_number),
+                            text.trim()
+                        ),
                     },
                     BotAction::StartTimer {
                         timer_type: TimerType::RelayInactivity,
@@ -68,7 +69,10 @@ pub fn handle_relay_mode_advisor(
                 parse_advisor_button_id(id),
                 Some((AdvisorButtonAction::Finish, _))
             ) {
-                return Ok((ConversationState::OrderComplete, close_relay_actions(context, false)));
+                return Ok((
+                    ConversationState::OrderComplete,
+                    close_relay_actions(context, false),
+                ));
             }
 
             Ok((
@@ -117,14 +121,17 @@ pub fn relay_timeout_actions(context: &ConversationContext) -> Vec<BotAction> {
     close_relay_actions(context, true)
 }
 
-fn close_relay_actions(
-    context: &ConversationContext,
-    by_timeout: bool,
-) -> Vec<BotAction> {
+fn close_relay_actions(context: &ConversationContext, by_timeout: bool) -> Vec<BotAction> {
     let client_message = if by_timeout {
-        client_messages().relay_customer.relay_closed_by_timeout.as_str()
+        client_messages()
+            .relay_customer
+            .relay_closed_by_timeout
+            .as_str()
     } else {
-        client_messages().relay_customer.relay_closed_manual.as_str()
+        client_messages()
+            .relay_customer
+            .relay_closed_manual
+            .as_str()
     };
 
     let advisor_message = if by_timeout {
@@ -217,9 +224,11 @@ mod tests {
     fn relay_forwards_client_text_to_advisor() {
         let mut context = context();
 
-        let (state, actions) =
-            handle_relay_mode(&UserInput::TextMessage("Hola asesor".to_string()), &mut context)
-                .expect("transition");
+        let (state, actions) = handle_relay_mode(
+            &UserInput::TextMessage("Hola asesor".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::RelayMode);
         assert!(actions.iter().any(|action| matches!(action, crate::bot::state_machine::BotAction::RelayMessage { to, body, .. } if to == "573009999999" && body.contains("[CLIENTE [...4567]]: Hola asesor"))));
@@ -229,9 +238,11 @@ mod tests {
     fn relay_rejects_non_text_input() {
         let mut context = context();
 
-        let (state, _actions) =
-            handle_relay_mode(&UserInput::ImageMessage("media-1".to_string()), &mut context)
-                .expect("transition");
+        let (state, _actions) = handle_relay_mode(
+            &UserInput::ImageMessage("media-1".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::RelayMode);
     }
@@ -247,6 +258,9 @@ mod tests {
         .expect("transition");
 
         assert_eq!(state, ConversationState::OrderComplete);
-        assert!(actions.iter().any(|action| matches!(action, crate::bot::state_machine::BotAction::ResetConversation { .. })));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::ResetConversation { .. }
+        )));
     }
 }

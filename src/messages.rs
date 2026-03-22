@@ -411,14 +411,9 @@ pub fn render_template(template: &str, values: &[(&str, &str)]) -> String {
     rendered
 }
 
-fn validate_template(
-    template: &str,
-    expected: &[&str],
-    field: &str,
-) -> Result<(), MessagesError> {
-    let actual = extract_placeholders(template).map_err(|message| {
-        MessagesError::Validation(format!("{field}: {message}"))
-    })?;
+fn validate_template(template: &str, expected: &[&str], field: &str) -> Result<(), MessagesError> {
+    let actual = extract_placeholders(template)
+        .map_err(|message| MessagesError::Validation(format!("{field}: {message}")))?;
     let expected = expected
         .iter()
         .map(|value| (*value).to_string())
@@ -521,9 +516,7 @@ mod tests {
         let error = ClientMessages::from_toml_str(&broken).expect_err("should fail");
 
         assert!(
-            error
-                .to_string()
-                .contains("scheduling.confirm_template"),
+            error.to_string().contains("scheduling.confirm_template"),
             "unexpected error: {error}"
         );
     }
