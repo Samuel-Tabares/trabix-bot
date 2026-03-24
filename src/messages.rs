@@ -252,6 +252,7 @@ pub struct TimerCustomerMessages {
     pub receipt_timeout_buttons_body: String,
     pub advisor_timeout_text: String,
     pub advisor_timeout_wholesale_text: String,
+    pub advisor_stuck_timeout_text: String,
     pub advisor_timeout_buttons_body: String,
     pub advisor_timeout_schedule_button: String,
     pub advisor_timeout_retry_button: String,
@@ -498,7 +499,10 @@ mod tests {
     fn loads_messages_from_repo_fixture() {
         let messages = ClientMessages::for_tests();
 
-        assert_eq!(messages.menu.main_list_body, "¿Qué te gustaría hacer ahora? 👇");
+        assert_eq!(
+            messages.menu.main_list_body,
+            "¿Qué te gustaría hacer ahora? 👇"
+        );
         assert_eq!(
             messages.checkout.receipt_timeout_change_payment_button,
             "Cambiar pago"

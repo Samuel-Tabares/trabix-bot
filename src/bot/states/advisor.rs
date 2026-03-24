@@ -10,6 +10,7 @@ use crate::{
             UserInput,
         },
         states::{data_collect, menu, scheduling},
+        timers::{ADVISOR_RESPONSE_TIMEOUT, ADVISOR_STUCK_TIMEOUT},
     },
     messages::{client_messages, render_template},
     whatsapp::types::{Button, ButtonReplyPayload},
@@ -39,7 +40,6 @@ const HOUR_MIN_LEN: usize = 1;
 const HOUR_MAX_LEN: usize = 40;
 const LEAVE_MESSAGE_MIN_LEN: usize = 2;
 const LEAVE_MESSAGE_MAX_LEN: usize = 500;
-const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdvisorButtonAction {
@@ -401,6 +401,8 @@ pub fn handle_advisor_ask_delivery_cost(
     match input {
         UserInput::TextMessage(text) => match parse_delivery_cost(text) {
             Ok(delivery_cost) => {
+                context.advisor_timer_started_at = None;
+                context.advisor_timer_expired = false;
                 let pedido = calcular_pedido(&context.items);
                 let total_final =
                     i32::try_from(pedido.total_estimado).unwrap_or(i32::MAX) + delivery_cost;
@@ -408,6 +410,10 @@ pub fn handle_advisor_ask_delivery_cost(
                 Ok((
                     ConversationState::OrderComplete,
                     vec![
+                        BotAction::CancelTimer {
+                            timer_type: TimerType::AdvisorResponse,
+                            phone: context.phone_number.clone(),
+                        },
                         BotAction::UpdateCurrentOrderDeliveryCost {
                             delivery_cost,
                             total_final,
@@ -467,6 +473,8 @@ pub fn handle_advisor_negotiate_hour(
     match input {
         UserInput::TextMessage(text) => match validate_hour_text(text) {
             Ok(hour) => {
+                context.advisor_timer_started_at = None;
+                context.advisor_timer_expired = false;
                 context.advisor_proposed_hour = Some(hour.clone());
 
                 Ok((
@@ -474,6 +482,10 @@ pub fn handle_advisor_negotiate_hour(
                         proposed_hour: hour.clone(),
                     },
                     vec![
+                        BotAction::CancelTimer {
+                            timer_type: TimerType::AdvisorResponse,
+                            phone: context.phone_number.clone(),
+                        },
                         BotAction::ClearAdvisorSession {
                             advisor_phone: context.advisor_phone.clone(),
                         },
@@ -533,22 +545,31 @@ pub fn handle_advisor_hour_decision(
 ) -> TransitionResult {
     match advisor_button_action(input) {
         Some(AdvisorButtonAction::YesHour) => finalize_or_ask_delivery_cost(context),
-        Some(AdvisorButtonAction::OtherHour) => Ok((
-            ConversationState::NegotiateHour,
-            vec![
-                BotAction::BindAdvisorSession {
-                    advisor_phone: context.advisor_phone.clone(),
-                    target_phone: context.phone_number.clone(),
-                },
-                BotAction::SendText {
-                    to: context.advisor_phone.clone(),
-                    body: format!(
-                        "Perfecto. Envíe otra hora para {}.",
-                        phone_marker(&context.phone_number)
-                    ),
-                },
-            ],
-        )),
+        Some(AdvisorButtonAction::OtherHour) => {
+            context.advisor_timer_started_at = Some(chrono::Utc::now());
+            context.advisor_timer_expired = false;
+            Ok((
+                ConversationState::NegotiateHour,
+                vec![
+                    BotAction::BindAdvisorSession {
+                        advisor_phone: context.advisor_phone.clone(),
+                        target_phone: context.phone_number.clone(),
+                    },
+                    BotAction::SendText {
+                        to: context.advisor_phone.clone(),
+                        body: format!(
+                            "Perfecto. Envíe otra hora para {}.",
+                            phone_marker(&context.phone_number)
+                        ),
+                    },
+                    BotAction::StartTimer {
+                        timer_type: TimerType::AdvisorResponse,
+                        phone: context.phone_number.clone(),
+                        duration: ADVISOR_STUCK_TIMEOUT,
+                    },
+                ],
+            ))
+        }
         _ => Ok((
             ConversationState::WaitAdvisorHourDecision {
                 client_hour: context
@@ -926,27 +947,36 @@ fn handle_offer_hour_to_client(
     proposed_hour: &str,
 ) -> TransitionResult {
     match selection_id(input).as_deref() {
-        Some(ACCEPT_PROPOSED_HOUR) => Ok((
-            ConversationState::WaitAdvisorConfirmHour,
-            vec![
-                BotAction::SendText {
-                    to: context.advisor_phone.clone(),
-                    body: format!(
-                        "El cliente {} aceptó la hora {}. ¿Confirmas el pedido?",
-                        phone_marker(&context.phone_number),
-                        proposed_hour
-                    ),
-                },
-                BotAction::SendButtons {
-                    to: context.advisor_phone.clone(),
-                    body: "Confirma el pedido para continuar.".to_string(),
-                    buttons: vec![reply_button(
-                        &advisor_button_id(ADVISOR_CONFIRM_PREFIX, &context.phone_number),
-                        &advisor_title("Confirmar", &context.phone_number),
-                    )],
-                },
-            ],
-        )),
+        Some(ACCEPT_PROPOSED_HOUR) => {
+            context.advisor_timer_started_at = Some(chrono::Utc::now());
+            context.advisor_timer_expired = false;
+            Ok((
+                ConversationState::WaitAdvisorConfirmHour,
+                vec![
+                    BotAction::SendText {
+                        to: context.advisor_phone.clone(),
+                        body: format!(
+                            "El cliente {} aceptó la hora {}. ¿Confirmas el pedido?",
+                            phone_marker(&context.phone_number),
+                            proposed_hour
+                        ),
+                    },
+                    BotAction::SendButtons {
+                        to: context.advisor_phone.clone(),
+                        body: "Confirma el pedido para continuar.".to_string(),
+                        buttons: vec![reply_button(
+                            &advisor_button_id(ADVISOR_CONFIRM_PREFIX, &context.phone_number),
+                            &advisor_title("Confirmar", &context.phone_number),
+                        )],
+                    },
+                    BotAction::StartTimer {
+                        timer_type: TimerType::AdvisorResponse,
+                        phone: context.phone_number.clone(),
+                        duration: ADVISOR_STUCK_TIMEOUT,
+                    },
+                ],
+            ))
+        }
         Some(REJECT_PROPOSED_HOUR) => Ok((
             ConversationState::WaitClientHour,
             vec![BotAction::SendText {
@@ -991,6 +1021,8 @@ fn handle_wait_client_hour(
     match input {
         UserInput::TextMessage(text) => match validate_client_hour_text(text) {
             Ok(hour) => {
+                context.advisor_timer_started_at = Some(chrono::Utc::now());
+                context.advisor_timer_expired = false;
                 context.client_counter_hour = Some(hour.clone());
 
                 Ok((
@@ -1025,6 +1057,11 @@ fn handle_wait_client_hour(
                                     &advisor_title("Otra hora", &context.phone_number),
                                 ),
                             ],
+                        },
+                        BotAction::StartTimer {
+                            timer_type: TimerType::AdvisorResponse,
+                            phone: context.phone_number.clone(),
+                            duration: ADVISOR_STUCK_TIMEOUT,
                         },
                     ],
                 ))
@@ -1259,13 +1296,12 @@ fn relay_entry_actions(
 fn finalize_or_ask_delivery_cost(context: &mut ConversationContext) -> TransitionResult {
     let immediate = context.delivery_type.as_deref() == Some("immediate");
     if immediate {
+        context.advisor_timer_started_at = Some(chrono::Utc::now());
+        context.advisor_timer_expired = false;
+
         Ok((
             ConversationState::AskDeliveryCost,
             vec![
-                BotAction::CancelTimer {
-                    timer_type: TimerType::AdvisorResponse,
-                    phone: context.phone_number.clone(),
-                },
                 BotAction::BindAdvisorSession {
                     advisor_phone: context.advisor_phone.clone(),
                     target_phone: context.phone_number.clone(),
@@ -1280,6 +1316,11 @@ fn finalize_or_ask_delivery_cost(context: &mut ConversationContext) -> Transitio
                             .as_deref()
                             .unwrap_or("dirección pendiente")
                     ),
+                },
+                BotAction::StartTimer {
+                    timer_type: TimerType::AdvisorResponse,
+                    phone: context.phone_number.clone(),
+                    duration: ADVISOR_STUCK_TIMEOUT,
                 },
             ],
         ))
@@ -1418,14 +1459,12 @@ fn transition_immediate_order_to_scheduled(context: &mut ConversationContext) ->
     context.scheduled_time = None;
     context.advisor_proposed_hour = None;
     context.client_counter_hour = None;
+    context.advisor_timer_started_at = Some(chrono::Utc::now());
+    context.advisor_timer_expired = false;
 
     Ok((
         ConversationState::NegotiateHour,
         vec![
-            BotAction::CancelTimer {
-                timer_type: TimerType::AdvisorResponse,
-                phone: context.phone_number.clone(),
-            },
             BotAction::BindAdvisorSession {
                 advisor_phone: context.advisor_phone.clone(),
                 target_phone: context.phone_number.clone(),
@@ -1436,6 +1475,11 @@ fn transition_immediate_order_to_scheduled(context: &mut ConversationContext) ->
                     "Pedido {} quedó como programado para hoy. ¿Qué hora puede proponer?",
                     phone_marker(&context.phone_number)
                 ),
+            },
+            BotAction::StartTimer {
+                timer_type: TimerType::AdvisorResponse,
+                phone: context.phone_number.clone(),
+                duration: ADVISOR_STUCK_TIMEOUT,
             },
         ],
     ))
@@ -1721,6 +1765,11 @@ mod tests {
             action,
             crate::bot::state_machine::BotAction::BindAdvisorSession { .. }
         )));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::StartTimer { timer_type: crate::bot::state_machine::TimerType::AdvisorResponse, duration, .. }
+                if *duration == crate::bot::timers::ADVISOR_STUCK_TIMEOUT
+        )));
     }
 
     #[test]
@@ -1803,6 +1852,30 @@ mod tests {
         assert!(actions.iter().any(|action| matches!(
             action,
             crate::bot::state_machine::BotAction::StartTimer { .. }
+        )));
+    }
+
+    #[test]
+    fn client_counter_hour_starts_stuck_advisor_timer() {
+        let mut context = context();
+
+        let (state, actions) = handle_client_waiting_state(
+            &ConversationState::WaitClientHour,
+            &UserInput::TextMessage("6:30 pm".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(
+            state,
+            ConversationState::WaitAdvisorHourDecision {
+                client_hour: "6:30 pm".to_string()
+            }
+        );
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::StartTimer { timer_type: crate::bot::state_machine::TimerType::AdvisorResponse, duration, .. }
+                if *duration == crate::bot::timers::ADVISOR_STUCK_TIMEOUT
         )));
     }
 

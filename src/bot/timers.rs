@@ -24,7 +24,8 @@ use crate::{
     db::{
         models::ConversationStateData,
         queries::{
-            get_conversation, list_active_timer_conversations, reset_conversation, update_state,
+            get_conversation, list_active_timer_conversations, reset_conversation,
+            update_order_status, update_state,
         },
     },
     messages::client_messages,
@@ -37,6 +38,7 @@ pub type TimerMap = Arc<Mutex<HashMap<TimerKey, ActiveTimer>>>;
 
 pub const RECEIPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+pub const ADVISOR_STUCK_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 pub const RELAY_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const TIMER_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 static NEXT_TIMER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -63,13 +65,7 @@ where
 
     {
         let mut active = timers.lock().await;
-        if let Some(previous) = active.insert(
-            key,
-            ActiveTimer {
-                token,
-                instance_id,
-            },
-        ) {
+        if let Some(previous) = active.insert(key, ActiveTimer { token, instance_id }) {
             previous.token.cancel();
         }
     }
@@ -223,6 +219,21 @@ fn timer_recovery(
         return timer_recovery_for(TimerType::ConversationAbandon, timeout, started_at, now);
     }
 
+    if let Some(timeout) = advisor_timeout_for_state(conversation.state.as_str()) {
+        if state_data.advisor_timer_expired {
+            return None;
+        }
+
+        return timer_recovery_for(
+            TimerType::AdvisorResponse,
+            timeout,
+            state_data
+                .advisor_timer_started_at
+                .unwrap_or(conversation.last_message_at),
+            now,
+        );
+    }
+
     match conversation.state.as_str() {
         "wait_receipt" if !state_data.receipt_timer_expired => timer_recovery_for(
             TimerType::ReceiptUpload,
@@ -232,18 +243,6 @@ fn timer_recovery(
                 .unwrap_or(conversation.last_message_at),
             now,
         ),
-        "wait_advisor_response" | "wait_advisor_mayor" | "wait_advisor_contact"
-            if !state_data.advisor_timer_expired =>
-        {
-            timer_recovery_for(
-                TimerType::AdvisorResponse,
-                ADVISOR_RESPONSE_TIMEOUT,
-                state_data
-                    .advisor_timer_started_at
-                    .unwrap_or(conversation.last_message_at),
-                now,
-            )
-        }
         "relay_mode" => timer_recovery_for(
             TimerType::RelayInactivity,
             RELAY_INACTIVITY_TIMEOUT,
@@ -343,54 +342,70 @@ pub async fn expire_advisor_timer(
         return Ok(());
     };
 
-    if !matches!(
-        conversation.state.as_str(),
-        "wait_advisor_response" | "wait_advisor_mayor" | "wait_advisor_contact"
-    ) {
+    let Some(timeout_kind) = advisor_timeout_kind(conversation.state.as_str()) else {
         return Ok(());
-    }
+    };
 
     let mut state_data = conversation.state_data.0;
     if state_data.advisor_timer_expired {
         return Ok(());
     }
 
-    state_data.advisor_timer_expired = true;
-    state_data.advisor_timer_started_at = None;
-    update_state(&state.pool, &phone_number, &conversation.state, &state_data).await?;
     clear_advisor_session(&state).await?;
 
-    match conversation.state.as_str() {
-        "wait_advisor_contact" => {
-            state
-                .wa_client
-                .send_buttons(
-                    &phone_number,
-                    &client_messages().timers_customer.contact_timeout_body,
-                    contact_timeout_buttons(),
-                )
-                .await?;
+    match timeout_kind {
+        AdvisorTimeoutKind::FallbackButtons => {
+            state_data.advisor_timer_expired = true;
+            state_data.advisor_timer_started_at = None;
+            update_state(&state.pool, &phone_number, &conversation.state, &state_data).await?;
+
+            match conversation.state.as_str() {
+                "wait_advisor_contact" => {
+                    state
+                        .wa_client
+                        .send_buttons(
+                            &phone_number,
+                            &client_messages().timers_customer.contact_timeout_body,
+                            contact_timeout_buttons(),
+                        )
+                        .await?;
+                }
+                _ => {
+                    let timeout_text = if conversation.state == "wait_advisor_mayor" {
+                        &client_messages()
+                            .timers_customer
+                            .advisor_timeout_wholesale_text
+                    } else {
+                        &client_messages().timers_customer.advisor_timeout_text
+                    };
+                    state
+                        .wa_client
+                        .send_text(&phone_number, timeout_text)
+                        .await?;
+                    state
+                        .wa_client
+                        .send_buttons(
+                            &phone_number,
+                            &client_messages()
+                                .timers_customer
+                                .advisor_timeout_buttons_body,
+                            advisor_timeout_buttons(),
+                        )
+                        .await?;
+                }
+            }
         }
-        _ => {
-            let timeout_text = if conversation.state == "wait_advisor_mayor" {
-                &client_messages()
-                    .timers_customer
-                    .advisor_timeout_wholesale_text
-            } else {
-                &client_messages().timers_customer.advisor_timeout_text
-            };
+        AdvisorTimeoutKind::HardReset => {
+            if let Some(order_id) = state_data.current_order_id {
+                update_order_status(&state.pool, order_id, "manual_followup").await?;
+            }
+
+            reset_conversation(&state.pool, &phone_number).await?;
             state
                 .wa_client
-                .send_text(&phone_number, timeout_text)
-                .await?;
-            state
-                .wa_client
-                .send_buttons(
+                .send_text(
                     &phone_number,
-                    &client_messages()
-                        .timers_customer
-                        .advisor_timeout_buttons_body,
-                    advisor_timeout_buttons(),
+                    &client_messages().timers_customer.advisor_stuck_timeout_text,
                 )
                 .await?;
         }
@@ -462,7 +477,8 @@ pub async fn expire_conversation_abandon(
             conversation.delivery_address.clone(),
             &state_data,
         );
-        let current_state = match ConversationState::from_storage_key(&conversation.state, &context) {
+        let current_state = match ConversationState::from_storage_key(&conversation.state, &context)
+        {
             Ok(state) => state,
             Err(err) => {
                 tracing::error!(
@@ -497,6 +513,10 @@ fn timer_recovery_states() -> Vec<&'static str> {
         "wait_advisor_response",
         "wait_advisor_mayor",
         "wait_advisor_contact",
+        "ask_delivery_cost",
+        "negotiate_hour",
+        "wait_advisor_hour_decision",
+        "wait_advisor_confirm_hour",
         "relay_mode",
         "main_menu",
         "view_menu",
@@ -521,6 +541,33 @@ fn timer_recovery_states() -> Vec<&'static str> {
         "contact_advisor_phone",
         "leave_message",
     ]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdvisorTimeoutKind {
+    FallbackButtons,
+    HardReset,
+}
+
+fn advisor_timeout_kind(state: &str) -> Option<AdvisorTimeoutKind> {
+    match state {
+        "wait_advisor_response" | "wait_advisor_mayor" | "wait_advisor_contact" => {
+            Some(AdvisorTimeoutKind::FallbackButtons)
+        }
+        "ask_delivery_cost"
+        | "negotiate_hour"
+        | "wait_advisor_hour_decision"
+        | "wait_advisor_confirm_hour" => Some(AdvisorTimeoutKind::HardReset),
+        _ => None,
+    }
+}
+
+fn advisor_timeout_for_state(state: &str) -> Option<Duration> {
+    match advisor_timeout_kind(state) {
+        Some(AdvisorTimeoutKind::FallbackButtons) => Some(ADVISOR_RESPONSE_TIMEOUT),
+        Some(AdvisorTimeoutKind::HardReset) => Some(ADVISOR_STUCK_TIMEOUT),
+        None => None,
+    }
 }
 
 fn customer_inactivity_state(state: &str) -> bool {
@@ -723,7 +770,7 @@ mod tests {
     use chrono::Duration as ChronoDuration;
     use sqlx::types::Json;
 
-    use super::{timer_recovery, TimerRecovery};
+    use super::{timer_recovery, TimerRecovery, ADVISOR_STUCK_TIMEOUT};
     use crate::{
         bot::state_machine::TimerType,
         db::{models::ConversationStateData, queries::ActiveTimerConversation},
@@ -818,6 +865,50 @@ mod tests {
         assert_eq!(
             recovery,
             Some(TimerRecovery::Expired(TimerType::ConversationAbandon))
+        );
+    }
+
+    #[test]
+    fn timer_recovery_keeps_stuck_advisor_wait_active_for_thirty_minutes() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "ask_delivery_cost",
+            ConversationStateData {
+                advisor_timer_started_at: Some(now - ChronoDuration::minutes(3)),
+                ..Default::default()
+            },
+            now,
+        );
+
+        let recovery = timer_recovery(&conversation, now);
+
+        assert_eq!(
+            recovery,
+            Some(TimerRecovery::Active {
+                timer_type: TimerType::AdvisorResponse,
+                timeout: ADVISOR_STUCK_TIMEOUT,
+                started_at: now - ChronoDuration::minutes(3),
+            })
+        );
+    }
+
+    #[test]
+    fn timer_recovery_marks_stuck_advisor_wait_overdue_after_thirty_minutes() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "wait_advisor_confirm_hour",
+            ConversationStateData {
+                advisor_timer_started_at: Some(now - ChronoDuration::minutes(31)),
+                ..Default::default()
+            },
+            now,
+        );
+
+        let recovery = timer_recovery(&conversation, now);
+
+        assert_eq!(
+            recovery,
+            Some(TimerRecovery::Expired(TimerType::AdvisorResponse))
         );
     }
 

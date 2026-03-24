@@ -51,12 +51,13 @@ Current implementation status:
   - advisor detail flow: confirmation, delivery-cost capture, total final update, and closure back to `MainMenu`
   - advisor hour negotiation for detail and scheduled orders
   - 2-minute advisor timeout with `Programar`, `Reintentar`, and `Menú`
+  - 30-minute hard reset for advisor-managed `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, and `wait_advisor_confirm_hour`, with order status moved to `manual_followup`
   - generic client inactivity handling on customer-input states: one reminder at 2 minutes and reset to `MainMenu` after 35 minutes, excluding advisor/receipt/relay timed waits
   - schedule resume path that keeps items, payment, and address while reusing `SelectDate` / `SelectTime`
   - wholesale relay mode with 30-minute inactivity timeout and advisor-side finish button
   - `Hablar con Asesor` path with advisor attend/unavailable flow plus leave-message fallback
-  - timer restoration after restart for `wait_advisor_response`, `wait_advisor_mayor`, `wait_advisor_contact`, and `relay_mode`
-  - periodic database-backed timer sweep so missed in-memory tasks still expire receipt, advisor, and relay waits
+  - timer restoration after restart for advisor waits, stuck advisor-detail waits, `relay_mode`, and generic customer inactivity
+  - periodic database-backed timer sweep so missed in-memory tasks still expire receipt, advisor, relay, and customer inactivity waits
   - production number receiving real public WhatsApp messages once the Meta app is in `Live` mode and subscribed to the WABA
   - public legal endpoints for Meta review: `/privacy-policy` and `/terms-of-service`
 - Phase 4 validation remains documented in `general_info/phase_planning/phase4validation.md`, but the runtime is now proven against real inbound and outbound production traffic.

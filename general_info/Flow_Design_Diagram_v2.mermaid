@@ -19,7 +19,7 @@ graph TD
         Conversations["🗂️ conversations<br/>- phone_number<br/>- state<br/>- state_data JSONB<br/>- customer_name<br/>- customer_phone<br/>- delivery_address<br/>- last_message_at<br/>- SQL session TZ America/Bogota"]
         Orders["🧾 orders<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- receipt_media_id<br/>- delivery_cost<br/>- total_estimated<br/>- total_final<br/>- status"]
         OrderItems["🧊 order_items<br/>- flavor<br/>- has_liquor<br/>- quantity<br/>- unit_price<br/>- subtotal"]
-        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- relay_inactivity 30m<br/>- restore_pending_timers()<br/>- sweep_expired_timers()"]
+        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- advisor_detail_stuck 30m<br/>- relay_inactivity 30m<br/>- restore_pending_timers()<br/>- sweep_expired_timers()"]
     end
 
     Route -->|Cliente| LoadClient["load_or_create_conversation + rehydrate context"]
@@ -108,20 +108,20 @@ graph TD
 
         AdvisorDecision -->|Confirmar sobre scheduled| ScheduledConfirmed["FinalizeCurrentOrder status=confirmed\nCliente: pedido registrado + fecha ref + hora acordada\nResetConversation -> MainMenu"]
 
-        AdvisorDecision -->|Confirmar sobre immediate| AskDeliveryCost["ask_delivery_cost\nBot pregunta al asesor valor numerico del domicilio"]
+        AdvisorDecision -->|Confirmar sobre immediate| AskDeliveryCost["ask_delivery_cost\nBot pregunta al asesor valor numerico del domicilio\n timer 30m"]
         AskDeliveryCost --> DeliveryCostOk{"💰 ¿Valor válido?"}
         DeliveryCostOk -->|Si| ImmediateConfirmed["UpdateCurrentOrderDeliveryCost + status=confirmed\nCliente: subtotal + domicilio + total final + 20-40 min\nResetConversation -> MainMenu"]
         DeliveryCostOk -->|No| AskDeliveryCost
 
         AdvisorDecision -->|No puedo sobre immediate| ConvertToScheduled["Mutaciones:\n- delivery_type = scheduled\n- scheduled_date = hoy Bogota\n- scheduled_time = None\n- limpia proposed/client hour\nLuego pregunta al asesor que hora puede"]
-        ConvertToScheduled --> NegotiateHour["🕐 negotiate_hour"]
+        ConvertToScheduled --> NegotiateHour["🕐 negotiate_hour<br/>timer 30m"]
         NegotiateHour --> AdvisorProposesHour["👨‍💼 Asesor envía texto hora"]
         AdvisorProposesHour --> OfferHourToClient["🎯 offer_hour_to_client<br/>Cliente recibe propuesta + Aceptar / Rechazar"]
         OfferHourToClient --> ClientHourDecision{"🙋 ¿Cliente acepta?"}
-        ClientHourDecision -->|Si| WaitAdvisorConfirmHour["✅ wait_advisor_confirm_hour<br/>Asesor recibe botón Confirmar"]
+        ClientHourDecision -->|Si| WaitAdvisorConfirmHour["✅ wait_advisor_confirm_hour<br/>Asesor recibe botón Confirmar<br/>timer 30m"]
         ClientHourDecision -->|No| WaitClientHour["📝 wait_client_hour<br/>Cliente escribe hora"]
 
-        WaitClientHour --> WaitAdvisorHourDecision["🔁 wait_advisor_hour_decision<br/>Asesor recibe Sí, confirmo / Otra hora"]
+        WaitClientHour --> WaitAdvisorHourDecision["🔁 wait_advisor_hour_decision<br/>Asesor recibe Sí, confirmo / Otra hora<br/>timer 30m"]
         WaitAdvisorHourDecision -->|Si, confirmo| ScheduledConfirmed
         WaitAdvisorHourDecision -->|Otra hora| NegotiateHour
         WaitAdvisorConfirmHour -->|Confirmar| ScheduledConfirmed
@@ -168,11 +168,11 @@ graph TD
         Timers --> Sweep["⏲️ sweep_expired_timers()<br/>cada 60s"]
 
         Timers --> ReceiptExpire["expire_receipt_timer\nCliente: no llego comprobante\nBotones Cambiar pago / Cancelar"]
-        Timers --> AdvisorExpire["expire_advisor_timer\nCliente: Programar / Reintentar / Menu\nO Dejar mensaje / Menu en contact"]
+        Timers --> AdvisorExpire["expire_advisor_timer\nCliente: Programar / Reintentar / Menu\nO Dejar mensaje / Menu en contact\nO hard reset 30m en advisor-detail waits"]
         Timers --> RelayExpire["expire_relay_timer\nCliente: conversacion cerrada por inactividad"]
         Timers --> IdleReminder["conversation_abandon 2m\nReenvia el prompt actual una sola vez"]
         Timers --> IdleReset["conversation_abandon 35m\nNotifica reinicio y resetea a MainMenu"]
-        Timers --> Restore["restore_pending_timers al boot\nrehidrata wait_receipt / wait_advisor_* / relay_mode"]
+        Timers --> Restore["restore_pending_timers al boot\nrehidrata wait_receipt / wait_advisor_* / ask_delivery_cost / negotiate_hour / wait_advisor_hour_* / relay_mode"]
     end
 
     Webhook -->|acciones send_text / send_buttons / send_list / send_image| Meta

@@ -238,6 +238,7 @@ receipt_timeout_text = "No recibimos el comprobante dentro de los 10 minutos ⏳
 receipt_timeout_buttons_body = "¿Cómo quieres continuar?"
 advisor_timeout_text = "El asesor no respondió a tiempo ⏳ Puedes reintentar, programar o volver al menú."
 advisor_timeout_wholesale_text = "El asesor todavía no toma el caso ⏳ Puedes reintentar, programar o volver al menú."
+advisor_stuck_timeout_text = "La gestión con el asesor se cerró por inactividad ⏳ Cuando quieras continuar, escríbeme de nuevo y retomamos desde el menú principal."
 advisor_timeout_buttons_body = "Selecciona cómo quieres continuar 👇"
 advisor_timeout_schedule_button = "Programar"
 advisor_timeout_retry_button = "Reintentar"
