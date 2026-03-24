@@ -286,6 +286,13 @@ pub fn confirm_address_actions(context: &ConversationContext) -> Vec<BotAction> 
     }]
 }
 
+pub fn change_address_prompt_actions(phone: &str) -> Vec<BotAction> {
+    vec![BotAction::SendText {
+        to: phone.to_string(),
+        body: client_messages().checkout.change_address_prompt.clone(),
+    }]
+}
+
 fn wait_receipt_entry_actions(context: &ConversationContext) -> Vec<BotAction> {
     vec![
         BotAction::UpsertDraftOrder {
@@ -517,6 +524,8 @@ mod tests {
             receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
+            conversation_abandon_started_at: None,
+            conversation_abandon_reminder_sent: false,
         }
     }
 

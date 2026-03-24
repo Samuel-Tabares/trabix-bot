@@ -15,10 +15,11 @@ use sha2::Sha256;
 
 use crate::{
     bot::{
+        inactivity::sync_customer_inactivity_timer,
         pricing::calcular_pedido,
         state_machine::{
             extract_input, transition, transition_advisor, BotAction, ConversationContext,
-            ConversationState, ImageAsset, TimerType, UserInput,
+            ConversationState, ImageAsset, UserInput,
         },
         states::advisor::parse_advisor_button_id,
         timers::{
@@ -186,7 +187,15 @@ async fn handle_client_message(
     let conversation = load_or_create_conversation(&state, &phone).await?;
     let (current_state, mut context) = rehydrate_client_conversation(&state, &conversation).await?;
 
-    let (new_state, actions) = transition(&current_state, &input, &mut context)?;
+    let (new_state, mut actions) = transition(&current_state, &input, &mut context)?;
+    let transition_resets_conversation = actions
+        .iter()
+        .any(|action| matches!(action, BotAction::ResetConversation { .. }));
+    actions.extend(sync_customer_inactivity_timer(
+        &new_state,
+        &mut context,
+        transition_resets_conversation,
+    ));
 
     update_customer_data(
         &state.pool,
@@ -248,7 +257,15 @@ async fn handle_advisor_message(
 
     let (current_state, mut context) =
         rehydrate_client_conversation(&state, &client_conversation).await?;
-    let (new_state, actions) = transition_advisor(&current_state, &input, &mut context)?;
+    let (new_state, mut actions) = transition_advisor(&current_state, &input, &mut context)?;
+    let transition_resets_conversation = actions
+        .iter()
+        .any(|action| matches!(action, BotAction::ResetConversation { .. }));
+    actions.extend(sync_customer_inactivity_timer(
+        &new_state,
+        &mut context,
+        transition_resets_conversation,
+    ));
 
     update_customer_data(
         &state.pool,
@@ -422,22 +439,34 @@ async fn execute_actions(
                     *duration,
                     move || async move {
                         match timer_type {
-                            TimerType::ReceiptUpload => {
+                            crate::bot::state_machine::TimerType::ReceiptUpload => {
                                 if let Err(err) = expire_receipt_timer(app_state, phone).await {
                                     tracing::error!(error = %err, "failed to expire receipt timer");
                                 }
                             }
-                            TimerType::AdvisorResponse => {
+                            crate::bot::state_machine::TimerType::AdvisorResponse => {
                                 if let Err(err) = expire_advisor_timer(app_state, phone).await {
                                     tracing::error!(error = %err, "failed to expire advisor timer");
                                 }
                             }
-                            TimerType::RelayInactivity => {
+                            crate::bot::state_machine::TimerType::RelayInactivity => {
                                 if let Err(err) = expire_relay_timer(app_state, phone).await {
                                     tracing::error!(error = %err, "failed to expire relay timer");
                                 }
                             }
-                            TimerType::ConversationAbandon => {}
+                            crate::bot::state_machine::TimerType::ConversationAbandon => {
+                                if let Err(err) =
+                                    crate::bot::timers::expire_conversation_abandon(
+                                        app_state, phone,
+                                    )
+                                    .await
+                                {
+                                    tracing::error!(
+                                        error = %err,
+                                        "failed to expire conversation inactivity timer"
+                                    );
+                                }
+                            }
                         }
                     },
                 )
@@ -678,6 +707,8 @@ mod tests {
             receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
+            conversation_abandon_started_at: None,
+            conversation_abandon_reminder_sent: false,
         }
     }
 

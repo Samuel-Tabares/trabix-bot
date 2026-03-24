@@ -335,6 +335,8 @@ pub struct ConversationContext {
     pub receipt_timer_expired: bool,
     pub pending_has_liquor: Option<bool>,
     pub pending_flavor: Option<String>,
+    pub conversation_abandon_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub conversation_abandon_reminder_sent: bool,
 }
 
 impl ConversationContext {
@@ -372,6 +374,8 @@ impl ConversationContext {
             receipt_timer_expired: state_data.receipt_timer_expired,
             pending_has_liquor: state_data.pending_has_liquor,
             pending_flavor: state_data.pending_flavor.clone(),
+            conversation_abandon_started_at: state_data.conversation_abandon_started_at,
+            conversation_abandon_reminder_sent: state_data.conversation_abandon_reminder_sent,
         }
     }
 
@@ -397,6 +401,8 @@ impl ConversationContext {
             receipt_timer_expired: self.receipt_timer_expired,
             pending_has_liquor: self.pending_has_liquor,
             pending_flavor: self.pending_flavor.clone(),
+            conversation_abandon_started_at: self.conversation_abandon_started_at,
+            conversation_abandon_reminder_sent: self.conversation_abandon_reminder_sent,
         }
     }
 

@@ -159,11 +159,19 @@ graph TD
         WaitAdvisorResponse --> Timers
         WaitAdvisorContact --> Timers
         RelayMode --> Timers
+        MainMenu --> Timers
+        SelectType --> Timers
+        SelectFlavor --> Timers
+        SelectQuantity --> Timers
+        ShowSummary --> Timers
+        ConfirmAddress --> Timers
         Timers --> Sweep["⏲️ sweep_expired_timers()<br/>cada 60s"]
 
         Timers --> ReceiptExpire["expire_receipt_timer\nCliente: no llego comprobante\nBotones Cambiar pago / Cancelar"]
         Timers --> AdvisorExpire["expire_advisor_timer\nCliente: Programar / Reintentar / Menu\nO Dejar mensaje / Menu en contact"]
         Timers --> RelayExpire["expire_relay_timer\nCliente: conversacion cerrada por inactividad"]
+        Timers --> IdleReminder["conversation_abandon 2m\nReenvia el prompt actual una sola vez"]
+        Timers --> IdleReset["conversation_abandon 35m\nNotifica reinicio y resetea a MainMenu"]
         Timers --> Restore["restore_pending_timers al boot\nrehidrata wait_receipt / wait_advisor_* / relay_mode"]
     end
 

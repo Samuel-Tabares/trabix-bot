@@ -421,6 +421,8 @@ mod tests {
             receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
+            conversation_abandon_started_at: None,
+            conversation_abandon_reminder_sent: false,
         }
     }
 

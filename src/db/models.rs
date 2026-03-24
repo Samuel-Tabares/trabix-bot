@@ -27,6 +27,8 @@ pub struct ConversationStateData {
     pub receipt_timer_expired: bool,
     pub pending_has_liquor: Option<bool>,
     pub pending_flavor: Option<String>,
+    pub conversation_abandon_started_at: Option<DateTime<Utc>>,
+    pub conversation_abandon_reminder_sent: bool,
 }
 
 impl Default for ConversationStateData {
@@ -52,6 +54,8 @@ impl Default for ConversationStateData {
             receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
+            conversation_abandon_started_at: None,
+            conversation_abandon_reminder_sent: false,
         }
     }
 }

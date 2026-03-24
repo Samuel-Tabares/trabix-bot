@@ -787,6 +787,57 @@ pub fn contact_advisor_phone_actions(phone: &str) -> Vec<BotAction> {
     }]
 }
 
+pub fn leave_message_prompt_actions(phone: &str) -> Vec<BotAction> {
+    vec![BotAction::SendText {
+        to: phone.to_string(),
+        body: client_messages()
+            .advisor_customer
+            .wait_contact_leave_message_prompt
+            .clone(),
+    }]
+}
+
+pub fn offer_hour_to_client_actions(phone: &str, proposed_hour: &str) -> Vec<BotAction> {
+    vec![
+        BotAction::SendText {
+            to: phone.to_string(),
+            body: render_template(
+                &client_messages()
+                    .advisor_customer
+                    .proposed_hour_question_template,
+                &[("hour", proposed_hour)],
+            ),
+        },
+        BotAction::SendButtons {
+            to: phone.to_string(),
+            body: client_messages()
+                .advisor_customer
+                .proposed_hour_buttons_body
+                .clone(),
+            buttons: vec![
+                reply_button(
+                    ACCEPT_PROPOSED_HOUR,
+                    &client_messages().advisor_customer.accept_button,
+                ),
+                reply_button(
+                    REJECT_PROPOSED_HOUR,
+                    &client_messages().advisor_customer.reject_button,
+                ),
+            ],
+        },
+    ]
+}
+
+pub fn wait_client_hour_actions(phone: &str) -> Vec<BotAction> {
+    vec![BotAction::SendText {
+        to: phone.to_string(),
+        body: client_messages()
+            .advisor_customer
+            .client_hour_prompt
+            .clone(),
+    }]
+}
+
 fn handle_client_wait_advisor_response(
     input: &UserInput,
     context: &mut ConversationContext,
@@ -1640,6 +1691,8 @@ mod tests {
             receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
+            conversation_abandon_started_at: None,
+            conversation_abandon_reminder_sent: false,
         }
     }
 

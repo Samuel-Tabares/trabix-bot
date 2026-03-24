@@ -246,3 +246,4 @@ contact_timeout_body = "El asesor no está disponible en este momento 😔 Puede
 contact_timeout_leave_message_button = "Dejar mensaje"
 contact_timeout_menu_button = "Menú"
 relay_timeout_text = "La conversación con el asesor se cerró por inactividad ⏳"
+conversation_inactivity_reset_text = "Reinicié la conversación por inactividad ⏳ Cuando quieras continuar, escríbeme de nuevo y retomamos desde el menú principal."

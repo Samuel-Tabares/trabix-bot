@@ -51,6 +51,7 @@ Current implementation status:
   - advisor detail flow: confirmation, delivery-cost capture, total final update, and closure back to `MainMenu`
   - advisor hour negotiation for detail and scheduled orders
   - 2-minute advisor timeout with `Programar`, `Reintentar`, and `Menú`
+  - generic client inactivity handling on customer-input states: one reminder at 2 minutes and reset to `MainMenu` after 35 minutes, excluding advisor/receipt/relay timed waits
   - schedule resume path that keeps items, payment, and address while reusing `SelectDate` / `SelectTime`
   - wholesale relay mode with 30-minute inactivity timeout and advisor-side finish button
   - `Hablar con Asesor` path with advisor attend/unavailable flow plus leave-message fallback

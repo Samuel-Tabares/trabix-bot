@@ -1,4 +1,12 @@
-use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    future::Future,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use tokio::sync::Mutex;
@@ -6,7 +14,13 @@ use tokio::time::{interval, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    bot::state_machine::{ConversationContext, TimerType},
+    bot::{
+        inactivity::{
+            reminder_actions, reset_notice_actions, CONVERSATION_REMINDER_TIMEOUT,
+            CONVERSATION_RESET_TIMEOUT,
+        },
+        state_machine::{BotAction, ConversationContext, ConversationState, ImageAsset, TimerType},
+    },
     db::{
         models::ConversationStateData,
         queries::{
@@ -19,12 +33,18 @@ use crate::{
 };
 
 pub type TimerKey = (String, TimerType);
-pub type TimerMap = Arc<Mutex<HashMap<TimerKey, CancellationToken>>>;
+pub type TimerMap = Arc<Mutex<HashMap<TimerKey, ActiveTimer>>>;
 
 pub const RECEIPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 pub const RELAY_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const TIMER_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+static NEXT_TIMER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+
+pub struct ActiveTimer {
+    token: CancellationToken,
+    instance_id: u64,
+}
 
 pub fn new_timer_map() -> TimerMap {
     Arc::new(Mutex::new(HashMap::new()))
@@ -39,11 +59,18 @@ where
     let wait_token = token.clone();
     let map = timers.clone();
     let key_for_task = key.clone();
+    let instance_id = NEXT_TIMER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed);
 
     {
         let mut active = timers.lock().await;
-        if let Some(previous) = active.insert(key, token) {
-            previous.cancel();
+        if let Some(previous) = active.insert(
+            key,
+            ActiveTimer {
+                token,
+                instance_id,
+            },
+        ) {
+            previous.token.cancel();
         }
     }
 
@@ -56,29 +83,26 @@ where
         }
 
         let mut active = map.lock().await;
-        active.remove(&key_for_task);
+        let should_remove = active
+            .get(&key_for_task)
+            .map(|entry| entry.instance_id == instance_id)
+            .unwrap_or(false);
+        if should_remove {
+            active.remove(&key_for_task);
+        }
     });
 }
 
 pub async fn cancel_timer(timers: TimerMap, key: &TimerKey) {
     let mut active = timers.lock().await;
     if let Some(token) = active.remove(key) {
-        token.cancel();
+        token.token.cancel();
     }
 }
 
 pub async fn restore_pending_timers(state: AppState) -> Result<(), sqlx::Error> {
-    let conversations = list_active_timer_conversations(
-        &state.pool,
-        &[
-            "wait_receipt",
-            "wait_advisor_response",
-            "wait_advisor_mayor",
-            "wait_advisor_contact",
-            "relay_mode",
-        ],
-    )
-    .await?;
+    let recovery_states = timer_recovery_states();
+    let conversations = list_active_timer_conversations(&state.pool, &recovery_states).await?;
 
     for conversation in conversations {
         match timer_recovery(&conversation, Utc::now()) {
@@ -108,17 +132,8 @@ pub async fn restore_pending_timers(state: AppState) -> Result<(), sqlx::Error> 
 }
 
 pub async fn sweep_expired_timers(state: AppState) -> Result<(), sqlx::Error> {
-    let conversations = list_active_timer_conversations(
-        &state.pool,
-        &[
-            "wait_receipt",
-            "wait_advisor_response",
-            "wait_advisor_mayor",
-            "wait_advisor_contact",
-            "relay_mode",
-        ],
-    )
-    .await?;
+    let recovery_states = timer_recovery_states();
+    let conversations = list_active_timer_conversations(&state.pool, &recovery_states).await?;
 
     for conversation in conversations {
         if let Some(TimerRecovery::Expired(timer_type)) = timer_recovery(&conversation, Utc::now())
@@ -167,8 +182,13 @@ async fn restore_timer(
         state.timers.clone(),
         (phone_number, timer_type),
         remaining,
-        move || async move {
-            expire_timer_now(app_state, phone, kind).await;
+        move || {
+            let app_state = app_state.clone();
+            let phone = phone.clone();
+            let kind = kind.clone();
+            Box::pin(async move {
+                expire_timer_now(app_state, phone, kind).await;
+            })
         },
     )
     .await;
@@ -189,6 +209,19 @@ fn timer_recovery(
     now: DateTime<Utc>,
 ) -> Option<TimerRecovery> {
     let state_data = &conversation.state_data.0;
+
+    if customer_inactivity_state(conversation.state.as_str()) {
+        let started_at = state_data
+            .conversation_abandon_started_at
+            .unwrap_or(conversation.last_message_at);
+        let timeout = if state_data.conversation_abandon_reminder_sent {
+            CONVERSATION_RESET_TIMEOUT
+        } else {
+            CONVERSATION_REMINDER_TIMEOUT
+        };
+
+        return timer_recovery_for(TimerType::ConversationAbandon, timeout, started_at, now);
+    }
 
     match conversation.state.as_str() {
         "wait_receipt" if !state_data.receipt_timer_expired => timer_recovery_for(
@@ -245,7 +278,7 @@ async fn expire_timer_now(state: AppState, phone_number: String, timer_type: Tim
         TimerType::ReceiptUpload => expire_receipt_timer(state, phone_number).await,
         TimerType::AdvisorResponse => expire_advisor_timer(state, phone_number).await,
         TimerType::RelayInactivity => expire_relay_timer(state, phone_number).await,
-        TimerType::ConversationAbandon => Ok(()),
+        TimerType::ConversationAbandon => expire_conversation_abandon(state, phone_number).await,
     };
 
     if let Err(err) = result {
@@ -397,6 +430,178 @@ pub async fn expire_relay_timer(
             ),
         )
         .await?;
+
+    Ok(())
+}
+
+pub async fn expire_conversation_abandon(
+    state: AppState,
+    phone_number: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(conversation) = get_conversation(&state.pool, &phone_number).await? else {
+        return Ok(());
+    };
+
+    if !customer_inactivity_state(&conversation.state) {
+        return Ok(());
+    }
+
+    let mut state_data = conversation.state_data.0;
+    let started_at = state_data
+        .conversation_abandon_started_at
+        .unwrap_or(conversation.last_message_at);
+    let now = Utc::now();
+    let elapsed = elapsed_since(started_at, now);
+
+    if !state_data.conversation_abandon_reminder_sent && elapsed < CONVERSATION_RESET_TIMEOUT {
+        let context = ConversationContext::from_persisted(
+            conversation.phone_number.clone(),
+            state.config.advisor_phone.clone(),
+            conversation.customer_name.clone(),
+            conversation.customer_phone.clone(),
+            conversation.delivery_address.clone(),
+            &state_data,
+        );
+        let current_state = match ConversationState::from_storage_key(&conversation.state, &context) {
+            Ok(state) => state,
+            Err(err) => {
+                tracing::error!(
+                    phone = %conversation.phone_number,
+                    error = %err,
+                    "failed to rehydrate state for inactivity reminder"
+                );
+                reset_conversation(&state.pool, &phone_number).await?;
+                return Ok(());
+            }
+        };
+
+        let actions = reminder_actions(&current_state, &context);
+        send_timer_actions(&state, &actions).await?;
+
+        state_data.conversation_abandon_started_at = Some(started_at);
+        state_data.conversation_abandon_reminder_sent = true;
+        update_state(&state.pool, &phone_number, &conversation.state, &state_data).await?;
+
+        return Ok(());
+    }
+
+    send_timer_actions(&state, &reset_notice_actions(&phone_number)).await?;
+    reset_conversation(&state.pool, &phone_number).await?;
+
+    Ok(())
+}
+
+fn timer_recovery_states() -> Vec<&'static str> {
+    vec![
+        "wait_receipt",
+        "wait_advisor_response",
+        "wait_advisor_mayor",
+        "wait_advisor_contact",
+        "relay_mode",
+        "main_menu",
+        "view_menu",
+        "view_schedule",
+        "when_delivery",
+        "out_of_hours",
+        "select_date",
+        "select_time",
+        "confirm_schedule",
+        "collect_name",
+        "collect_phone",
+        "collect_address",
+        "select_type",
+        "select_flavor",
+        "select_quantity",
+        "add_more",
+        "confirm_address",
+        "show_summary",
+        "offer_hour_to_client",
+        "wait_client_hour",
+        "contact_advisor_name",
+        "contact_advisor_phone",
+        "leave_message",
+    ]
+}
+
+fn customer_inactivity_state(state: &str) -> bool {
+    matches!(
+        state,
+        "main_menu"
+            | "view_menu"
+            | "view_schedule"
+            | "when_delivery"
+            | "out_of_hours"
+            | "select_date"
+            | "select_time"
+            | "confirm_schedule"
+            | "collect_name"
+            | "collect_phone"
+            | "collect_address"
+            | "select_type"
+            | "select_flavor"
+            | "select_quantity"
+            | "add_more"
+            | "confirm_address"
+            | "show_summary"
+            | "offer_hour_to_client"
+            | "wait_client_hour"
+            | "contact_advisor_name"
+            | "contact_advisor_phone"
+            | "leave_message"
+    )
+}
+
+async fn send_timer_actions(
+    state: &AppState,
+    actions: &[BotAction],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    for action in actions {
+        match action {
+            BotAction::SendText { to, body } => {
+                state.wa_client.send_text(to, body).await?;
+            }
+            BotAction::SendButtons { to, body, buttons } => {
+                state
+                    .wa_client
+                    .send_buttons(to, body, buttons.clone())
+                    .await?;
+            }
+            BotAction::SendList {
+                to,
+                body,
+                button_text,
+                sections,
+            } => {
+                state
+                    .wa_client
+                    .send_list(to, body, button_text, sections.clone())
+                    .await?;
+            }
+            BotAction::SendImage {
+                to,
+                media_id,
+                caption,
+            } => {
+                state
+                    .wa_client
+                    .send_image(to, media_id, caption.as_deref())
+                    .await?;
+            }
+            BotAction::SendAssetImage { to, asset, caption } => {
+                let media_id = match *asset {
+                    ImageAsset::Menu => &state.config.menu_image_media_id,
+                };
+                state
+                    .wa_client
+                    .send_image(to, media_id, caption.as_deref())
+                    .await?;
+            }
+            BotAction::NoOp => {}
+            _ => {
+                tracing::warn!("skipping unsupported timer action during inactivity resend");
+            }
+        }
+    }
 
     Ok(())
 }
@@ -594,5 +799,50 @@ mod tests {
         let recovery = timer_recovery(&conversation, now);
 
         assert!(recovery.is_none());
+    }
+
+    #[test]
+    fn timer_recovery_marks_customer_inactivity_reminder_as_due() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "main_menu",
+            ConversationStateData {
+                conversation_abandon_started_at: Some(now - ChronoDuration::minutes(3)),
+                ..Default::default()
+            },
+            now,
+        );
+
+        let recovery = timer_recovery(&conversation, now);
+
+        assert_eq!(
+            recovery,
+            Some(TimerRecovery::Expired(TimerType::ConversationAbandon))
+        );
+    }
+
+    #[test]
+    fn timer_recovery_keeps_customer_reset_deadline_after_reminder() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "collect_name",
+            ConversationStateData {
+                conversation_abandon_started_at: Some(now - ChronoDuration::minutes(10)),
+                conversation_abandon_reminder_sent: true,
+                ..Default::default()
+            },
+            now,
+        );
+
+        let recovery = timer_recovery(&conversation, now);
+
+        assert_eq!(
+            recovery,
+            Some(TimerRecovery::Active {
+                timer_type: TimerType::ConversationAbandon,
+                timeout: crate::bot::inactivity::CONVERSATION_RESET_TIMEOUT,
+                started_at: now - ChronoDuration::minutes(10),
+            })
+        );
     }
 }
