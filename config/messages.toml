@@ -1,14 +1,16 @@
 [menu]
-main_welcome = "¡Hola! 👋 Bienvenid@ a Trabix Granizados. Estoy aquí para ayudarte con tu pedido. Elige una opción del menú principal."
-main_list_body = "Cuéntame, ¿qué te gustaría hacer hoy? ✨"
+main_welcome = """¡Hola! 👋 Bienvenid@ a Trabix Granizados.
+
+Horario de entrega inmediata: {business_hours}
+
+Si nos escribes fuera de ese horario, igual te ayudo a programar tu pedido o a contactar un asesor. Elige una opción para continuar ✨"""
+main_list_body = "¿Qué te gustaría hacer ahora? 👇"
 main_list_button_text = "Ver opciones"
 main_section_title = "Menú Principal"
 make_order_title = "Hacer Pedido"
 make_order_description = "Arma tu pedido paso a paso"
 view_menu_title = "Ver Menú"
 view_menu_description = "Consulta sabores y precios"
-view_schedule_title = "Horarios"
-view_schedule_description = "Consulta horarios de entrega"
 contact_advisor_title = "Hablar con Asesor"
 contact_advisor_description = "Recibe ayuda personalizada"
 retry_main_menu = "Para continuar, elige una opción del menú principal 👇"
@@ -37,14 +39,6 @@ view_menu_buttons_body = "¿Qué quieres hacer ahora? 😊"
 view_menu_make_order_button = "Hacer Pedido"
 view_menu_back_button = "Volver al Menú"
 retry_view_menu = "Elige una de las opciones para continuar 👇"
-schedule_text = """🕒 HORARIOS
-Entrega inmediata: 8:00 AM - 11:00 PM
-
-Si estás fuera de este horario, no te preocupes: podemos intentar programar tu pedido o dejarlo listo para un asesor 🤝"""
-schedule_buttons_body = "¿Te gustaría hacer un pedido ahora? 🍧"
-schedule_make_order_button = "Hacer Pedido"
-schedule_back_button = "Volver al Menú"
-retry_view_schedule = "Selecciona una opción válida para continuar 👇"
 
 [scheduling]
 when_delivery_body = "Perfecto ✨ ¿Cuándo necesitas tu pedido?"

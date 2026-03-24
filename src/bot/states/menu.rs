@@ -2,15 +2,14 @@ use crate::{
     bot::state_machine::{
         BotAction, ConversationContext, ConversationState, ImageAsset, TransitionResult, UserInput,
     },
-    messages::client_messages,
-    whatsapp::types::{Button, ButtonReplyPayload, ListRow, ListSection},
+    messages::{client_messages, render_template},
+    whatsapp::types::{Button, ButtonReplyPayload},
 };
 
 use super::{advisor, scheduling};
 
 const MAKE_ORDER: &str = "make_order";
 const VIEW_MENU: &str = "view_menu";
-const VIEW_SCHEDULE: &str = "view_schedule";
 const CONTACT_ADVISOR: &str = "contact_advisor";
 const BACK_MAIN_MENU: &str = "back_main_menu";
 
@@ -25,10 +24,6 @@ pub fn handle_main_menu(input: &UserInput, context: &mut ConversationContext) ->
         Some(VIEW_MENU) => Ok((
             ConversationState::ViewMenu,
             view_menu_actions(&context.phone_number),
-        )),
-        Some(VIEW_SCHEDULE) => Ok((
-            ConversationState::ViewSchedule,
-            view_schedule_actions(&context.phone_number),
         )),
         Some(CONTACT_ADVISOR) => {
             let (state, actions) = advisor::start_contact_advisor(context);
@@ -65,6 +60,8 @@ pub fn handle_view_schedule(
     input: &UserInput,
     context: &mut ConversationContext,
 ) -> TransitionResult {
+    // Legacy compatibility: existing persisted `view_schedule` conversations
+    // should recover to the current main menu after deploy.
     match selection_id(input).as_deref() {
         Some(MAKE_ORDER) => Ok((
             ConversationState::WhenDelivery,
@@ -75,10 +72,10 @@ pub fn handle_view_schedule(
             main_menu_actions(&context.phone_number),
         )),
         _ => Ok((
-            ConversationState::ViewSchedule,
+            ConversationState::MainMenu,
             with_retry_message(
-                &client_messages().menu.retry_view_schedule,
-                view_schedule_actions(&context.phone_number),
+                &client_messages().menu.retry_main_menu,
+                main_menu_actions(&context.phone_number),
             ),
         )),
     }
@@ -89,37 +86,19 @@ pub fn main_menu_actions(phone: &str) -> Vec<BotAction> {
     vec![
         BotAction::SendText {
             to: phone.to_string(),
-            body: messages.main_welcome.clone(),
+            body: render_template(
+                &messages.main_welcome,
+                &[("business_hours", &scheduling::immediate_delivery_hours_text())],
+            ),
         },
-        BotAction::SendList {
+        BotAction::SendButtons {
             to: phone.to_string(),
             body: messages.main_list_body.clone(),
-            button_text: messages.main_list_button_text.clone(),
-            sections: vec![ListSection {
-                title: messages.main_section_title.clone(),
-                rows: vec![
-                    ListRow {
-                        id: MAKE_ORDER.to_string(),
-                        title: messages.make_order_title.clone(),
-                        description: messages.make_order_description.clone(),
-                    },
-                    ListRow {
-                        id: VIEW_MENU.to_string(),
-                        title: messages.view_menu_title.clone(),
-                        description: messages.view_menu_description.clone(),
-                    },
-                    ListRow {
-                        id: VIEW_SCHEDULE.to_string(),
-                        title: messages.view_schedule_title.clone(),
-                        description: messages.view_schedule_description.clone(),
-                    },
-                    ListRow {
-                        id: CONTACT_ADVISOR.to_string(),
-                        title: messages.contact_advisor_title.clone(),
-                        description: messages.contact_advisor_description.clone(),
-                    },
-                ],
-            }],
+            buttons: vec![
+                reply_button(MAKE_ORDER, &messages.make_order_title),
+                reply_button(VIEW_MENU, &messages.view_menu_title),
+                reply_button(CONTACT_ADVISOR, &messages.contact_advisor_title),
+            ],
         },
     ]
 }
@@ -142,24 +121,6 @@ pub fn view_menu_actions(phone: &str) -> Vec<BotAction> {
             buttons: vec![
                 reply_button(MAKE_ORDER, &messages.view_menu_make_order_button),
                 reply_button(BACK_MAIN_MENU, &messages.view_menu_back_button),
-            ],
-        },
-    ]
-}
-
-pub fn view_schedule_actions(phone: &str) -> Vec<BotAction> {
-    let messages = &client_messages().menu;
-    vec![
-        BotAction::SendText {
-            to: phone.to_string(),
-            body: messages.schedule_text.clone(),
-        },
-        BotAction::SendButtons {
-            to: phone.to_string(),
-            body: messages.schedule_buttons_body.clone(),
-            buttons: vec![
-                reply_button(MAKE_ORDER, &messages.schedule_make_order_button),
-                reply_button(BACK_MAIN_MENU, &messages.schedule_back_button),
             ],
         },
     ]
@@ -253,16 +214,15 @@ mod tests {
 
         assert_eq!(state, ConversationState::MainMenu);
         assert_eq!(actions.len(), 2);
+        assert!(matches!(actions[1], crate::bot::state_machine::BotAction::SendButtons { .. }));
     }
 
     #[test]
     fn main_menu_make_order_moves_forward() {
         let mut context = context();
-        let (state, _) = handle_main_menu(
-            &UserInput::ListSelection("make_order".to_string()),
-            &mut context,
-        )
-        .expect("transition");
+        let (state, _) =
+            handle_main_menu(&UserInput::ButtonPress("make_order".to_string()), &mut context)
+                .expect("transition");
 
         assert_eq!(state, ConversationState::WhenDelivery);
     }
@@ -289,5 +249,23 @@ mod tests {
         .expect("transition");
 
         assert_eq!(state, ConversationState::WhenDelivery);
+    }
+
+    #[test]
+    fn legacy_view_schedule_state_recovers_to_main_menu() {
+        let mut context = context();
+        let (state, actions) = handle_view_schedule(
+            &UserInput::TextMessage("hola".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::MainMenu);
+        assert!(
+            actions.iter().any(|action| matches!(
+                action,
+                crate::bot::state_machine::BotAction::SendButtons { .. }
+            ))
+        );
     }
 }

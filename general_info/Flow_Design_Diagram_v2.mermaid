@@ -31,15 +31,13 @@ graph TD
     ClientState --> MainMenu
 
     subgraph CustomerFlow["FLUJO CLIENTE REAL"]
-        MainMenu["🤖 MAIN MENU<br/>Texto + lista:<br/>Hacer Pedido / Ver Menú / Horarios / Hablar con Asesor"] --> MainChoice{"📍 Selección"}
+        MainMenu["🤖 MAIN MENU<br/>Bienvenida + horario inmediato 8:00 AM-11:00 PM<br/>Botones: Hacer Pedido / Ver Menú / Hablar con Asesor"] --> MainChoice{"📍 Selección"}
 
         MainChoice -->|Ver Menu| ViewMenu["view_menu\n- envia imagen Menu\n- envia precios\n- botones Hacer Pedido / Volver al Menu"]
-        MainChoice -->|Horarios| ViewSchedule["view_schedule\n- envia horarios\n- botones Hacer Pedido / Volver al Menu"]
         MainChoice -->|Hacer Pedido| WhenDelivery["when_delivery\nBotones: Entrega Inmediata / Entrega Programada"]
         MainChoice -->|Hablar con Asesor| ContactAdvisorBootstrap["start_contact_advisor"]
 
         ViewMenu --> MainMenu
-        ViewSchedule --> MainMenu
 
         WhenDelivery --> DeliveryChoice{"🕐 delivery_type"}
         DeliveryChoice -->|immediate| CheckHours{"⏰ ¿Bogotá 08:00-23:00?"}

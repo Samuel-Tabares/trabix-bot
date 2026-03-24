@@ -27,7 +27,8 @@ Current implementation status:
 - Phase 1 is implemented and validated: webhook, HMAC verification, WhatsApp client, PostgreSQL, migrations.
 - Phase 2 is implemented and validated as the current runtime flow:
   - persistent conversation state machine
-  - main menu, view menu, schedules
+  - main menu with welcome hours plus buttons for `Hacer Pedido`, `Ver Menú`, and `Hablar con Asesor`
+  - view menu and delivery scheduling
   - immediate vs scheduled delivery
   - customer data collection
   - item loop until `ShowSummary`

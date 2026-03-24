@@ -85,8 +85,6 @@ pub struct MenuMessages {
     pub make_order_description: String,
     pub view_menu_title: String,
     pub view_menu_description: String,
-    pub view_schedule_title: String,
-    pub view_schedule_description: String,
     pub contact_advisor_title: String,
     pub contact_advisor_description: String,
     pub retry_main_menu: String,
@@ -96,11 +94,6 @@ pub struct MenuMessages {
     pub view_menu_make_order_button: String,
     pub view_menu_back_button: String,
     pub retry_view_menu: String,
-    pub schedule_text: String,
-    pub schedule_buttons_body: String,
-    pub schedule_make_order_button: String,
-    pub schedule_back_button: String,
-    pub retry_view_schedule: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -290,6 +283,11 @@ impl ClientMessages {
     }
 
     fn validate(&self) -> Result<(), MessagesError> {
+        validate_template(
+            &self.menu.main_welcome,
+            &["business_hours"],
+            "menu.main_welcome",
+        )?;
         validate_template(
             &self.scheduling.confirm_template,
             &["date", "time"],
@@ -499,7 +497,7 @@ mod tests {
     fn loads_messages_from_repo_fixture() {
         let messages = ClientMessages::for_tests();
 
-        assert_eq!(messages.menu.main_list_button_text, "Ver opciones");
+        assert_eq!(messages.menu.main_list_body, "¿Qué te gustaría hacer ahora? 👇");
         assert_eq!(
             messages.checkout.receipt_timeout_change_payment_button,
             "Cambiar pago"

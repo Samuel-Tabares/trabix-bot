@@ -25,6 +25,8 @@ const DATE_MIN_LEN: usize = 2;
 const DATE_MAX_LEN: usize = 40;
 const TIME_MIN_LEN: usize = 1;
 const TIME_MAX_LEN: usize = 40;
+const BUSINESS_HOURS_START_HOUR: u32 = 8;
+const BUSINESS_HOURS_END_HOUR: u32 = 23;
 
 pub fn handle_when_delivery(
     input: &UserInput,
@@ -286,9 +288,17 @@ pub fn confirm_schedule_actions(context: &ConversationContext) -> Vec<BotAction>
 }
 
 pub fn is_within_business_hours(time: NaiveTime) -> bool {
-    let start = NaiveTime::from_hms_opt(8, 0, 0).expect("static time");
-    let end = NaiveTime::from_hms_opt(23, 0, 0).expect("static time");
+    let start = business_hours_start();
+    let end = business_hours_end();
     time >= start && time <= end
+}
+
+pub fn immediate_delivery_hours_text() -> String {
+    format!(
+        "{} - {}",
+        business_hours_start().format("%-I:%M %p"),
+        business_hours_end().format("%-I:%M %p")
+    )
 }
 
 fn validate_schedule_text(
@@ -309,6 +319,14 @@ fn validate_schedule_text(
 
 fn collapse_spaces(input: &str) -> String {
     input.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn business_hours_start() -> NaiveTime {
+    NaiveTime::from_hms_opt(BUSINESS_HOURS_START_HOUR, 0, 0).expect("static time")
+}
+
+fn business_hours_end() -> NaiveTime {
+    NaiveTime::from_hms_opt(BUSINESS_HOURS_END_HOUR, 0, 0).expect("static time")
 }
 
 fn now_bogota() -> DateTime<FixedOffset> {
