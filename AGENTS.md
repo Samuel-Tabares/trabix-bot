@@ -89,6 +89,7 @@ Operational notes:
 - `TRANSFER_PAYMENT_TEXT` is now optional fallback-only in `.env` for backward compatibility if `config/messages.toml` leaves `checkout.transfer_payment_text` empty.
 - `MENU_IMAGE_MEDIA_ID` must contain a valid Meta `media_id`; the runtime no longer expects separate media IDs for liquor/non-liquor flavor flows.
 - `FORCE_BOGOTA_NOW=YYYY-MM-DD HH:MM` is available only for local testing of after-hours scheduling. Do not enable it in Railway or production.
+- PostgreSQL sessions opened by the app are set to `America/Bogota` (`UTC-5`) on connect so SQL `NOW()` usage and timestamp display stay aligned with the operating timezone used by the bot.
 - Keep `ADVISOR_PHONE` different from `WHATSAPP_TEST_RECIPIENT` during local WhatsApp validation, otherwise tester messages are routed as advisor messages.
 - Large menu images may be rejected by Meta. If needed, compress or resize locally before upload.
 - Operational menu images should not live under `src/` as tracked source code; the bot only needs the resulting `media_id`.
