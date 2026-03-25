@@ -2,3 +2,4 @@ target/
 .env
 /src/menu.PNG
 *.pdb
+.DS_Store
