@@ -2,6 +2,8 @@ use std::{error::Error, fmt};
 
 use reqwest::{Client, StatusCode};
 
+use crate::logging::{mask_phone, preview_text};
+
 use super::{
     buttons::quick_buttons,
     types::{
@@ -156,11 +158,21 @@ impl WhatsAppClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "<unable to read body>".into());
-            tracing::error!(to = %to, message_type = %message_type, %status, body = %body, "meta api returned an error");
+            tracing::error!(
+                recipient = %mask_phone(to),
+                message_type = %message_type,
+                %status,
+                body = %preview_text(&body),
+                "meta api returned an error"
+            );
             return Err(WhatsAppError::Api { status, body });
         }
 
-        tracing::info!(to = %to, message_type = %message_type, "sent whatsapp message");
+        tracing::debug!(
+            recipient = %mask_phone(to),
+            message_type = %message_type,
+            "sent whatsapp message"
+        );
         Ok(())
     }
 }

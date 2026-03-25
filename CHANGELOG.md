@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Add structured backend observability with masked phone markers, short message previews, state-transition logs, outbound action summaries, and quieter status-webhook noise at `DEBUG`.
 - Auto-fill `customer_phone` from inbound WhatsApp sender numbers and `customer_name` from `contacts[].profile.name` when Meta includes it, without overwriting manual edits.
 - Replace the old address-only confirmation with a customer-data review/edit step before order handoff, and add the same review/edit step to the `Hablar con Asesor` flow.
 - Replace the outdated phase-planning document set with `general_info/current_runtime_reference.md`, a single current runtime and validation reference aligned with the live system.

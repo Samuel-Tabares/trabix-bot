@@ -253,6 +253,17 @@ pub enum TimerType {
     ConversationAbandon,
 }
 
+impl TimerType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AdvisorResponse => "advisor_response",
+            Self::ReceiptUpload => "receipt_upload",
+            Self::RelayInactivity => "relay_inactivity",
+            Self::ConversationAbandon => "conversation_abandon",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImageAsset {
     Menu,

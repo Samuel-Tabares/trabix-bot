@@ -1,6 +1,7 @@
 pub mod bot;
 pub mod config;
 pub mod db;
+pub mod logging;
 pub mod messages;
 pub mod routes;
 pub mod whatsapp;

@@ -50,6 +50,15 @@ impl WebhookPayload {
 
         events
     }
+
+    pub fn status_events(&self) -> Vec<StatusEvent> {
+        self.entry
+            .iter()
+            .flat_map(|entry| entry.changes.iter())
+            .flat_map(|change| change.value.statuses.iter().flatten())
+            .cloned()
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -75,6 +84,17 @@ pub struct Value {
     pub messages: Option<Vec<IncomingMessage>>,
     #[serde(default)]
     pub contacts: Option<Vec<Contact>>,
+    #[serde(default)]
+    pub statuses: Option<Vec<StatusEvent>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StatusEvent {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub recipient_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -247,7 +267,8 @@ pub struct MarkAsRead {
 #[cfg(test)]
 mod tests {
     use super::{
-        Change, Contact, ContactProfile, Entry, IncomingMessage, TextContent, Value, WebhookPayload,
+        Change, Contact, ContactProfile, Entry, IncomingMessage, StatusEvent, TextContent, Value,
+        WebhookPayload,
     };
 
     fn text_message(id: &str, from: &str, body: &str) -> IncomingMessage {
@@ -275,6 +296,7 @@ mod tests {
                                 text_message("wamid-2", "573001111111", "quiero pedir"),
                             ]),
                             contacts: None,
+                            statuses: None,
                         },
                     }],
                 },
@@ -283,6 +305,7 @@ mod tests {
                         value: Value {
                             messages: Some(vec![text_message("wamid-3", "573002222222", "menu")]),
                             contacts: None,
+                            statuses: None,
                         },
                     }],
                 },
@@ -310,6 +333,7 @@ mod tests {
                                 name: "Ana Maria".to_string(),
                             }),
                         }]),
+                        statuses: None,
                     },
                 }],
             }],
@@ -341,6 +365,7 @@ mod tests {
                                 name: "Ana Maria".to_string(),
                             }),
                         }]),
+                        statuses: None,
                     },
                 }],
             }],
@@ -375,6 +400,7 @@ mod tests {
                                 name: "Ana Maria".to_string(),
                             }),
                         }]),
+                        statuses: None,
                     },
                 }],
             }],
@@ -384,5 +410,30 @@ mod tests {
 
         assert_eq!(events.len(), 2);
         assert!(events.iter().all(|event| event.contact.is_none()));
+    }
+
+    #[test]
+    fn webhook_payload_collects_status_events() {
+        let payload = WebhookPayload {
+            entry: vec![Entry {
+                changes: vec![Change {
+                    value: Value {
+                        messages: None,
+                        contacts: None,
+                        statuses: Some(vec![StatusEvent {
+                            id: Some("wamid-1".to_string()),
+                            status: "delivered".to_string(),
+                            recipient_id: Some("573001111111".to_string()),
+                        }]),
+                    },
+                }],
+            }],
+        };
+
+        let statuses = payload.status_events();
+
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].status, "delivered");
+        assert_eq!(statuses[0].recipient_id.as_deref(), Some("573001111111"));
     }
 }

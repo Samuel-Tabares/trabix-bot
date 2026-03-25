@@ -50,6 +50,7 @@ Flujo base:
 Comportamiento actual relevante:
 
 - `mark_as_read` es best-effort. Si Meta rechaza ese request, el bot solo registra warning y sigue procesando.
+- Los logs del runtime priorizan visibilidad operativa con telefono enmascarado, previews cortos de texto, transiciones de estado, resumen de respuestas salientes y eventos de timers. Los callbacks de estado `sent/delivered/read` de Meta deben quedar fuera del ruido normal de `INFO` y verse en `DEBUG` cuando haga falta.
 - El callback productivo exacto es `/webhook`.
 - Para trafico publico real, la app de Meta debe estar en `Live` y el WABA debe estar suscrito a la app activa.
 

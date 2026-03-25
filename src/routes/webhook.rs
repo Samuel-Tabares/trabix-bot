@@ -35,6 +35,7 @@ use crate::{
             update_order_delivery_cost, update_order_status, update_state,
         },
     },
+    logging::{log_bot_action, mask_phone, preview_text, summarize_action_kinds},
     messages::client_messages,
     whatsapp::types::WebhookPayload,
     AppState,
@@ -131,10 +132,23 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
     }
 
     if !processed_any_message {
-        tracing::info!(
-            body = %String::from_utf8_lossy(&body),
-            "webhook without incoming messages ignored"
-        );
+        let status_events = payload.status_events();
+        if status_events.is_empty() {
+            tracing::debug!("webhook without incoming messages or statuses ignored");
+        } else {
+            for status in status_events {
+                tracing::debug!(
+                    recipient = %status
+                        .recipient_id
+                        .as_deref()
+                        .map(mask_phone)
+                        .unwrap_or_else(|| "<unknown>".to_string()),
+                    status = %status.status,
+                    message_id = %status.id.unwrap_or_else(|| "<unknown>".to_string()),
+                    "received whatsapp status update"
+                );
+            }
+        }
         return Ok(());
     }
 
@@ -154,17 +168,24 @@ async fn process_incoming_message(
     let message_id = message.id.clone();
     let input = extract_input(&message);
     let (message_type, content) = describe_input(&input);
+    let actor = if from == state.config.advisor_phone {
+        "advisor"
+    } else {
+        "customer"
+    };
 
     tracing::info!(
-        phone = %from,
+        actor = %actor,
+        phone = %mask_phone(&from),
+        message_id = %message_id,
         message_type = %message_type,
-        content = %content,
+        preview = %preview_text(&content),
         "received whatsapp message"
     );
 
     if let Err(err) = state.wa_client.mark_as_read(&message_id).await {
         tracing::warn!(
-            phone = %from,
+            phone = %mask_phone(&from),
             message_id = %message_id,
             error = %err,
             "failed to mark inbound whatsapp message as read; continuing"
@@ -188,7 +209,15 @@ async fn handle_client_message(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let conversation = load_or_create_conversation(&state, &phone).await?;
     let (current_state, mut context) = rehydrate_client_conversation(&state, &conversation).await?;
-    seed_customer_data_from_whatsapp(&mut context, &phone, contact.as_ref());
+    let seeded = seed_customer_data_from_whatsapp(&mut context, &phone, contact.as_ref());
+    if seeded.seeded_phone || seeded.seeded_name {
+        tracing::debug!(
+            phone = %mask_phone(&phone),
+            seeded_phone = seeded.seeded_phone,
+            seeded_name = seeded.seeded_name,
+            "seeded customer data from whatsapp metadata"
+        );
+    }
 
     let (new_state, mut actions) = transition(&current_state, &input, &mut context)?;
     let transition_resets_conversation = actions
@@ -199,6 +228,16 @@ async fn handle_client_message(
         &mut context,
         transition_resets_conversation,
     ));
+    tracing::info!(
+        actor = "customer",
+        phone = %mask_phone(&phone),
+        from_state = %current_state.as_storage_key(),
+        to_state = %new_state.as_storage_key(),
+        action_count = actions.len(),
+        action_kinds = %summarize_action_kinds(&actions),
+        reset_requested = transition_resets_conversation,
+        "processed state transition"
+    );
 
     update_customer_data(
         &state.pool,
@@ -225,29 +264,40 @@ async fn handle_client_message(
     Ok(())
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct SeededCustomerData {
+    seeded_phone: bool,
+    seeded_name: bool,
+}
+
 fn seed_customer_data_from_whatsapp(
     context: &mut ConversationContext,
     phone: &str,
     contact: Option<&crate::whatsapp::types::Contact>,
-) {
+) -> SeededCustomerData {
+    let mut seeded = SeededCustomerData::default();
     if context.customer_phone.is_none() {
         context.customer_phone = Some(phone.to_string());
+        seeded.seeded_phone = true;
     }
 
     if context.customer_name.is_some() {
-        return;
+        return seeded;
     }
 
     let Some(profile_name) = contact
         .and_then(|contact| contact.profile.as_ref())
         .map(|profile| profile.name.as_str())
     else {
-        return;
+        return seeded;
     };
 
     if let Ok(name) = data_collect::validate_name(profile_name) {
         context.customer_name = Some(name);
+        seeded.seeded_name = true;
     }
+
+    seeded
 }
 
 async fn handle_advisor_message(
@@ -259,6 +309,10 @@ async fn handle_advisor_message(
 
     let target_phone = resolve_advisor_target_phone(&advisor_conversation.state_data.0, &input);
     let Some(target_phone) = target_phone else {
+        tracing::info!(
+            advisor_phone = %mask_phone(&advisor_phone),
+            "advisor message arrived without an active target"
+        );
         state
             .wa_client
             .send_text(
@@ -271,6 +325,11 @@ async fn handle_advisor_message(
     };
 
     let Some(client_conversation) = get_conversation(&state.pool, &target_phone).await? else {
+        tracing::warn!(
+            advisor_phone = %mask_phone(&advisor_phone),
+            target_phone = %mask_phone(&target_phone),
+            "advisor target conversation no longer exists"
+        );
         clear_advisor_session(&state, &advisor_phone).await?;
         state
             .wa_client
@@ -294,6 +353,17 @@ async fn handle_advisor_message(
         &mut context,
         transition_resets_conversation,
     ));
+    tracing::info!(
+        actor = "advisor",
+        advisor_phone = %mask_phone(&advisor_phone),
+        target_phone = %mask_phone(&target_phone),
+        from_state = %current_state.as_storage_key(),
+        to_state = %new_state.as_storage_key(),
+        action_count = actions.len(),
+        action_kinds = %summarize_action_kinds(&actions),
+        reset_requested = transition_resets_conversation,
+        "processed advisor transition"
+    );
 
     update_customer_data(
         &state.pool,
@@ -394,6 +464,7 @@ async fn execute_actions(
     let mut reset_requested = false;
 
     for action in actions {
+        log_bot_action(action);
         match action {
             BotAction::SendText { to, body } => {
                 state.wa_client.send_text(to, body).await?;
@@ -504,6 +575,12 @@ async fn execute_actions(
             }
             BotAction::UpsertDraftOrder { status } | BotAction::FinalizeCurrentOrder { status } => {
                 upsert_order_from_context(&state.pool, conversation_id, context, status).await?;
+                tracing::info!(
+                    phone = %mask_phone(&context.phone_number),
+                    order_id = ?context.current_order_id,
+                    status = %status,
+                    "persisted order state"
+                );
             }
             BotAction::UpdateCurrentOrderDeliveryCost {
                 delivery_cost,
@@ -516,12 +593,25 @@ async fn execute_actions(
                 update_order_delivery_cost(&state.pool, order_id, *delivery_cost, *total_final)
                     .await?;
                 update_order_status(&state.pool, order_id, status).await?;
+                tracing::info!(
+                    phone = %mask_phone(&context.phone_number),
+                    order_id = order_id,
+                    delivery_cost = *delivery_cost,
+                    total_final = *total_final,
+                    status = %status,
+                    "updated order delivery cost"
+                );
             }
             BotAction::CancelCurrentOrder { order_id } => {
                 update_order_status(&state.pool, *order_id, "cancelled").await?;
+                tracing::info!(
+                    phone = %mask_phone(&context.phone_number),
+                    order_id = *order_id,
+                    "cancelled current order"
+                );
             }
             BotAction::SaveOrder { .. } => {
-                tracing::info!("action not implemented yet");
+                tracing::debug!("save_order action not implemented");
             }
             BotAction::BindAdvisorSession {
                 advisor_phone,
@@ -550,6 +640,15 @@ async fn bind_advisor_session(
     let mut state_data = conversation.state_data.0;
     state_data.advisor_target_phone = target_phone;
     update_state(&state.pool, advisor_phone, &conversation.state, &state_data).await?;
+    tracing::info!(
+        advisor_phone = %mask_phone(advisor_phone),
+        target_phone = %state_data
+            .advisor_target_phone
+            .as_deref()
+            .map(mask_phone)
+            .unwrap_or_else(|| "<none>".to_string()),
+        "updated advisor session binding"
+    );
     Ok(())
 }
 
@@ -561,6 +660,10 @@ async fn clear_advisor_session(
         let mut state_data = conversation.state_data.0;
         state_data.advisor_target_phone = None;
         update_state(&state.pool, advisor_phone, &conversation.state, &state_data).await?;
+        tracing::info!(
+            advisor_phone = %mask_phone(advisor_phone),
+            "cleared advisor session binding"
+        );
     }
 
     Ok(())

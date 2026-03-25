@@ -66,6 +66,7 @@ Current real runtime behavior:
 - If the advisor writes without first selecting a pending case, the bot should answer with the advisor guidance message rather than the customer menu.
 - The bot replies with text, buttons, lists, and images through Meta Cloud API, and persists conversation/order state in PostgreSQL.
 - For customer messages, the runtime seeds `customer_phone` from inbound WhatsApp `from` and seeds `customer_name` from `contacts[].profile.name` when Meta includes it; manual edits remain authoritative.
+- Backend logs now prioritize operational flow visibility: masked phone suffixes, short content previews, state transitions, outbound action summaries, and timer recovery/expiry events. Meta status-only webhooks should stay out of `INFO` noise unless `DEBUG` is enabled.
 - `mark_as_read` is best-effort only. If Meta rejects the read receipt request, the bot logs a warning and continues processing the message.
 - Generic customer inactivity is only armed by a real inbound customer message. After the 35-minute inactivity reset sends its notice and returns the conversation to `main_menu`, no new inactivity reminder/reset should fire until the customer writes again.
 - On deploy/restart, overdue timers are reconciled silently in persistence. The bot should not fan out timeout or inactivity WhatsApp messages just because the process booted; only still-active timers are re-armed for future expiration.
