@@ -1,0 +1,2 @@
+notes.md
+24h window, the advisor is seen as a customer, whatsapp to prevent spam prohibite sending messages if on the last one the customer hasnt answered yet so it just fix all bot problems related if we as an advisor just text the bot every 23.59h then we will get all mesages
