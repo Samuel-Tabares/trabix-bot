@@ -355,6 +355,7 @@ mod tests {
             delivery_type: None,
             scheduled_date: None,
             scheduled_time: None,
+            customer_review_scope: None,
             payment_method: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,

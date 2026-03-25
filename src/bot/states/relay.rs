@@ -201,6 +201,7 @@ mod tests {
             delivery_type: Some("scheduled".to_string()),
             scheduled_date: Some("2030-12-24".to_string()),
             scheduled_time: Some("5:00 pm".to_string()),
+            customer_review_scope: None,
             payment_method: Some("cash_on_delivery".to_string()),
             receipt_media_id: None,
             receipt_timer_started_at: None,

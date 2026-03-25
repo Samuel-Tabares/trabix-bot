@@ -27,7 +27,7 @@ Current implementation status:
   - main menu with welcome hours plus buttons for `Hacer Pedido`, `Ver Menú`, and `Hablar con Asesor`
   - view menu and delivery scheduling
   - immediate vs scheduled delivery
-  - customer data collection
+  - customer data auto-prefill from inbound WhatsApp metadata plus ask-only-missing capture
   - item loop until `ShowSummary`
   - persistence in PostgreSQL across messages and restarts
   - flexible text capture for programmed date/time with minimal length validation
@@ -39,7 +39,7 @@ Current implementation status:
   - payment choice: `Contra Entrega` or `Pago Ahora`
   - transfer instructions plus receipt image capture
   - 10-minute receipt timer with timeout options to change payment or cancel
-  - address confirmation/editing before handoff
+  - customer-data review/edit step before handoff, covering name, phone, and address
   - order draft/final persistence in `orders` and `order_items`
   - conversation persistence of payment context, receipt state, and timer rehydration data
   - handoff persistence into `pending_advisor`
@@ -65,6 +65,7 @@ Current real runtime behavior:
 - Messages from `ADVISOR_PHONE` are never treated as customer messages; they always enter the advisor flow.
 - If the advisor writes without first selecting a pending case, the bot should answer with the advisor guidance message rather than the customer menu.
 - The bot replies with text, buttons, lists, and images through Meta Cloud API, and persists conversation/order state in PostgreSQL.
+- For customer messages, the runtime seeds `customer_phone` from inbound WhatsApp `from` and seeds `customer_name` from `contacts[].profile.name` when Meta includes it; manual edits remain authoritative.
 - `mark_as_read` is best-effort only. If Meta rejects the read receipt request, the bot logs a warning and continues processing the message.
 - Generic customer inactivity is only armed by a real inbound customer message. After the 35-minute inactivity reset sends its notice and returns the conversation to `main_menu`, no new inactivity reminder/reset should fire until the customer writes again.
 - On deploy/restart, overdue timers are reconciled silently in persistence. The bot should not fan out timeout or inactivity WhatsApp messages just because the process booted; only still-active timers are re-armed for future expiration.
@@ -174,7 +175,7 @@ When adding Phase 3+ work, prefer tests named by behavior, for example `applies_
 Current important coverage areas:
 
 - `src/bot/pricing.rs`: detail promo, wholesale pricing, mixed-order totals.
-- `src/bot/states/checkout.rs`: payment selection, receipt handling, address confirmation, and handoff entry.
+- `src/bot/states/checkout.rs`: payment selection, receipt handling, customer-data review/editing, and handoff entry.
 - `src/bot/states/advisor.rs`: advisor button parsing, delivery-cost capture, hour negotiation, timeout retry/programming, and contact-advisor flow.
 - `src/bot/states/relay.rs`: wholesale relay, advisor-contact relay, finish button, and text-only forwarding rules.
 - `src/bot/timers.rs`: receipt timeout, advisor timeout, relay inactivity timeout, and timer restoration after restart.

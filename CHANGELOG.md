@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Auto-fill `customer_phone` from inbound WhatsApp sender numbers and `customer_name` from `contacts[].profile.name` when Meta includes it, without overwriting manual edits.
+- Replace the old address-only confirmation with a customer-data review/edit step before order handoff, and add the same review/edit step to the `Hablar con Asesor` flow.
 - Replace the outdated phase-planning document set with `general_info/current_runtime_reference.md`, a single current runtime and validation reference aligned with the live system.
 - Make deploy/restart timer catch-up silent so boot does not send customer or advisor timeout messages for already overdue conversations; only active not-yet-expired timers are re-armed.
 - Fix the generic customer inactivity loop so `main_menu` does not re-arm reminder/reset timers after an inactivity reset or restart without a new inbound customer message.

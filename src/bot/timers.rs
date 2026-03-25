@@ -408,7 +408,8 @@ fn boot_expiration_action(
             };
 
             let elapsed = elapsed_since(started_at, now);
-            if !state_data.conversation_abandon_reminder_sent && elapsed < CONVERSATION_RESET_TIMEOUT
+            if !state_data.conversation_abandon_reminder_sent
+                && elapsed < CONVERSATION_RESET_TIMEOUT
             {
                 BootExpirationAction::MarkInactivityReminderAndRestore { started_at }
             } else {
@@ -683,6 +684,10 @@ fn timer_recovery_states() -> Vec<&'static str> {
         "select_quantity",
         "add_more",
         "confirm_address",
+        "select_customer_data_field",
+        "edit_customer_name",
+        "edit_customer_phone",
+        "edit_customer_address",
         "show_summary",
         "offer_hour_to_client",
         "wait_client_hour",
@@ -738,6 +743,10 @@ fn customer_inactivity_state(state: &str) -> bool {
             | "select_quantity"
             | "add_more"
             | "confirm_address"
+            | "select_customer_data_field"
+            | "edit_customer_name"
+            | "edit_customer_phone"
+            | "edit_customer_address"
             | "show_summary"
             | "offer_hour_to_client"
             | "wait_client_hour"
@@ -820,9 +829,7 @@ pub fn rehydrate_context_for_timer(
     )
 }
 
-async fn clear_advisor_session(
-    state: &AppState,
-) -> Result<(), sqlx::Error> {
+async fn clear_advisor_session(state: &AppState) -> Result<(), sqlx::Error> {
     if let Some(advisor_conversation) =
         get_conversation(&state.pool, &state.config.advisor_phone).await?
     {
@@ -1168,11 +1175,8 @@ mod tests {
     #[test]
     fn boot_expiration_resets_relay_silently() {
         let now = chrono::Utc::now();
-        let conversation = active_timer_conversation(
-            "relay_mode",
-            ConversationStateData::default(),
-            now,
-        );
+        let conversation =
+            active_timer_conversation("relay_mode", ConversationStateData::default(), now);
 
         let action = boot_expiration_action(&conversation, TimerType::RelayInactivity, now);
 

@@ -7,7 +7,7 @@ use crate::{
         state_machine::{
             BotAction, ConversationContext, ConversationState, TransitionResult, UserInput,
         },
-        states::{advisor, data_collect, menu},
+        states::{advisor, customer_data, menu},
     },
     messages::{client_messages, render_template},
     whatsapp::types::{Button, ButtonReplyPayload},
@@ -61,10 +61,7 @@ pub fn handle_when_delivery(
 
 pub fn handle_check_schedule(context: &mut ConversationContext) -> TransitionResult {
     if is_within_business_hours(now_bogota().time()) {
-        Ok((
-            ConversationState::CollectName,
-            data_collect::collect_name_actions(&context.phone_number),
-        ))
+        Ok(customer_data::next_order_data_state(context))
     } else {
         Ok((
             ConversationState::OutOfHours,
@@ -188,10 +185,7 @@ pub fn handle_confirm_schedule(
                 return Ok((state, actions));
             }
 
-            Ok((
-                ConversationState::CollectName,
-                data_collect::collect_name_actions(&context.phone_number),
-            ))
+            Ok(customer_data::next_order_data_state(context))
         }
         Some(CHANGE_SCHEDULE) => {
             context.scheduled_date = None;
@@ -405,6 +399,7 @@ mod tests {
             delivery_type: None,
             scheduled_date: None,
             scheduled_time: None,
+            customer_review_scope: None,
             payment_method: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,

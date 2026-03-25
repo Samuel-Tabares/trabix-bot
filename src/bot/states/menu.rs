@@ -88,7 +88,10 @@ pub fn main_menu_actions(phone: &str) -> Vec<BotAction> {
             to: phone.to_string(),
             body: render_template(
                 &messages.main_welcome,
-                &[("business_hours", &scheduling::immediate_delivery_hours_text())],
+                &[(
+                    "business_hours",
+                    &scheduling::immediate_delivery_hours_text(),
+                )],
             ),
         },
         BotAction::SendButtons {
@@ -186,6 +189,7 @@ mod tests {
             delivery_type: None,
             scheduled_date: None,
             scheduled_time: None,
+            customer_review_scope: None,
             payment_method: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
@@ -216,15 +220,20 @@ mod tests {
 
         assert_eq!(state, ConversationState::MainMenu);
         assert_eq!(actions.len(), 2);
-        assert!(matches!(actions[1], crate::bot::state_machine::BotAction::SendButtons { .. }));
+        assert!(matches!(
+            actions[1],
+            crate::bot::state_machine::BotAction::SendButtons { .. }
+        ));
     }
 
     #[test]
     fn main_menu_make_order_moves_forward() {
         let mut context = context();
-        let (state, _) =
-            handle_main_menu(&UserInput::ButtonPress("make_order".to_string()), &mut context)
-                .expect("transition");
+        let (state, _) = handle_main_menu(
+            &UserInput::ButtonPress("make_order".to_string()),
+            &mut context,
+        )
+        .expect("transition");
 
         assert_eq!(state, ConversationState::WhenDelivery);
     }
@@ -256,18 +265,14 @@ mod tests {
     #[test]
     fn legacy_view_schedule_state_recovers_to_main_menu() {
         let mut context = context();
-        let (state, actions) = handle_view_schedule(
-            &UserInput::TextMessage("hola".to_string()),
-            &mut context,
-        )
-        .expect("transition");
+        let (state, actions) =
+            handle_view_schedule(&UserInput::TextMessage("hola".to_string()), &mut context)
+                .expect("transition");
 
         assert_eq!(state, ConversationState::MainMenu);
-        assert!(
-            actions.iter().any(|action| matches!(
-                action,
-                crate::bot::state_machine::BotAction::SendButtons { .. }
-            ))
-        );
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::SendButtons { .. }
+        )));
     }
 }

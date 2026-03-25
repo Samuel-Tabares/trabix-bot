@@ -14,7 +14,7 @@ graph TD
     subgraph Runtime["RUST SERVICE GRANIZADO-BOT"]
         Webhook --> HMAC{"🔐 ¿Firma válida?"}
         HMAC -->|No| Reject["401 / ignorar"]
-        HMAC -->|Si| Parse["🧩 Parse webhook + describe_input"]
+        HMAC -->|Si| Parse["🧩 Parse webhook + describe_input + match contacts/profile"]
         Parse --> Msg{"💬 ¿Hay mensaje útil?"}
         Msg -->|No| Ignore["200 OK + log"]
         Msg -->|Si| Route{"from == ADVISOR_PHONE?"}
@@ -27,7 +27,7 @@ graph TD
         Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- advisor_detail_stuck 30m<br/>- relay_inactivity 30m<br/>- restore_pending_timers()<br/>- sweep_expired_timers()"]
     end
 
-    Route -->|Cliente| LoadClient["load_or_create_conversation + rehydrate context"]
+    Route -->|Cliente| LoadClient["load_or_create_conversation + rehydrate context + seed WhatsApp name/phone"]
     Route -->|Asesor| LoadAdvisor["load advisor conversation + resolve target phone"]
 
     LoadClient --> ClientState{"Estado actual"}
@@ -48,7 +48,7 @@ graph TD
         DeliveryChoice -->|immediate| CheckHours{"⏰ ¿Bogotá 08:00-23:00?"}
         DeliveryChoice -->|scheduled| SelectDate["📅 select_date<br/>Captura texto libre fecha"]
 
-        CheckHours -->|dentro de horario| CollectName["collect_name"]
+        CheckHours -->|dentro de horario| OrderNeeds{"📇 ¿Faltan datos del pedido?"}
         CheckHours -->|fuera de horario| OutOfHours["out_of_hours\nTexto + botones Programar / Asesor / Menu"]
         OutOfHours -->|Programar| SelectDate
         OutOfHours -->|Asesor| ContactAdvisorBootstrap
@@ -56,12 +56,16 @@ graph TD
 
         SelectDate --> SelectTime["🕐 select_time<br/>Captura texto libre hora"]
         SelectTime --> ConfirmSchedule["✅ confirm_schedule<br/>Muestra fecha/hora + Confirmar / Cambiar"]
-        ConfirmSchedule -->|Confirmar| CollectName
+        ConfirmSchedule -->|Confirmar| OrderNeeds
         ConfirmSchedule -->|Cambiar| SelectDate
 
-        CollectName --> CollectPhone["📱 collect_phone"]
-        CollectPhone --> CollectAddress["📍 collect_address"]
-        CollectAddress --> SelectType["🧊 select_type<br/>Botones Con Licor / Sin Licor"]
+        OrderNeeds -->|falta nombre| CollectName["collect_name"]
+        OrderNeeds -->|falta telefono| CollectPhone["📱 collect_phone"]
+        OrderNeeds -->|falta direccion| CollectAddress["📍 collect_address"]
+        OrderNeeds -->|completo| SelectType["🧊 select_type<br/>Botones Con Licor / Sin Licor"]
+        CollectName --> OrderNeeds
+        CollectPhone --> OrderNeeds
+        CollectAddress --> OrderNeeds
         SelectType --> SelectFlavor["🍧 select_flavor<br/>Lista según has_liquor"]
         SelectFlavor --> SelectQuantity["🔢 select_quantity<br/>Pregunta cantidad"]
         SelectQuantity --> AddMore["➕ add_more<br/>Resumen parcial + botones"]
@@ -69,7 +73,7 @@ graph TD
         AddMore -->|Finalizar pedido| ShowSummary["📋 show_summary<br/>render_summary() + lista pago"]
 
         ShowSummary --> SummaryChoice{"Lista de pago y pedido"}
-        SummaryChoice -->|Contra Entrega| ConfirmAddress["✅ confirm_address"]
+        SummaryChoice -->|Contra Entrega| ConfirmAddress["✅ confirm_address<br/>scope order_checkout<br/>muestra nombre + telefono + direccion"]
         SummaryChoice -->|Pago Ahora| WaitReceipt["📸 wait_receipt<br/>- TRANSFER_PAYMENT_TEXT<br/>- pide comprobante<br/>- timer 10m"]
         SummaryChoice -->|Modificar Pedido| SelectType
         SummaryChoice -->|Cancelar Pedido| MainMenu
@@ -78,10 +82,15 @@ graph TD
         WaitReceipt -->|timer vencido| ReceiptTimeout["Opciones Cambiar pago / Cancelar"]
         ReceiptTimeout --> ShowSummary
 
-        ConfirmAddress --> AddressChoice{"📍 ¿Dirección correcta?"}
-        AddressChoice -->|Cambiar| EditAddress["✏️ editing_address<br/>Captura nueva dirección"]
+        ConfirmAddress --> ReviewChoice{"📋 ¿Continuar o cambiar?"}
+        ReviewChoice -->|Continuar| AdvisorHandoff["📤 handoff_order_after_address_confirmation"]
+        ReviewChoice -->|Cambiar| SelectField["🛠️ select_customer_data_field<br/>Nombre / Teléfono / Dirección"]
+        SelectField -->|Nombre| EditName["✏️ edit_customer_name"]
+        SelectField -->|Teléfono| EditPhone["✏️ edit_customer_phone"]
+        SelectField -->|Dirección| EditAddress["✏️ edit_customer_address"]
+        EditName --> ConfirmAddress
+        EditPhone --> ConfirmAddress
         EditAddress --> ConfirmAddress
-        AddressChoice -->|Sí| AdvisorHandoff["📤 handoff_order_after_address_confirmation"]
     end
 
     subgraph OrderPersistence["PERSISTENCIA DEL PEDIDO"]
@@ -136,10 +145,17 @@ graph TD
         ContactAdvisorBootstrap --> ContactNeeds{"📇 ¿Faltan datos?"}
         ContactNeeds -->|falta nombre| ContactAdvisorName["contact_advisor_name"]
         ContactNeeds -->|falta telefono| ContactAdvisorPhone["contact_advisor_phone"]
-        ContactNeeds -->|completo| WaitAdvisorContact["wait_advisor_contact\n- render_contact_request al asesor\n- botones Atender / No disp.\n- cliente queda esperando\n- timer 2m"]
+        ContactNeeds -->|completo| ConfirmContact["✅ confirm_address<br/>scope advisor_contact<br/>muestra nombre + telefono"]
 
-        ContactAdvisorName --> ContactAdvisorPhone
-        ContactAdvisorPhone --> WaitAdvisorContact
+        ContactAdvisorName --> ContactNeeds
+        ContactAdvisorPhone --> ContactNeeds
+        ConfirmContact --> ContactReviewChoice{"📋 ¿Continuar o cambiar?"}
+        ContactReviewChoice -->|Continuar| WaitAdvisorContact["wait_advisor_contact\n- render_contact_request al asesor\n- botones Atender / No disp.\n- cliente queda esperando\n- timer 2m"]
+        ContactReviewChoice -->|Cambiar| SelectContactField["🛠️ select_customer_data_field<br/>Nombre / Teléfono"]
+        SelectContactField -->|Nombre| EditContactName["✏️ edit_customer_name"]
+        SelectContactField -->|Teléfono| EditContactPhone["✏️ edit_customer_phone"]
+        EditContactName --> ConfirmContact
+        EditContactPhone --> ConfirmContact
 
         WaitAdvisorContact --> ContactDecision{"Asesor responde?"}
         ContactDecision -->|Atender| RelayMode["🔄 relay_mode<br/>- cliente -> asesor<br/>- asesor -> cliente<br/>- botón Finalizar<br/>- timer 30m"]
@@ -170,6 +186,14 @@ graph TD
         SelectQuantity --> Timers
         ShowSummary --> Timers
         ConfirmAddress --> Timers
+        SelectField --> Timers
+        SelectContactField --> Timers
+        EditName --> Timers
+        EditPhone --> Timers
+        EditAddress --> Timers
+        ConfirmContact --> Timers
+        EditContactName --> Timers
+        EditContactPhone --> Timers
         Timers --> Sweep["⏲️ sweep_expired_timers()<br/>cada 60s"]
 
         Timers --> ReceiptExpire["expire_receipt_timer\nCliente: no llego comprobante\nBotones Cambiar pago / Cancelar"]

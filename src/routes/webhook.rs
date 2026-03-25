@@ -21,7 +21,7 @@ use crate::{
             extract_input, transition, transition_advisor, BotAction, ConversationContext,
             ConversationState, ImageAsset, UserInput,
         },
-        states::advisor::parse_advisor_button_id,
+        states::{advisor::parse_advisor_button_id, data_collect},
         timers::{
             cancel_timer, expire_advisor_timer, expire_receipt_timer, expire_relay_timer,
             start_timer,
@@ -119,10 +119,10 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
     let mut first_error: Option<Box<dyn Error + Send + Sync>> = None;
     let mut processed_any_message = false;
 
-    for message in payload.messages().cloned() {
+    for event in payload.message_events() {
         processed_any_message = true;
 
-        if let Err(err) = process_incoming_message(state.clone(), message).await {
+        if let Err(err) = process_incoming_message(state.clone(), event).await {
             tracing::error!("failed to process inbound whatsapp message: {}", err);
             if first_error.is_none() {
                 first_error = Some(err);
@@ -147,8 +147,9 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
 
 async fn process_incoming_message(
     state: AppState,
-    message: crate::whatsapp::types::IncomingMessage,
+    event: crate::whatsapp::types::IncomingMessageEvent,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let crate::whatsapp::types::IncomingMessageEvent { message, contact } = event;
     let from = message.from.clone();
     let message_id = message.id.clone();
     let input = extract_input(&message);
@@ -173,7 +174,7 @@ async fn process_incoming_message(
     if from == state.config.advisor_phone {
         handle_advisor_message(state, input).await?;
     } else {
-        handle_client_message(state, from, input).await?;
+        handle_client_message(state, from, contact, input).await?;
     }
 
     Ok(())
@@ -182,10 +183,12 @@ async fn process_incoming_message(
 async fn handle_client_message(
     state: AppState,
     phone: String,
+    contact: Option<crate::whatsapp::types::Contact>,
     input: UserInput,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let conversation = load_or_create_conversation(&state, &phone).await?;
     let (current_state, mut context) = rehydrate_client_conversation(&state, &conversation).await?;
+    seed_customer_data_from_whatsapp(&mut context, &phone, contact.as_ref());
 
     let (new_state, mut actions) = transition(&current_state, &input, &mut context)?;
     let transition_resets_conversation = actions
@@ -220,6 +223,31 @@ async fn handle_client_message(
 
     update_last_message(&state.pool, &phone).await?;
     Ok(())
+}
+
+fn seed_customer_data_from_whatsapp(
+    context: &mut ConversationContext,
+    phone: &str,
+    contact: Option<&crate::whatsapp::types::Contact>,
+) {
+    if context.customer_phone.is_none() {
+        context.customer_phone = Some(phone.to_string());
+    }
+
+    if context.customer_name.is_some() {
+        return;
+    }
+
+    let Some(profile_name) = contact
+        .and_then(|contact| contact.profile.as_ref())
+        .map(|profile| profile.name.as_str())
+    else {
+        return;
+    };
+
+    if let Ok(name) = data_collect::validate_name(profile_name) {
+        context.customer_name = Some(name);
+    }
 }
 
 async fn handle_advisor_message(
@@ -455,11 +483,10 @@ async fn execute_actions(
                                 }
                             }
                             crate::bot::state_machine::TimerType::ConversationAbandon => {
-                                if let Err(err) =
-                                    crate::bot::timers::expire_conversation_abandon(
-                                        app_state, phone,
-                                    )
-                                    .await
+                                if let Err(err) = crate::bot::timers::expire_conversation_abandon(
+                                    app_state, phone,
+                                )
+                                .await
                                 {
                                     tracing::error!(
                                         error = %err,
@@ -676,9 +703,12 @@ fn parse_optional_time(value: Option<&str>) -> Option<chrono::NaiveTime> {
 
 #[cfg(test)]
 mod tests {
-    use crate::bot::state_machine::ConversationContext;
+    use crate::{
+        bot::state_machine::ConversationContext,
+        whatsapp::types::{Contact, ContactProfile},
+    };
 
-    use super::schedule_values_for_persistence;
+    use super::{schedule_values_for_persistence, seed_customer_data_from_whatsapp};
 
     fn context() -> ConversationContext {
         ConversationContext {
@@ -691,6 +721,7 @@ mod tests {
             delivery_type: Some("scheduled".to_string()),
             scheduled_date: None,
             scheduled_time: None,
+            customer_review_scope: None,
             payment_method: Some("cash_on_delivery".to_string()),
             receipt_media_id: None,
             receipt_timer_started_at: None,
@@ -759,6 +790,46 @@ mod tests {
         assert_eq!(values.typed_time, None);
         assert_eq!(values.raw_date, None);
         assert_eq!(values.raw_time, None);
+    }
+
+    #[test]
+    fn webhook_prefill_sets_phone_and_name_when_missing() {
+        let mut context = context();
+        context.customer_name = None;
+        context.customer_phone = None;
+
+        seed_customer_data_from_whatsapp(
+            &mut context,
+            "573001234567",
+            Some(&Contact {
+                wa_id: Some("573001234567".to_string()),
+                profile: Some(ContactProfile {
+                    name: "Ana Maria".to_string(),
+                }),
+            }),
+        );
+
+        assert_eq!(context.customer_phone.as_deref(), Some("573001234567"));
+        assert_eq!(context.customer_name.as_deref(), Some("Ana Maria"));
+    }
+
+    #[test]
+    fn webhook_prefill_does_not_overwrite_manual_values() {
+        let mut context = context();
+
+        seed_customer_data_from_whatsapp(
+            &mut context,
+            "573009999999",
+            Some(&Contact {
+                wa_id: Some("573009999999".to_string()),
+                profile: Some(ContactProfile {
+                    name: "Otro Nombre".to_string(),
+                }),
+            }),
+        );
+
+        assert_eq!(context.customer_phone.as_deref(), Some("3001234567"));
+        assert_eq!(context.customer_name.as_deref(), Some("Ana"));
     }
 }
 

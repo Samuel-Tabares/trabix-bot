@@ -193,6 +193,12 @@ pub struct CheckoutMessages {
     pub modify_order_description: String,
     pub cancel_order_title: String,
     pub cancel_order_description: String,
+    pub confirm_customer_template: String,
+    pub confirm_customer_continue_button: String,
+    pub confirm_customer_change_button: String,
+    pub change_customer_field_body: String,
+    pub change_name_button: String,
+    pub change_phone_button: String,
     pub confirm_address_template: String,
     pub confirm_address_button: String,
     pub change_address_button: String,
@@ -209,6 +215,12 @@ pub struct AdvisorCustomerMessages {
     pub contact_phone_prompt: String,
     pub contact_name_retry_non_text: String,
     pub contact_phone_retry_non_text: String,
+    pub confirm_contact_template: String,
+    pub confirm_contact_continue_button: String,
+    pub confirm_contact_change_button: String,
+    pub change_contact_field_body: String,
+    pub change_name_button: String,
+    pub change_phone_button: String,
     pub wait_contact_initial_text: String,
     pub wait_contact_repeat_text: String,
     pub wait_contact_leave_message_prompt: String,
@@ -338,9 +350,19 @@ impl ClientMessages {
             "checkout.summary_item_promo_template",
         )?;
         validate_template(
+            &self.checkout.confirm_customer_template,
+            &["customer_name", "customer_phone", "delivery_address"],
+            "checkout.confirm_customer_template",
+        )?;
+        validate_template(
             &self.checkout.confirm_address_template,
             &["address"],
             "checkout.confirm_address_template",
+        )?;
+        validate_template(
+            &self.advisor_customer.confirm_contact_template,
+            &["customer_name", "customer_phone"],
+            "advisor_customer.confirm_contact_template",
         )?;
         validate_template(
             &self.advisor_customer.proposed_hour_question_template,

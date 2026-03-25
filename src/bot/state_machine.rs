@@ -7,7 +7,9 @@ use crate::{
     whatsapp::types::{Button, IncomingMessage, ListSection},
 };
 
-use super::states::{advisor, checkout, data_collect, menu, order, relay, scheduling};
+use super::states::{
+    advisor, checkout, customer_data, data_collect, menu, order, relay, scheduling,
+};
 
 pub type TransitionResult = Result<(ConversationState, Vec<BotAction>), StateMachineError>;
 
@@ -29,7 +31,11 @@ pub enum ConversationState {
     SelectFlavor { has_liquor: bool },
     SelectQuantity { has_liquor: bool, flavor: String },
     AddMore,
-    ConfirmAddress,
+    ConfirmCustomerData,
+    SelectCustomerDataField,
+    EditCustomerName,
+    EditCustomerPhone,
+    EditCustomerAddress,
     ShowSummary,
     WaitReceipt,
     WaitAdvisorResponse,
@@ -67,7 +73,11 @@ impl ConversationState {
             Self::SelectFlavor { .. } => "select_flavor",
             Self::SelectQuantity { .. } => "select_quantity",
             Self::AddMore => "add_more",
-            Self::ConfirmAddress => "confirm_address",
+            Self::ConfirmCustomerData => "confirm_address",
+            Self::SelectCustomerDataField => "select_customer_data_field",
+            Self::EditCustomerName => "edit_customer_name",
+            Self::EditCustomerPhone => "edit_customer_phone",
+            Self::EditCustomerAddress => "edit_customer_address",
             Self::ShowSummary => "show_summary",
             Self::WaitReceipt => "wait_receipt",
             Self::WaitAdvisorResponse => "wait_advisor_response",
@@ -120,7 +130,17 @@ impl ConversationState {
                     .ok_or(StateMachineError::MissingContext("pending_flavor"))?,
             }),
             "add_more" => Ok(Self::AddMore),
-            "confirm_address" => Ok(Self::ConfirmAddress),
+            "confirm_address" => {
+                if context.editing_address {
+                    Ok(Self::EditCustomerAddress)
+                } else {
+                    Ok(Self::ConfirmCustomerData)
+                }
+            }
+            "select_customer_data_field" => Ok(Self::SelectCustomerDataField),
+            "edit_customer_name" => Ok(Self::EditCustomerName),
+            "edit_customer_phone" => Ok(Self::EditCustomerPhone),
+            "edit_customer_address" => Ok(Self::EditCustomerAddress),
             "show_summary" => Ok(Self::ShowSummary),
             "wait_receipt" => Ok(Self::WaitReceipt),
             "wait_advisor_response" => Ok(Self::WaitAdvisorResponse),
@@ -187,7 +207,11 @@ impl<'de> Deserialize<'de> for ConversationState {
                 flavor: String::new(),
             }),
             "add_more" => Ok(Self::AddMore),
-            "confirm_address" => Ok(Self::ConfirmAddress),
+            "confirm_address" => Ok(Self::ConfirmCustomerData),
+            "select_customer_data_field" => Ok(Self::SelectCustomerDataField),
+            "edit_customer_name" => Ok(Self::EditCustomerName),
+            "edit_customer_phone" => Ok(Self::EditCustomerPhone),
+            "edit_customer_address" => Ok(Self::EditCustomerAddress),
             "show_summary" => Ok(Self::ShowSummary),
             "wait_receipt" => Ok(Self::WaitReceipt),
             "wait_advisor_response" => Ok(Self::WaitAdvisorResponse),
@@ -319,6 +343,7 @@ pub struct ConversationContext {
     pub delivery_type: Option<String>,
     pub scheduled_date: Option<String>,
     pub scheduled_time: Option<String>,
+    pub customer_review_scope: Option<String>,
     pub payment_method: Option<String>,
     pub receipt_media_id: Option<String>,
     pub receipt_timer_started_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -358,6 +383,7 @@ impl ConversationContext {
             delivery_type: state_data.delivery_type.clone(),
             scheduled_date: state_data.scheduled_date.clone(),
             scheduled_time: state_data.scheduled_time.clone(),
+            customer_review_scope: state_data.customer_review_scope.clone(),
             payment_method: state_data.payment_method.clone(),
             receipt_media_id: state_data.receipt_media_id.clone(),
             receipt_timer_started_at: state_data.receipt_timer_started_at,
@@ -385,6 +411,7 @@ impl ConversationContext {
             delivery_type: self.delivery_type.clone(),
             scheduled_date: self.scheduled_date.clone(),
             scheduled_time: self.scheduled_time.clone(),
+            customer_review_scope: self.customer_review_scope.clone(),
             payment_method: self.payment_method.clone(),
             receipt_media_id: self.receipt_media_id.clone(),
             receipt_timer_started_at: self.receipt_timer_started_at,
@@ -457,8 +484,22 @@ pub fn transition(
             order::handle_select_quantity(input, context, *has_liquor, flavor)
         }
         ConversationState::AddMore => order::handle_add_more(input, context),
+        ConversationState::ConfirmCustomerData => {
+            customer_data::handle_confirm_customer_data(input, context)
+        }
+        ConversationState::SelectCustomerDataField => {
+            customer_data::handle_select_customer_data_field(input, context)
+        }
+        ConversationState::EditCustomerName => {
+            customer_data::handle_edit_customer_name(input, context)
+        }
+        ConversationState::EditCustomerPhone => {
+            customer_data::handle_edit_customer_phone(input, context)
+        }
+        ConversationState::EditCustomerAddress => {
+            customer_data::handle_edit_customer_address(input, context)
+        }
         ConversationState::ShowSummary => checkout::handle_show_summary(input, context),
-        ConversationState::ConfirmAddress => checkout::handle_confirm_address(input, context),
         ConversationState::WaitReceipt => checkout::handle_wait_receipt(input, context),
         ConversationState::WaitAdvisorResponse => {
             checkout::handle_wait_advisor_response(input, context)

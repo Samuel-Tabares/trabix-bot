@@ -13,15 +13,13 @@ use crate::{
     whatsapp::types::{Button, ButtonReplyPayload, ListRow, ListSection},
 };
 
-use super::{data_collect, menu, order};
+use super::{customer_data, menu, order};
 
 const CASH_ON_DELIVERY: &str = "cash_on_delivery";
 const PAY_NOW: &str = "pay_now";
 const MODIFY_ORDER: &str = "modify_order";
 const CANCEL_ORDER: &str = "cancel_order";
 const CHANGE_PAYMENT_METHOD: &str = "change_payment_method";
-const CONFIRM_ADDRESS: &str = "confirm_address";
-const CHANGE_ADDRESS: &str = "change_address";
 pub fn handle_show_summary(
     input: &UserInput,
     context: &mut ConversationContext,
@@ -39,7 +37,7 @@ pub fn handle_show_summary(
             }];
             actions.extend(confirm_address_actions(context));
 
-            Ok((ConversationState::ConfirmAddress, actions))
+            Ok((ConversationState::ConfirmCustomerData, actions))
         }
         Some(PAY_NOW) => {
             context.payment_method = Some("transfer".to_string());
@@ -129,7 +127,7 @@ pub fn handle_wait_receipt(
             ];
             actions.extend(confirm_address_actions(context));
 
-            Ok((ConversationState::ConfirmAddress, actions))
+            Ok((ConversationState::ConfirmCustomerData, actions))
         }
         _ => Ok((
             ConversationState::WaitReceipt,
@@ -137,69 +135,6 @@ pub fn handle_wait_receipt(
                 to: context.phone_number.clone(),
                 body: client_messages().checkout.receipt_image_required.clone(),
             }],
-        )),
-    }
-}
-
-pub fn handle_confirm_address(
-    input: &UserInput,
-    context: &mut ConversationContext,
-) -> TransitionResult {
-    if context.editing_address {
-        return match input {
-            UserInput::TextMessage(text) => match data_collect::validate_address(text) {
-                Ok(address) => {
-                    context.delivery_address = Some(address);
-                    context.editing_address = false;
-
-                    Ok((
-                        ConversationState::ConfirmAddress,
-                        confirm_address_actions(context),
-                    ))
-                }
-                Err(message) => Ok((
-                    ConversationState::ConfirmAddress,
-                    vec![
-                        BotAction::SendText {
-                            to: context.phone_number.clone(),
-                            body: message,
-                        },
-                        BotAction::SendText {
-                            to: context.phone_number.clone(),
-                            body: client_messages().checkout.change_address_prompt.clone(),
-                        },
-                    ],
-                )),
-            },
-            _ => Ok((
-                ConversationState::ConfirmAddress,
-                vec![BotAction::SendText {
-                    to: context.phone_number.clone(),
-                    body: client_messages().checkout.change_address_non_text.clone(),
-                }],
-            )),
-        };
-    }
-
-    match selection_id(input).as_deref() {
-        Some(CONFIRM_ADDRESS) => {
-            let (state, actions) =
-                super::advisor::handoff_order_after_address_confirmation(context);
-            Ok((state, actions))
-        }
-        Some(CHANGE_ADDRESS) => {
-            context.editing_address = true;
-            Ok((
-                ConversationState::ConfirmAddress,
-                vec![BotAction::SendText {
-                    to: context.phone_number.clone(),
-                    body: client_messages().checkout.change_address_prompt.clone(),
-                }],
-            ))
-        }
-        _ => Ok((
-            ConversationState::ConfirmAddress,
-            confirm_address_actions(context),
         )),
     }
 }
@@ -266,31 +201,11 @@ pub fn show_summary_actions(context: &ConversationContext) -> Vec<BotAction> {
 }
 
 pub fn confirm_address_actions(context: &ConversationContext) -> Vec<BotAction> {
-    let messages = &client_messages().checkout;
-    vec![BotAction::SendButtons {
-        to: context.phone_number.clone(),
-        body: render_template(
-            &messages.confirm_address_template,
-            &[(
-                "address",
-                context
-                    .delivery_address
-                    .as_deref()
-                    .unwrap_or("pendiente por confirmar"),
-            )],
-        ),
-        buttons: vec![
-            reply_button(CONFIRM_ADDRESS, &messages.confirm_address_button),
-            reply_button(CHANGE_ADDRESS, &messages.change_address_button),
-        ],
-    }]
+    customer_data::confirm_customer_data_actions(context)
 }
 
 pub fn change_address_prompt_actions(phone: &str) -> Vec<BotAction> {
-    vec![BotAction::SendText {
-        to: phone.to_string(),
-        body: client_messages().checkout.change_address_prompt.clone(),
-    }]
+    customer_data::edit_customer_address_actions(phone)
 }
 
 fn wait_receipt_entry_actions(context: &ConversationContext) -> Vec<BotAction> {
@@ -484,7 +399,7 @@ fn format_currency(value: u32) -> String {
 mod tests {
     use crate::bot::state_machine::{ConversationContext, ConversationState, UserInput};
 
-    use super::{handle_confirm_address, handle_show_summary, handle_wait_receipt};
+    use super::{handle_show_summary, handle_wait_receipt};
 
     fn context() -> ConversationContext {
         ConversationContext {
@@ -508,6 +423,7 @@ mod tests {
             delivery_type: Some("immediate".to_string()),
             scheduled_date: None,
             scheduled_time: None,
+            customer_review_scope: None,
             payment_method: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
@@ -558,7 +474,7 @@ mod tests {
         )
         .expect("transition");
 
-        assert_eq!(state, ConversationState::ConfirmAddress);
+        assert_eq!(state, ConversationState::ConfirmCustomerData);
         assert_eq!(context.receipt_media_id.as_deref(), Some("media-123"));
         assert_eq!(context.receipt_timer_started_at, None);
     }
@@ -590,31 +506,5 @@ mod tests {
         assert_eq!(context.payment_method, None);
         assert_eq!(context.receipt_timer_started_at, None);
         assert!(!context.receipt_timer_expired);
-    }
-
-    #[test]
-    fn confirm_address_can_switch_to_edit_mode_and_save_address() {
-        let mut context = context();
-        let (state, _) = handle_confirm_address(
-            &UserInput::ButtonPress("change_address".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::ConfirmAddress);
-        assert!(context.editing_address);
-
-        let (state, _) = handle_confirm_address(
-            &UserInput::TextMessage("Av 14 #10-20 Armenia".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::ConfirmAddress);
-        assert_eq!(
-            context.delivery_address.as_deref(),
-            Some("Av 14 #10-20 Armenia")
-        );
-        assert!(!context.editing_address);
     }
 }

@@ -2,7 +2,7 @@ use crate::bot::{
     state_machine::{
         BotAction, ConversationContext, ConversationState, TransitionResult, UserInput,
     },
-    states::order,
+    states::{customer_data, order},
 };
 use crate::messages::client_messages;
 
@@ -14,10 +14,7 @@ pub fn handle_collect_name(
         UserInput::TextMessage(text) => match validate_name(text) {
             Ok(name) => {
                 context.customer_name = Some(name);
-                Ok((
-                    ConversationState::CollectPhone,
-                    collect_phone_actions(&context.phone_number),
-                ))
+                Ok(customer_data::next_order_data_state(context))
             }
             Err(message) => Ok((
                 ConversationState::CollectName,
@@ -47,10 +44,7 @@ pub fn handle_collect_phone(
         UserInput::TextMessage(text) => match validate_phone(text) {
             Ok(phone) => {
                 context.customer_phone = Some(phone);
-                Ok((
-                    ConversationState::CollectAddress,
-                    collect_address_actions(&context.phone_number),
-                ))
+                Ok(customer_data::next_order_data_state(context))
             }
             Err(message) => Ok((
                 ConversationState::CollectPhone,
@@ -191,6 +185,7 @@ mod tests {
             delivery_type: None,
             scheduled_date: None,
             scheduled_time: None,
+            customer_review_scope: None,
             payment_method: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
@@ -246,6 +241,7 @@ mod tests {
     #[test]
     fn collect_phone_advances_to_address() {
         let mut context = context();
+        context.customer_name = Some("Ana Maria".to_string());
         let (state, _) = handle_collect_phone(
             &UserInput::TextMessage("3001234567".to_string()),
             &mut context,

@@ -13,6 +13,50 @@ impl WebhookPayload {
             .filter_map(|change| change.value.messages.as_ref())
             .flat_map(|messages| messages.iter())
     }
+
+    pub fn message_events(&self) -> Vec<IncomingMessageEvent> {
+        let mut events = Vec::new();
+
+        for entry in &self.entry {
+            for change in &entry.changes {
+                let Some(messages) = change.value.messages.as_ref() else {
+                    continue;
+                };
+
+                let contacts = change.value.contacts.as_deref().unwrap_or(&[]);
+
+                for (index, message) in messages.iter().enumerate() {
+                    let contact = contacts
+                        .iter()
+                        .find(|contact| contact.wa_id.as_deref() == Some(message.from.as_str()))
+                        .cloned()
+                        .or_else(|| {
+                            if contacts.len() == 1 && messages.len() == 1 {
+                                contacts.first().cloned()
+                            } else if contacts.len() == messages.len() {
+                                contacts.get(index).cloned()
+                            } else {
+                                None
+                            }
+                        });
+
+                    events.push(IncomingMessageEvent {
+                        message: message.clone(),
+                        contact,
+                    });
+                }
+            }
+        }
+
+        events
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IncomingMessageEvent {
+    pub message: IncomingMessage,
+    #[serde(default)]
+    pub contact: Option<Contact>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -202,7 +246,9 @@ pub struct MarkAsRead {
 
 #[cfg(test)]
 mod tests {
-    use super::{Change, Entry, IncomingMessage, TextContent, Value, WebhookPayload};
+    use super::{
+        Change, Contact, ContactProfile, Entry, IncomingMessage, TextContent, Value, WebhookPayload,
+    };
 
     fn text_message(id: &str, from: &str, body: &str) -> IncomingMessage {
         IncomingMessage {
@@ -249,5 +295,94 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(message_ids, vec!["wamid-1", "wamid-2", "wamid-3"]);
+    }
+
+    #[test]
+    fn webhook_payload_matches_contacts_by_wa_id() {
+        let payload = WebhookPayload {
+            entry: vec![Entry {
+                changes: vec![Change {
+                    value: Value {
+                        messages: Some(vec![text_message("wamid-1", "573001111111", "hola")]),
+                        contacts: Some(vec![Contact {
+                            wa_id: Some("573001111111".to_string()),
+                            profile: Some(ContactProfile {
+                                name: "Ana Maria".to_string(),
+                            }),
+                        }]),
+                    },
+                }],
+            }],
+        };
+
+        let events = payload.message_events();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0]
+                .contact
+                .as_ref()
+                .and_then(|contact| contact.profile.as_ref())
+                .map(|profile| profile.name.as_str()),
+            Some("Ana Maria")
+        );
+    }
+
+    #[test]
+    fn webhook_payload_uses_positional_fallback_for_single_message_single_contact() {
+        let payload = WebhookPayload {
+            entry: vec![Entry {
+                changes: vec![Change {
+                    value: Value {
+                        messages: Some(vec![text_message("wamid-1", "573001111111", "hola")]),
+                        contacts: Some(vec![Contact {
+                            wa_id: Some("573009999999".to_string()),
+                            profile: Some(ContactProfile {
+                                name: "Ana Maria".to_string(),
+                            }),
+                        }]),
+                    },
+                }],
+            }],
+        };
+
+        let events = payload.message_events();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0]
+                .contact
+                .as_ref()
+                .and_then(|contact| contact.profile.as_ref())
+                .map(|profile| profile.name.as_str()),
+            Some("Ana Maria")
+        );
+    }
+
+    #[test]
+    fn webhook_payload_does_not_guess_when_contact_count_is_ambiguous() {
+        let payload = WebhookPayload {
+            entry: vec![Entry {
+                changes: vec![Change {
+                    value: Value {
+                        messages: Some(vec![
+                            text_message("wamid-1", "573001111111", "hola"),
+                            text_message("wamid-2", "573002222222", "menu"),
+                        ]),
+                        contacts: Some(vec![Contact {
+                            wa_id: Some("573003333333".to_string()),
+                            profile: Some(ContactProfile {
+                                name: "Ana Maria".to_string(),
+                            }),
+                        }]),
+                    },
+                }],
+            }],
+        };
+
+        let events = payload.message_events();
+
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|event| event.contact.is_none()));
     }
 }

@@ -164,6 +164,18 @@ modify_order_title = "Modificar Pedido"
 modify_order_description = "Borra items y elige de nuevo"
 cancel_order_title = "Cancelar Pedido"
 cancel_order_description = "Salir y volver al menú"
+confirm_customer_template = """📋 Antes de continuar, confirma tus datos:
+
+Nombre: {customer_name}
+Teléfono: {customer_phone}
+Dirección: {delivery_address}
+
+¿Quieres seguir con esta información?"""
+confirm_customer_continue_button = "Continuar"
+confirm_customer_change_button = "Cambiar"
+change_customer_field_body = "¿Qué dato deseas actualizar?"
+change_name_button = "Nombre"
+change_phone_button = "Teléfono"
 confirm_address_template = """📍 La dirección de entrega es:
 {address}
 
@@ -187,6 +199,17 @@ contact_name_prompt = "Para ponerte en contacto con un asesor, ¿me compartes tu
 contact_phone_prompt = "¿Cuál es tu teléfono de contacto? 📱"
 contact_name_retry_non_text = "Escríbeme tu nombre para continuar 😊"
 contact_phone_retry_non_text = "Escríbeme un teléfono válido para continuar 📱"
+confirm_contact_template = """📋 Antes de contactar al asesor, confirma tus datos:
+
+Nombre: {customer_name}
+Teléfono: {customer_phone}
+
+¿Quieres seguir con esta información?"""
+confirm_contact_continue_button = "Continuar"
+confirm_contact_change_button = "Cambiar"
+change_contact_field_body = "¿Qué dato deseas actualizar?"
+change_name_button = "Nombre"
+change_phone_button = "Teléfono"
 wait_contact_initial_text = "Estoy contactando a un asesor 🤝 Te avisaré por este chat apenas responda."
 wait_contact_repeat_text = "Sigo intentando contactar al asesor 🤝 En cuanto responda, continuamos por aquí."
 wait_contact_leave_message_prompt = "Si quieres, déjame el mensaje que deseas enviar al asesor ✍️"

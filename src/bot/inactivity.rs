@@ -5,7 +5,7 @@ use chrono::Utc;
 use crate::{
     bot::{
         state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
-        states::{advisor, checkout, data_collect, menu, order, scheduling},
+        states::{advisor, checkout, customer_data, data_collect, menu, order, scheduling},
     },
     messages::client_messages,
 };
@@ -61,7 +61,11 @@ pub fn uses_customer_inactivity_timer(state: &ConversationState) -> bool {
             | ConversationState::SelectFlavor { .. }
             | ConversationState::SelectQuantity { .. }
             | ConversationState::AddMore
-            | ConversationState::ConfirmAddress
+            | ConversationState::ConfirmCustomerData
+            | ConversationState::SelectCustomerDataField
+            | ConversationState::EditCustomerName
+            | ConversationState::EditCustomerPhone
+            | ConversationState::EditCustomerAddress
             | ConversationState::ShowSummary
             | ConversationState::OfferHourToClient { .. }
             | ConversationState::WaitClientHour
@@ -99,25 +103,31 @@ pub fn reminder_actions(
             order::select_quantity_actions(&context.phone_number, *has_liquor, flavor)
         }
         ConversationState::AddMore => order::add_more_actions(context),
-        ConversationState::ConfirmAddress => {
-            if context.editing_address {
-                checkout::change_address_prompt_actions(&context.phone_number)
-            } else {
-                checkout::confirm_address_actions(context)
-            }
+        ConversationState::ConfirmCustomerData => checkout::confirm_address_actions(context),
+        ConversationState::SelectCustomerDataField => {
+            customer_data::select_customer_data_field_actions(context)
+        }
+        ConversationState::EditCustomerName => customer_data::edit_customer_name_actions(context),
+        ConversationState::EditCustomerPhone => customer_data::edit_customer_phone_actions(context),
+        ConversationState::EditCustomerAddress => {
+            checkout::change_address_prompt_actions(&context.phone_number)
         }
         ConversationState::ShowSummary => checkout::show_summary_actions(context),
         ConversationState::OfferHourToClient { proposed_hour } => {
             advisor::offer_hour_to_client_actions(&context.phone_number, proposed_hour)
         }
-        ConversationState::WaitClientHour => advisor::wait_client_hour_actions(&context.phone_number),
+        ConversationState::WaitClientHour => {
+            advisor::wait_client_hour_actions(&context.phone_number)
+        }
         ConversationState::ContactAdvisorName => {
             advisor::contact_advisor_name_actions(&context.phone_number)
         }
         ConversationState::ContactAdvisorPhone => {
             advisor::contact_advisor_phone_actions(&context.phone_number)
         }
-        ConversationState::LeaveMessage => advisor::leave_message_prompt_actions(&context.phone_number),
+        ConversationState::LeaveMessage => {
+            advisor::leave_message_prompt_actions(&context.phone_number)
+        }
         _ => Vec::new(),
     }
 }
@@ -140,11 +150,15 @@ mod tests {
 
     #[test]
     fn excludes_relay_and_existing_timed_states() {
-        assert!(!uses_customer_inactivity_timer(&ConversationState::WaitReceipt));
+        assert!(!uses_customer_inactivity_timer(
+            &ConversationState::WaitReceipt
+        ));
         assert!(!uses_customer_inactivity_timer(
             &ConversationState::WaitAdvisorResponse
         ));
-        assert!(!uses_customer_inactivity_timer(&ConversationState::RelayMode));
+        assert!(!uses_customer_inactivity_timer(
+            &ConversationState::RelayMode
+        ));
     }
 
     #[test]
@@ -164,6 +178,7 @@ mod tests {
             delivery_type: None,
             scheduled_date: None,
             scheduled_time: None,
+            customer_review_scope: None,
             payment_method: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,

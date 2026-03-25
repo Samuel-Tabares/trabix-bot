@@ -107,7 +107,14 @@ La fecha y la hora programadas se conservan como texto en el contexto y tambien 
 
 ### Captura De Datos Del Cliente
 
-El flujo base es:
+Al entrar un mensaje del cliente, el runtime intenta sembrar datos automaticamente desde el webhook:
+
+- `customer_phone` desde `messages[].from`
+- `customer_name` desde `contacts[].profile.name` cuando Meta lo incluye
+
+Los datos manuales ya guardados no se sobreescriben con metadata nueva del webhook.
+
+Luego el flujo pide solo lo que falte:
 
 - `collect_name`
 - `collect_phone`
@@ -178,14 +185,20 @@ Comportamiento:
   - marca `receipt_timer_expired = true`
   - ofrece `Cambiar pago` o `Cancelar`
 
-### Confirmacion De Direccion
+### Revision De Datos Antes Del Handoff
 
 `confirm_address`:
 
-- permite confirmar direccion
-- permite editar direccion sin crear un estado nuevo separado
-
-La bandera `editing_address` controla si el bot esta esperando una direccion nueva dentro del mismo estado.
+- muestra un resumen de:
+  - nombre
+  - telefono
+  - direccion
+- ofrece `Continuar` o `Cambiar`
+- si el cliente elige `Cambiar`, entra a un selector para editar:
+  - `Nombre`
+  - `Teléfono`
+  - `Dirección`
+- despues de editar un campo, vuelve al mismo resumen antes del handoff al asesor
 
 ### Persistencia Del Pedido
 
@@ -285,11 +298,14 @@ La ruta `Hablar con Asesor`:
 
 - usa los datos ya existentes del cliente si estan disponibles
 - si falta nombre o telefono, los pide antes de contactar al asesor
+- antes de entrar a `wait_advisor_contact`, muestra un resumen con nombre y telefono para `Continuar` o `Cambiar`
+- si el cliente elige `Cambiar`, puede editar `Nombre` o `Teléfono` y luego vuelve al resumen
 
 Estados:
 
 - `contact_advisor_name`
 - `contact_advisor_phone`
+- `confirm_address` con alcance `advisor_contact`
 - `wait_advisor_contact`
 - `leave_message`
 
@@ -343,6 +359,10 @@ La inactividad generica aplica solo a estados de entrada del cliente, por ejempl
 - `select_type`
 - `show_summary`
 - `confirm_address`
+- `select_customer_data_field`
+- `edit_customer_name`
+- `edit_customer_phone`
+- `edit_customer_address`
 - `contact_advisor_name`
 - `leave_message`
 
@@ -404,6 +424,7 @@ Campos mas importantes hoy:
 
 - `items`
 - `delivery_type`
+- `customer_review_scope`
 - `scheduled_date`
 - `scheduled_time`
 - `payment_method`

@@ -11,9 +11,7 @@ pub async fn init_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
         .after_connect(|conn, _meta| {
             Box::pin(async move {
                 let statement = format!("SET TIME ZONE '{POSTGRES_SESSION_TIMEZONE}'");
-                sqlx::query(&statement)
-                    .execute(conn)
-                    .await?;
+                sqlx::query(&statement).execute(conn).await?;
                 Ok(())
             })
         })

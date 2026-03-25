@@ -9,7 +9,7 @@ use crate::{
             BotAction, ConversationContext, ConversationState, TimerType, TransitionResult,
             UserInput,
         },
-        states::{data_collect, menu, scheduling},
+        states::{customer_data, data_collect, menu, scheduling},
         timers::{ADVISOR_RESPONSE_TIMEOUT, ADVISOR_STUCK_TIMEOUT},
     },
     messages::{client_messages, render_template},
@@ -76,20 +76,7 @@ pub fn parse_advisor_button_id(button_id: &str) -> Option<(AdvisorButtonAction, 
 pub fn start_contact_advisor(
     context: &mut ConversationContext,
 ) -> (ConversationState, Vec<BotAction>) {
-    match (
-        context.customer_name.as_ref(),
-        context.customer_phone.as_ref(),
-    ) {
-        (None, _) => (
-            ConversationState::ContactAdvisorName,
-            contact_advisor_name_actions(&context.phone_number),
-        ),
-        (Some(_), None) => (
-            ConversationState::ContactAdvisorPhone,
-            contact_advisor_phone_actions(&context.phone_number),
-        ),
-        (Some(_), Some(_)) => start_waiting_for_contact_advisor(context),
-    }
+    customer_data::next_contact_advisor_state(context)
 }
 
 pub fn handoff_order_after_address_confirmation(
@@ -142,14 +129,7 @@ pub fn handle_contact_advisor_name(
         UserInput::TextMessage(text) => match data_collect::validate_name(text) {
             Ok(name) => {
                 context.customer_name = Some(name);
-                let (state, actions) = if context.customer_phone.is_some() {
-                    start_waiting_for_contact_advisor(context)
-                } else {
-                    (
-                        ConversationState::ContactAdvisorPhone,
-                        contact_advisor_phone_actions(&context.phone_number),
-                    )
-                };
+                let (state, actions) = customer_data::next_contact_advisor_state(context);
                 Ok((state, actions))
             }
             Err(message) => Ok((
@@ -182,7 +162,7 @@ pub fn handle_contact_advisor_phone(
         UserInput::TextMessage(text) => match data_collect::validate_phone(text) {
             Ok(phone) => {
                 context.customer_phone = Some(phone);
-                let (state, actions) = start_waiting_for_contact_advisor(context);
+                let (state, actions) = customer_data::next_contact_advisor_state(context);
                 Ok((state, actions))
             }
             Err(message) => Ok((
@@ -1087,7 +1067,7 @@ fn handle_wait_client_hour(
     }
 }
 
-fn start_waiting_for_contact_advisor(
+pub(crate) fn start_waiting_for_contact_advisor(
     context: &mut ConversationContext,
 ) -> (ConversationState, Vec<BotAction>) {
     context.advisor_timer_started_at = Some(chrono::Utc::now());
@@ -1719,6 +1699,7 @@ mod tests {
             delivery_type: Some("immediate".to_string()),
             scheduled_date: None,
             scheduled_time: None,
+            customer_review_scope: None,
             payment_method: Some("cash_on_delivery".to_string()),
             receipt_media_id: None,
             receipt_timer_started_at: None,
@@ -1848,10 +1829,10 @@ mod tests {
 
         let (state, actions) = start_contact_advisor(&mut context);
 
-        assert_eq!(state, ConversationState::WaitAdvisorContact);
+        assert_eq!(state, ConversationState::ConfirmCustomerData);
         assert!(actions.iter().any(|action| matches!(
             action,
-            crate::bot::state_machine::BotAction::StartTimer { .. }
+            crate::bot::state_machine::BotAction::SendButtons { .. }
         )));
     }
 
