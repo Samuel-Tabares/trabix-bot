@@ -207,9 +207,9 @@ fn timer_recovery(
     let state_data = &conversation.state_data.0;
 
     if customer_inactivity_state(conversation.state.as_str()) {
-        let started_at = state_data
-            .conversation_abandon_started_at
-            .unwrap_or(conversation.last_message_at);
+        let Some(started_at) = state_data.conversation_abandon_started_at else {
+            return None;
+        };
         let timeout = if state_data.conversation_abandon_reminder_sent {
             CONVERSATION_RESET_TIMEOUT
         } else {
@@ -462,9 +462,9 @@ pub async fn expire_conversation_abandon(
     }
 
     let mut state_data = conversation.state_data.0;
-    let started_at = state_data
-        .conversation_abandon_started_at
-        .unwrap_or(conversation.last_message_at);
+    let Some(started_at) = state_data.conversation_abandon_started_at else {
+        return Ok(());
+    };
     let now = Utc::now();
     let elapsed = elapsed_since(started_at, now);
 
@@ -866,6 +866,31 @@ mod tests {
             recovery,
             Some(TimerRecovery::Expired(TimerType::ConversationAbandon))
         );
+    }
+
+    #[test]
+    fn timer_recovery_does_not_arm_customer_inactivity_without_timestamp() {
+        let now = chrono::Utc::now();
+        let conversation =
+            active_timer_conversation("main_menu", ConversationStateData::default(), now);
+
+        let recovery = timer_recovery(&conversation, now + ChronoDuration::minutes(40));
+
+        assert!(recovery.is_none());
+    }
+
+    #[test]
+    fn timer_recovery_ignores_reset_main_menu_even_with_stale_last_message() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "main_menu",
+            ConversationStateData::default(),
+            now - ChronoDuration::minutes(40),
+        );
+
+        let recovery = timer_recovery(&conversation, now);
+
+        assert!(recovery.is_none());
     }
 
     #[test]

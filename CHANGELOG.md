@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Fix the generic customer inactivity loop so `main_menu` does not re-arm reminder/reset timers after an inactivity reset or restart without a new inbound customer message.
+
 ## [1.2.0] - 2026-03-25
 
 - Set every SQLx PostgreSQL session to `America/Bogota` so app-driven `NOW()` and timestamp display align with `UTC-5` operations.

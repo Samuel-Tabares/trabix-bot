@@ -1,7 +1,8 @@
 %%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor':'#667eea', 'primaryBorderColor':'#7b9bff', 'background':'#1e1e2e', 'mainBkg':'#2a2a3a', 'tertiaryBkg':'#333344', 'lineColor':'#7b9bff', 'textColor':'#e0e0e0', 'clusterBkg':'#2a2a3a', 'clusterBorder':'#7b9bff'}}}%%
 %% Release baseline: v1.2.0 - 2026-03-25
 %% Includes simplified main menu hours/buttons, America/Bogota SQL sessions,
-%% generic customer inactivity reminder/reset, and 30-minute stuck advisor hard resets.
+%% generic customer inactivity reminder/reset only while explicitly armed by inbound customer activity,
+%% and 30-minute stuck advisor hard resets.
 graph TD
 
     WAClient["👤 CLIENTE WHATSAPP"] --> Meta["📡 META CLOUD API"]

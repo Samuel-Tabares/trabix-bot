@@ -69,6 +69,7 @@ Current real runtime behavior:
 - If the advisor writes without first selecting a pending case, the bot should answer with the advisor guidance message rather than the customer menu.
 - The bot replies with text, buttons, lists, and images through Meta Cloud API, and persists conversation/order state in PostgreSQL.
 - `mark_as_read` is best-effort only. If Meta rejects the read receipt request, the bot logs a warning and continues processing the message.
+- Generic customer inactivity is only armed by a real inbound customer message. After the 35-minute inactivity reset sends its notice and returns the conversation to `main_menu`, no new inactivity reminder/reset should fire until the customer writes again.
 
 ## Build, Test, and Development Commands
 Use these commands regularly:
