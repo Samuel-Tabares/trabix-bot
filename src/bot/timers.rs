@@ -103,8 +103,7 @@ pub async fn restore_pending_timers(state: AppState) -> Result<(), sqlx::Error> 
     for conversation in conversations {
         match timer_recovery(&conversation, Utc::now()) {
             Some(TimerRecovery::Expired(timer_type)) => {
-                expire_timer_now(state.clone(), conversation.phone_number.clone(), timer_type)
-                    .await;
+                reconcile_boot_expired_timer(state.clone(), &conversation, timer_type).await?;
             }
             Some(TimerRecovery::Active {
                 timer_type,
@@ -122,6 +121,92 @@ pub async fn restore_pending_timers(state: AppState) -> Result<(), sqlx::Error> 
             }
             None => {}
         }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BootExpirationAction {
+    UpdateReceiptExpired,
+    UpdateAdvisorExpiredAndClearSession,
+    ResetConversation {
+        clear_advisor_session: bool,
+        mark_manual_followup: bool,
+    },
+    MarkInactivityReminderAndRestore {
+        started_at: DateTime<Utc>,
+    },
+    None,
+}
+
+async fn reconcile_boot_expired_timer(
+    state: AppState,
+    conversation: &crate::db::queries::ActiveTimerConversation,
+    timer_type: TimerType,
+) -> Result<(), sqlx::Error> {
+    match boot_expiration_action(conversation, timer_type, Utc::now()) {
+        BootExpirationAction::UpdateReceiptExpired => {
+            let mut state_data = conversation.state_data.0.clone();
+            state_data.receipt_timer_expired = true;
+            update_state(
+                &state.pool,
+                &conversation.phone_number,
+                "wait_receipt",
+                &state_data,
+            )
+            .await?;
+        }
+        BootExpirationAction::UpdateAdvisorExpiredAndClearSession => {
+            let mut state_data = conversation.state_data.0.clone();
+            state_data.advisor_timer_expired = true;
+            state_data.advisor_timer_started_at = None;
+            clear_advisor_session(&state).await?;
+            update_state(
+                &state.pool,
+                &conversation.phone_number,
+                &conversation.state,
+                &state_data,
+            )
+            .await?;
+        }
+        BootExpirationAction::ResetConversation {
+            clear_advisor_session,
+            mark_manual_followup,
+        } => {
+            if mark_manual_followup {
+                if let Some(order_id) = conversation.state_data.0.current_order_id {
+                    update_order_status(&state.pool, order_id, "manual_followup").await?;
+                }
+            }
+
+            reset_conversation(&state.pool, &conversation.phone_number).await?;
+
+            if clear_advisor_session {
+                crate::bot::timers::clear_advisor_session(&state).await?;
+            }
+        }
+        BootExpirationAction::MarkInactivityReminderAndRestore { started_at } => {
+            let mut state_data = conversation.state_data.0.clone();
+            state_data.conversation_abandon_started_at = Some(started_at);
+            state_data.conversation_abandon_reminder_sent = true;
+            update_state(
+                &state.pool,
+                &conversation.phone_number,
+                &conversation.state,
+                &state_data,
+            )
+            .await?;
+            restore_timer(
+                state,
+                conversation.phone_number.clone(),
+                TimerType::ConversationAbandon,
+                CONVERSATION_RESET_TIMEOUT,
+                started_at,
+            )
+            .await;
+        }
+        BootExpirationAction::None => {}
     }
 
     Ok(())
@@ -269,6 +354,70 @@ fn timer_recovery_for(
             timeout,
             started_at,
         })
+    }
+}
+
+fn boot_expiration_action(
+    conversation: &crate::db::queries::ActiveTimerConversation,
+    timer_type: TimerType,
+    now: DateTime<Utc>,
+) -> BootExpirationAction {
+    let state_data = &conversation.state_data.0;
+
+    match timer_type {
+        TimerType::ReceiptUpload => {
+            if conversation.state == "wait_receipt" && !state_data.receipt_timer_expired {
+                BootExpirationAction::UpdateReceiptExpired
+            } else {
+                BootExpirationAction::None
+            }
+        }
+        TimerType::AdvisorResponse => {
+            if state_data.advisor_timer_expired {
+                return BootExpirationAction::None;
+            }
+
+            match advisor_timeout_kind(conversation.state.as_str()) {
+                Some(AdvisorTimeoutKind::FallbackButtons) => {
+                    BootExpirationAction::UpdateAdvisorExpiredAndClearSession
+                }
+                Some(AdvisorTimeoutKind::HardReset) => BootExpirationAction::ResetConversation {
+                    clear_advisor_session: true,
+                    mark_manual_followup: true,
+                },
+                None => BootExpirationAction::None,
+            }
+        }
+        TimerType::RelayInactivity => {
+            if conversation.state == "relay_mode" {
+                BootExpirationAction::ResetConversation {
+                    clear_advisor_session: true,
+                    mark_manual_followup: false,
+                }
+            } else {
+                BootExpirationAction::None
+            }
+        }
+        TimerType::ConversationAbandon => {
+            if !customer_inactivity_state(conversation.state.as_str()) {
+                return BootExpirationAction::None;
+            }
+
+            let Some(started_at) = state_data.conversation_abandon_started_at else {
+                return BootExpirationAction::None;
+            };
+
+            let elapsed = elapsed_since(started_at, now);
+            if !state_data.conversation_abandon_reminder_sent && elapsed < CONVERSATION_RESET_TIMEOUT
+            {
+                BootExpirationAction::MarkInactivityReminderAndRestore { started_at }
+            } else {
+                BootExpirationAction::ResetConversation {
+                    clear_advisor_session: false,
+                    mark_manual_followup: false,
+                }
+            }
+        }
     }
 }
 
@@ -673,7 +822,7 @@ pub fn rehydrate_context_for_timer(
 
 async fn clear_advisor_session(
     state: &AppState,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), sqlx::Error> {
     if let Some(advisor_conversation) =
         get_conversation(&state.pool, &state.config.advisor_phone).await?
     {
@@ -770,7 +919,10 @@ mod tests {
     use chrono::Duration as ChronoDuration;
     use sqlx::types::Json;
 
-    use super::{timer_recovery, TimerRecovery, ADVISOR_STUCK_TIMEOUT};
+    use super::{
+        boot_expiration_action, timer_recovery, BootExpirationAction, TimerRecovery,
+        ADVISOR_STUCK_TIMEOUT,
+    };
     use crate::{
         bot::state_machine::TimerType,
         db::{models::ConversationStateData, queries::ActiveTimerConversation},
@@ -959,6 +1111,122 @@ mod tests {
                 timeout: crate::bot::inactivity::CONVERSATION_RESET_TIMEOUT,
                 started_at: now - ChronoDuration::minutes(10),
             })
+        );
+    }
+
+    #[test]
+    fn boot_expiration_marks_receipt_timeout_without_sending() {
+        let now = chrono::Utc::now();
+        let conversation =
+            active_timer_conversation("wait_receipt", ConversationStateData::default(), now);
+
+        let action = boot_expiration_action(&conversation, TimerType::ReceiptUpload, now);
+
+        assert_eq!(action, BootExpirationAction::UpdateReceiptExpired);
+    }
+
+    #[test]
+    fn boot_expiration_marks_advisor_timeout_without_sending() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "wait_advisor_response",
+            ConversationStateData::default(),
+            now,
+        );
+
+        let action = boot_expiration_action(&conversation, TimerType::AdvisorResponse, now);
+
+        assert_eq!(
+            action,
+            BootExpirationAction::UpdateAdvisorExpiredAndClearSession
+        );
+    }
+
+    #[test]
+    fn boot_expiration_resets_stuck_advisor_silently() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "ask_delivery_cost",
+            ConversationStateData {
+                current_order_id: Some(42),
+                ..Default::default()
+            },
+            now,
+        );
+
+        let action = boot_expiration_action(&conversation, TimerType::AdvisorResponse, now);
+
+        assert_eq!(
+            action,
+            BootExpirationAction::ResetConversation {
+                clear_advisor_session: true,
+                mark_manual_followup: true,
+            }
+        );
+    }
+
+    #[test]
+    fn boot_expiration_resets_relay_silently() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "relay_mode",
+            ConversationStateData::default(),
+            now,
+        );
+
+        let action = boot_expiration_action(&conversation, TimerType::RelayInactivity, now);
+
+        assert_eq!(
+            action,
+            BootExpirationAction::ResetConversation {
+                clear_advisor_session: true,
+                mark_manual_followup: false,
+            }
+        );
+    }
+
+    #[test]
+    fn boot_expiration_marks_customer_reminder_and_restores_deadline() {
+        let now = chrono::Utc::now();
+        let started_at = now - ChronoDuration::minutes(3);
+        let conversation = active_timer_conversation(
+            "collect_phone",
+            ConversationStateData {
+                conversation_abandon_started_at: Some(started_at),
+                ..Default::default()
+            },
+            now,
+        );
+
+        let action = boot_expiration_action(&conversation, TimerType::ConversationAbandon, now);
+
+        assert_eq!(
+            action,
+            BootExpirationAction::MarkInactivityReminderAndRestore { started_at }
+        );
+    }
+
+    #[test]
+    fn boot_expiration_resets_customer_after_full_inactivity_window() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "collect_phone",
+            ConversationStateData {
+                conversation_abandon_started_at: Some(now - ChronoDuration::minutes(40)),
+                conversation_abandon_reminder_sent: true,
+                ..Default::default()
+            },
+            now,
+        );
+
+        let action = boot_expiration_action(&conversation, TimerType::ConversationAbandon, now);
+
+        assert_eq!(
+            action,
+            BootExpirationAction::ResetConversation {
+                clear_advisor_session: false,
+                mark_manual_followup: false,
+            }
         );
     }
 }
