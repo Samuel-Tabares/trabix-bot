@@ -1,16 +1,13 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository started as documentation-first, but it now contains a working Rust service plus the original planning documents.
+This repository started as documentation-first, but it now contains a working Rust service plus current runtime reference documents.
 
 Current source-of-truth areas:
 
 - `AGENTS.md`: contributor instructions for this repository.
 - `general_info/Flow_Design_Diagram_v2.mermaid`: end-to-end conversation flow.
-- `general_info/phase_planning/phase1validation.md`: Phase 1 validation notes.
-- `general_info/phase_planning/phase2validation.md`: Phase 2 validation checklist and evidence guide.
-- `general_info/phase_planning/phase3validation.md`: Phase 3 validation checklist, evidence guide, and manual test setup.
-- `general_info/phase_planning/phase4validation.md`: Phase 4 validation checklist, evidence guide, manual relay/advisor scenarios, and restart checks.
+- `general_info/current_runtime_reference.md`: current runtime behavior, operational constraints, persistence, timers, and validation checklist.
 
 Current code layout:
 
@@ -60,7 +57,7 @@ Current implementation status:
   - periodic database-backed timer sweep so missed in-memory tasks still expire receipt, advisor, relay, and customer inactivity waits
   - production number receiving real public WhatsApp messages once the Meta app is in `Live` mode and subscribed to the WABA
   - public legal endpoints for Meta review: `/privacy-policy` and `/terms-of-service`
-- Phase 4 validation remains documented in `general_info/phase_planning/phase4validation.md`, but the runtime is now proven against real inbound and outbound production traffic.
+- The old phase-planning documents were removed because they no longer matched the live system. Use `general_info/current_runtime_reference.md` for the current runtime and validation reference.
 
 Current real runtime behavior:
 
@@ -193,7 +190,7 @@ For manual WhatsApp validation:
 - validate behavior from a non-advisor public number when confirming open production access
 - do not use `ADVISOR_PHONE` to validate the customer flow; it is routed through advisor logic by design
 - check PostgreSQL state when the acceptance criteria require persistence evidence
-- use `general_info/phase_planning/phase4validation.md` as the current checklist for advisor, timeout, relay, and restart scenarios
+- use `general_info/current_runtime_reference.md` as the current checklist for advisor, timeout, relay, restart, and operational validation scenarios
 
 ## Commit & Pull Request Guidelines
 The current history is minimal and uses a plain descriptive subject (`setting AGENTS.MD and secuencial phase of the project`). Keep future commit subjects short, imperative, and specific. Prefer patterns like `docs: refine implementation phases` or `feat: scaffold webhook routes` over vague multi-topic messages.
