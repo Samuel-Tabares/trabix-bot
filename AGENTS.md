@@ -132,6 +132,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.1` / `v1.1.0`: workflow bugfix release
   - `v1.1.1`: migration-checksum hotfix for Railway deployment safety
   - `v1.1.2`: timer-sweep hotfix for missed in-memory expirations
+  - `v1.2.0`: main-menu simplification, `America/Bogota` SQL session timezone, generic customer inactivity handling, and 30-minute hard reset for stuck advisor-detail waits
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases
