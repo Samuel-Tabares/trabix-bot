@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-03-26
+
+- Upgrade the local simulator UI so the advisor pane is session-centric, the old advisor inbox panel is removed, and timer-driven transcript updates appear without manual page refresh.
+- Add a read-only database inspector inside `/simulator` for raw `conversations`, `orders`, and `order_items` rows, plus backend list queries for those tables.
+
 ## [1.4.6] - 2026-03-26
 
 - Finalize the public README onboarding and remove an accidentally tracked simulator upload artifact from the repository so the public tree matches the intended local-only simulator workflow.

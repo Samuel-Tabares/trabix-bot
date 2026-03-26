@@ -30,7 +30,7 @@ Componentes principales:
 - `src/routes/`
   - `verify.rs`: verificacion de `GET /webhook`
   - `webhook.rs`: recepcion del webhook productivo y normalizacion de inputs
-  - `simulator.rs`: UI local y endpoints JSON para manual testing completo sin Meta
+  - `simulator.rs`: UI local inline HTML/CSS/JS y endpoints JSON para manual testing completo sin Meta
   - `legal.rs`: paginas publicas `/privacy-policy` y `/terms-of-service`
 - `src/engine.rs`
   - procesamiento compartido de cliente/asesor
@@ -80,14 +80,18 @@ Cuando `BOT_MODE=simulator`:
 - no se requieren credenciales `WHATSAPP_*`
 - el servicio se liga por defecto a `127.0.0.1`
 - la UI local vive en `/simulator`
+- el frontend del simulator esta embebido en `src/routes/simulator.rs`; no existe un frontend separado
 - cada sesion local crea o reutiliza un cliente identificado por telefono y nombre de perfil opcional
 - el bot sigue usando `conversations`, `orders`, `order_items`, restauracion de timers y sweep periodico
 - las respuestas del bot se persisten en transcriptos locales en vez de salir a Meta
 - los comprobantes o imagenes de prueba se guardan en disco local y se referencian por id local
 - cada mensaje del transcript muestra su `created_at` en `America/Bogota`
+- el panel de asesor es por sesion; los mensajes del asesor y del bot para ese caso se ven dentro del chat de esa sesion
 - la UI expone timers activos con inicio, vencimiento, countdown y fase del timeout
 - la UI permite overrides locales de timers solo para nuevas esperas creadas en simulator
 - los timeouts del simulator registran avisos de sistema indicando si se dispararon por runtime, sweep o reconciliacion de arranque
+- la UI hace auto-refresh del transcript, el estado persistido y la vista de base de datos para que timers y mensajes aparezcan sin recargar manualmente
+- la UI expone un inspector read-only de base de datos para `conversations`, `orders` y `order_items`
 - el repositorio incluye launchers en `scripts/` para arrancar el simulator con defaults razonables en macOS/Linux y Windows
 - esos launchers pueden crear o arrancar un Postgres local via Docker si `DATABASE_URL` no fue configurado manualmente
 - el simulator siempre usa `assets/trabix-menu.png` como imagen local rastreada para `Ver Menú`

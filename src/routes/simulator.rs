@@ -23,11 +23,15 @@ use crate::{
             SimulatorTimerOverrides, SimulatorTimerRuleInfo, SimulatorTimerSnapshot,
         },
     },
+    db::{
+        models::{Conversation, Order, OrderItem},
+        queries::{list_conversations, list_order_items, list_orders},
+    },
     engine::{process_advisor_input, process_customer_input},
     simulator::{
         create_media, create_message, create_or_update_session, ensure_session_conversation,
-        get_media, get_session, list_advisor_inbox, list_messages_for_session, list_sessions,
-        snapshot_state, NewSimulatorMedia, NewSimulatorMessage, SimulatorSession,
+        get_media, get_session, list_messages_for_session, list_sessions, snapshot_state,
+        NewSimulatorMedia, NewSimulatorMessage, SimulatorSession,
     },
     transport::SIMULATOR_MENU_ASSET_PATH,
     AppState,
@@ -42,13 +46,15 @@ pub fn mount(router: Router<AppState>) -> Router<AppState> {
             "/simulator/api/sessions",
             get(api_list_sessions).post(api_create_session),
         )
-        .route("/simulator/api/advisor/inbox", get(api_advisor_inbox))
         .route(
             "/simulator/api/timer-overrides",
             get(api_get_timer_overrides).post(api_update_timer_overrides),
         )
         .route("/simulator/api/menu-asset", get(api_menu_asset))
         .route("/simulator/api/media/:id", get(api_media))
+        .route("/simulator/api/db/conversations", get(api_db_conversations))
+        .route("/simulator/api/db/orders", get(api_db_orders))
+        .route("/simulator/api/db/order-items", get(api_db_order_items))
         .route(
             "/simulator/api/sessions/:id/messages",
             get(api_session_messages),
@@ -129,6 +135,12 @@ struct TimerOverridesResponse {
     rules: Vec<SimulatorTimerRuleInfo>,
 }
 
+#[derive(Debug, Serialize)]
+struct DbRowsResponse<T> {
+    rows: Vec<T>,
+    generated_at: chrono::DateTime<chrono::Utc>,
+}
+
 async fn api_list_sessions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<crate::simulator::SimulatorSessionSummary>>, StatusCode> {
@@ -175,13 +187,37 @@ async fn api_session_messages(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-async fn api_advisor_inbox(
+async fn api_db_conversations(
     State(state): State<AppState>,
-) -> Result<Json<Vec<crate::simulator::SimulatorMessage>>, StatusCode> {
-    list_advisor_inbox(&state.pool)
-        .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+) -> Result<Json<DbRowsResponse<Conversation>>, StatusCode> {
+    Ok(Json(DbRowsResponse {
+        rows: list_conversations(&state.pool)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        generated_at: chrono::Utc::now(),
+    }))
+}
+
+async fn api_db_orders(
+    State(state): State<AppState>,
+) -> Result<Json<DbRowsResponse<Order>>, StatusCode> {
+    Ok(Json(DbRowsResponse {
+        rows: list_orders(&state.pool)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        generated_at: chrono::Utc::now(),
+    }))
+}
+
+async fn api_db_order_items(
+    State(state): State<AppState>,
+) -> Result<Json<DbRowsResponse<OrderItem>>, StatusCode> {
+    Ok(Json(DbRowsResponse {
+        rows: list_order_items(&state.pool)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        generated_at: chrono::Utc::now(),
+    }))
 }
 
 async fn api_get_timer_overrides(
@@ -665,7 +701,7 @@ fn render_simulator_html() -> String {
     }
     .layout {
       display: grid;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: auto 1fr auto;
       gap: 18px;
       min-height: calc(100vh - 36px);
     }
@@ -694,6 +730,81 @@ fn render_simulator_html() -> String {
       gap: 18px;
       min-height: 0;
       padding: 0 18px 18px;
+    }
+    .db-panel {
+      margin: 0 18px 18px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-height: 280px;
+    }
+    .db-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .db-tabs {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .db-tab {
+      background: #fff8ef;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+    .db-tab.active {
+      background: var(--accent-2);
+      color: white;
+      border-color: rgba(31, 108, 92, 0.4);
+    }
+    .db-meta {
+      font-family: "SFMono-Regular", "Menlo", monospace;
+      font-size: 0.76rem;
+      color: var(--muted);
+    }
+    .db-table-wrap {
+      overflow: auto;
+      border: 1px solid rgba(217, 196, 166, 0.8);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.62);
+    }
+    .db-table {
+      width: 100%;
+      min-width: 980px;
+      border-collapse: collapse;
+      font-family: "SFMono-Regular", "Menlo", monospace;
+      font-size: 0.8rem;
+    }
+    .db-table th,
+    .db-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(217, 196, 166, 0.65);
+      text-align: left;
+      vertical-align: top;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .db-table th {
+      position: sticky;
+      top: 0;
+      background: #f8efe1;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.73rem;
+      z-index: 1;
+    }
+    .db-empty {
+      padding: 18px;
+      color: var(--muted);
+      font-family: "SFMono-Regular", "Menlo", monospace;
+    }
+    .mono {
+      font-family: "SFMono-Regular", "Menlo", monospace;
     }
     .chat {
       min-height: 0;
@@ -867,11 +978,6 @@ fn render_simulator_html() -> String {
         <div id="session-list" class="session-list"></div>
       </div>
       <div class="box">
-        <strong>Inbox asesor</strong>
-        <p class="muted" style="margin-top:8px;">Muestra mensajes del bot dirigidos al asesor en todas las sesiones.</p>
-        <div id="advisor-inbox" class="session-list"></div>
-      </div>
-      <div class="box">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
           <strong>Ritmo local</strong>
           <button class="ghost" id="reset-overrides" type="button">Restaurar</button>
@@ -914,7 +1020,7 @@ fn render_simulator_html() -> String {
         <article class="panel chat">
           <div class="chat-head">
             <p class="eyebrow">Asesor</p>
-            <div class="muted">Pendientes, botones del asesor y respuestas manuales.</div>
+            <div class="muted">Mensajes del asesor, respuestas del bot y timeouts de esta sesión.</div>
           </div>
           <div id="advisor-transcript" class="transcript"></div>
           <div class="composer">
@@ -924,6 +1030,20 @@ fn render_simulator_html() -> String {
             </div>
           </div>
         </article>
+      </section>
+      <section class="panel db-panel">
+        <div class="db-head">
+          <div>
+            <p class="eyebrow">Base de Datos Local</p>
+            <div class="muted">Vista cruda de `conversations`, `orders` y `order_items`.</div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <div id="db-meta" class="db-meta"></div>
+            <button class="ghost" id="refresh-db" type="button">Refrescar DB</button>
+          </div>
+        </div>
+        <div id="db-tabs" class="db-tabs"></div>
+        <div id="db-table-wrap" class="db-table-wrap"></div>
       </section>
     </main>
   </div>
@@ -935,6 +1055,14 @@ fn render_simulator_html() -> String {
       selectedSnapshot: null,
       snapshotFetchedAt: null,
       timerRules: [],
+      activeDbTab: 'conversations',
+      dbRows: {
+        conversations: [],
+        orders: [],
+        order_items: [],
+      },
+      dbGeneratedAt: null,
+      refreshLocks: {},
     };
     const TIMER_FIELDS = [
       { key: 'advisor_response', field: 'advisor_response_seconds' },
@@ -943,6 +1071,26 @@ fn render_simulator_html() -> String {
       { key: 'relay_inactivity', field: 'relay_inactivity_seconds' },
       { key: 'conversation_reminder', field: 'conversation_reminder_seconds' },
       { key: 'conversation_reset', field: 'conversation_reset_seconds' },
+    ];
+    const DB_TABLES = [
+      {
+        key: 'conversations',
+        label: 'conversations',
+        endpoint: '/simulator/api/db/conversations',
+        columns: ['id', 'phone_number', 'state', 'state_data', 'customer_name', 'customer_phone', 'delivery_address', 'last_message_at', 'created_at'],
+      },
+      {
+        key: 'orders',
+        label: 'orders',
+        endpoint: '/simulator/api/db/orders',
+        columns: ['id', 'conversation_id', 'delivery_type', 'scheduled_date', 'scheduled_time', 'scheduled_date_text', 'scheduled_time_text', 'payment_method', 'receipt_media_id', 'delivery_cost', 'total_estimated', 'total_final', 'status', 'created_at'],
+      },
+      {
+        key: 'order_items',
+        label: 'order_items',
+        endpoint: '/simulator/api/db/order-items',
+        columns: ['id', 'order_id', 'flavor', 'has_liquor', 'quantity', 'unit_price', 'subtotal', 'created_at'],
+      },
     ];
     const bogotaFormatter = new Intl.DateTimeFormat('es-CO', {
       timeZone: 'America/Bogota',
@@ -956,54 +1104,63 @@ fn render_simulator_html() -> String {
     });
 
     const sessionList = document.getElementById('session-list');
-    const advisorInbox = document.getElementById('advisor-inbox');
     const customerTranscript = document.getElementById('customer-transcript');
     const advisorTranscript = document.getElementById('advisor-transcript');
     const stateGrid = document.getElementById('state-grid');
     const sessionSummary = document.getElementById('session-summary');
     const timerList = document.getElementById('timer-list');
     const overrideGrid = document.getElementById('override-grid');
+    const dbTabs = document.getElementById('db-tabs');
+    const dbTableWrap = document.getElementById('db-table-wrap');
+    const dbMeta = document.getElementById('db-meta');
 
     async function fetchJson(url, options) {
       const response = await fetch(url, options);
       if (!response.ok) {
-        throw new Error('request failed');
+        throw new Error(`request failed: ${url}`);
       }
       if (response.status === 204) return null;
       return response.json();
     }
 
-    async function loadSessions() {
-      state.sessions = await fetchJson('/simulator/api/sessions');
-      renderSessions();
-      await Promise.all([loadAdvisorInbox(), loadTimerRules()]);
-      if (!state.selectedSessionId && state.sessions.length) {
-        state.selectedSessionId = state.sessions[0].id;
-      }
-      if (state.selectedSessionId) {
-        await loadSession(state.selectedSessionId);
-      } else {
-        state.selectedSnapshot = null;
-        customerTranscript.innerHTML = '';
-        advisorTranscript.innerHTML = '';
-        timerList.innerHTML = '<div class="box muted">Selecciona una sesión para ver timers.</div>';
-        stateGrid.innerHTML = '';
-        sessionSummary.innerHTML = '';
+    async function withRefreshLock(key, fn) {
+      if (state.refreshLocks[key]) return;
+      state.refreshLocks[key] = true;
+      try {
+        await fn();
+      } finally {
+        state.refreshLocks[key] = false;
       }
     }
 
-    async function loadSession(sessionId) {
-      state.selectedSessionId = sessionId;
+    async function refreshSessionsList() {
+      state.sessions = await fetchJson('/simulator/api/sessions');
+      if (!state.selectedSessionId && state.sessions.length) {
+        state.selectedSessionId = state.sessions[0].id;
+      }
+      if (state.selectedSessionId && !state.sessions.some((session) => session.id === state.selectedSessionId)) {
+        state.selectedSessionId = state.sessions[0]?.id ?? null;
+      }
+      renderSessions();
+      if (!state.selectedSessionId) {
+        renderEmptySessionState();
+      }
+    }
+
+    async function refreshSelectedSession(forceScroll = false) {
+      if (!state.selectedSessionId) {
+        renderEmptySessionState();
+        return;
+      }
       const [messages, snapshot] = await Promise.all([
-        fetchJson(`/simulator/api/sessions/${sessionId}/messages`),
-        fetchJson(`/simulator/api/sessions/${sessionId}/state`),
+        fetchJson(`/simulator/api/sessions/${state.selectedSessionId}/messages`),
+        fetchJson(`/simulator/api/sessions/${state.selectedSessionId}/state`),
       ]);
       state.selectedMessages = messages;
       state.selectedSnapshot = snapshot;
       state.snapshotFetchedAt = Date.now();
-      renderSessions();
       renderState(snapshot);
-      renderTranscripts();
+      renderTranscripts(forceScroll);
     }
 
     async function loadTimerRules() {
@@ -1012,34 +1169,54 @@ fn render_simulator_html() -> String {
       renderTimerOverrides();
     }
 
-    async function loadAdvisorInbox() {
-      const messages = await fetchJson('/simulator/api/advisor/inbox');
-      advisorInbox.innerHTML = messages.slice(-12).reverse().map((message) => `
-        <div class="session-card">
-          <div><strong>${message.message_kind}</strong></div>
-          <div class="muted">${escapeHtml(message.body || '')}</div>
-          <div class="stamp">${escapeHtml(formatBogotaTimestamp(message.created_at))}</div>
-        </div>
-      `).join('');
+    async function refreshDbTable(tabKey = state.activeDbTab) {
+      const definition = DB_TABLES.find((table) => table.key === tabKey) || DB_TABLES[0];
+      state.activeDbTab = definition.key;
+      const response = await fetchJson(definition.endpoint);
+      state.dbRows[definition.key] = response.rows || [];
+      state.dbGeneratedAt = response.generated_at || null;
+      renderDbPanel();
+    }
+
+    async function hardRefresh(forceScroll = false) {
+      await refreshSessionsList();
+      await refreshSelectedSession(forceScroll);
+      await refreshDbTable();
+    }
+
+    function renderEmptySessionState() {
+      state.selectedMessages = [];
+      state.selectedSnapshot = null;
+      state.snapshotFetchedAt = null;
+      customerTranscript.innerHTML = '<div class="box muted">Crea o selecciona una sesión.</div>';
+      advisorTranscript.innerHTML = '<div class="box muted">Selecciona una sesión para usar el panel del asesor.</div>';
+      timerList.innerHTML = '<div class="box muted">Selecciona una sesión para ver timers.</div>';
+      stateGrid.innerHTML = '';
+      sessionSummary.innerHTML = '';
     }
 
     function renderSessions() {
       sessionList.innerHTML = state.sessions.map((session) => `
         <div class="session-card ${session.id === state.selectedSessionId ? 'active' : ''}" data-session-id="${session.id}">
           <div><strong>${escapeHtml(session.profile_name || 'Sin nombre')}</strong></div>
-          <div class="muted">${escapeHtml(session.customer_phone)}</div>
+          <div class="muted mono">${escapeHtml(session.customer_phone)}</div>
           <div class="muted">Estado: ${escapeHtml(session.state)}</div>
           <div class="muted">Dirección: ${escapeHtml(session.delivery_address || 'Pendiente')}</div>
           <div class="stamp">${escapeHtml(formatBogotaTimestamp(session.updated_at))}</div>
         </div>
       `).join('');
       for (const element of sessionList.querySelectorAll('[data-session-id]')) {
-        element.addEventListener('click', () => loadSession(Number(element.dataset.sessionId)));
+        element.addEventListener('click', async () => {
+          const sessionId = Number(element.dataset.sessionId);
+          if (Number.isNaN(sessionId) || sessionId === state.selectedSessionId) return;
+          state.selectedSessionId = sessionId;
+          renderSessions();
+          await refreshSelectedSession(true);
+        });
       }
     }
 
     function renderState(snapshot) {
-      state.selectedSnapshot = snapshot;
       const conversation = snapshot.conversation || {};
       const entries = {
         state: conversation.state || 'main_menu',
@@ -1121,7 +1298,7 @@ fn render_simulator_html() -> String {
       }
     }
 
-    function renderTranscripts() {
+    function renderTranscripts(forceScroll = false) {
       customerTranscript.innerHTML = state.selectedMessages
         .filter((message) => message.actor === 'customer' || message.audience === 'customer' || message.actor === 'system')
         .map((message) => renderMessage(message, 'customer'))
@@ -1131,8 +1308,12 @@ fn render_simulator_html() -> String {
         .map((message) => renderMessage(message, 'advisor'))
         .join('');
       bindInteractiveActions();
-      customerTranscript.scrollTop = customerTranscript.scrollHeight;
-      advisorTranscript.scrollTop = advisorTranscript.scrollHeight;
+      if (forceScroll || shouldStickToBottom(customerTranscript)) {
+        customerTranscript.scrollTop = customerTranscript.scrollHeight;
+      }
+      if (forceScroll || shouldStickToBottom(advisorTranscript)) {
+        advisorTranscript.scrollTop = advisorTranscript.scrollHeight;
+      }
     }
 
     function renderMessage(message, pane) {
@@ -1168,6 +1349,47 @@ fn render_simulator_html() -> String {
       return '';
     }
 
+    function renderDbPanel() {
+      dbTabs.innerHTML = DB_TABLES.map((table) => `
+        <button class="db-tab ${table.key === state.activeDbTab ? 'active' : ''}" type="button" data-db-tab="${table.key}">
+          ${escapeHtml(table.label)}
+        </button>
+      `).join('');
+      for (const button of dbTabs.querySelectorAll('[data-db-tab]')) {
+        button.addEventListener('click', async () => {
+          const tab = button.dataset.dbTab;
+          if (!tab || tab === state.activeDbTab) return;
+          await refreshDbTable(tab);
+        });
+      }
+
+      const definition = DB_TABLES.find((table) => table.key === state.activeDbTab) || DB_TABLES[0];
+      const rows = state.dbRows[definition.key] || [];
+      dbMeta.textContent = state.dbGeneratedAt
+        ? `actualizado ${formatBogotaTimestamp(state.dbGeneratedAt)} · ${rows.length} filas`
+        : 'sin datos cargados';
+
+      if (!rows.length) {
+        dbTableWrap.innerHTML = '<div class="db-empty">No hay filas todavía para esta tabla.</div>';
+        return;
+      }
+
+      dbTableWrap.innerHTML = `
+        <table class="db-table">
+          <thead>
+            <tr>${definition.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join('')}</tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                ${definition.columns.map((column) => `<td>${escapeHtml(formatDbCell(row[column]))}</td>`).join('')}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
     async function persistTimerOverridesFromInputs() {
       const payload = {};
       for (const field of TIMER_FIELDS) {
@@ -1201,7 +1423,7 @@ fn render_simulator_html() -> String {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: button.dataset.id }),
           });
-          await loadSessions();
+          await hardRefresh(true);
         });
       }
     }
@@ -1217,7 +1439,7 @@ fn render_simulator_html() -> String {
         body: JSON.stringify({ body }),
       });
       input.value = '';
-      await loadSessions();
+      await hardRefresh(true);
     }
 
     async function sendCustomerImage() {
@@ -1231,7 +1453,19 @@ fn render_simulator_html() -> String {
         body: formData,
       });
       fileInput.value = '';
-      await loadSessions();
+      await hardRefresh(true);
+    }
+
+    function shouldStickToBottom(container) {
+      return container.scrollHeight - container.scrollTop - container.clientHeight < 72;
+    }
+
+    function formatDbCell(value) {
+      if (value === null || value === undefined || value === '') return '(vacío)';
+      if (typeof value === 'object') {
+        return JSON.stringify(value, null, 2);
+      }
+      return String(value);
     }
 
     function escapeHtml(value) {
@@ -1272,9 +1506,14 @@ fn render_simulator_html() -> String {
       document.getElementById('new-phone').value = '';
       document.getElementById('new-name').value = '';
       state.selectedSessionId = session.id;
-      await loadSessions();
+      await hardRefresh(true);
     });
-    document.getElementById('refresh-sessions').addEventListener('click', loadSessions);
+    document.getElementById('refresh-sessions').addEventListener('click', async () => {
+      await hardRefresh();
+    });
+    document.getElementById('refresh-db').addEventListener('click', async () => {
+      await refreshDbTable();
+    });
     document.getElementById('reset-overrides').addEventListener('click', async () => {
       const payload = {};
       for (const field of TIMER_FIELDS) {
@@ -1291,11 +1530,29 @@ fn render_simulator_html() -> String {
     document.getElementById('send-customer-text').addEventListener('click', () => sendText('customer'));
     document.getElementById('send-advisor-text').addEventListener('click', () => sendText('advisor'));
     document.getElementById('send-customer-image').addEventListener('click', sendCustomerImage);
+
     setInterval(() => renderTimerList(), 1000);
     setInterval(() => {
-      loadSessions().catch(() => {});
+      withRefreshLock('selected_session', async () => {
+        await refreshSelectedSession();
+      }).catch(() => {});
+    }, 2000);
+    setInterval(() => {
+      withRefreshLock('sessions', async () => {
+        await refreshSessionsList();
+      }).catch(() => {});
+      withRefreshLock('db', async () => {
+        await refreshDbTable();
+      }).catch(() => {});
     }, 5000);
-    loadSessions();
+
+    Promise.all([
+      loadTimerRules(),
+      refreshSessionsList(),
+      refreshDbTable(),
+    ]).then(async () => {
+      await refreshSelectedSession(true);
+    }).catch(() => {});
   </script>
 </body>
 </html>

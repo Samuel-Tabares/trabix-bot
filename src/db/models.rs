@@ -69,7 +69,7 @@ pub struct OrderItemData {
     pub quantity: u32,
 }
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Conversation {
     pub id: i32,
     pub phone_number: String,
@@ -82,7 +82,7 @@ pub struct Conversation {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Order {
     pub id: i32,
     pub conversation_id: i32,
@@ -100,7 +100,7 @@ pub struct Order {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct OrderItem {
     pub id: i32,
     pub order_id: i32,

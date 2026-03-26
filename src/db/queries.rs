@@ -33,6 +33,18 @@ pub async fn get_conversation(
     .await
 }
 
+pub async fn list_conversations(pool: &PgPool) -> Result<Vec<Conversation>, sqlx::Error> {
+    sqlx::query_as::<_, Conversation>(
+        r#"
+        SELECT id, phone_number, state, state_data, customer_name, customer_phone, delivery_address, last_message_at, created_at
+        FROM conversations
+        ORDER BY last_message_at DESC, id DESC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn create_conversation(
     pool: &PgPool,
     phone_number: &str,
@@ -337,6 +349,21 @@ pub async fn get_order(pool: &PgPool, order_id: i32) -> Result<Option<Order>, sq
     .await
 }
 
+pub async fn list_orders(pool: &PgPool) -> Result<Vec<Order>, sqlx::Error> {
+    sqlx::query_as::<_, Order>(
+        r#"
+        SELECT id, conversation_id, delivery_type, scheduled_date, scheduled_time,
+               scheduled_date_text, scheduled_time_text,
+               payment_method, receipt_media_id, delivery_cost, total_estimated,
+               total_final, status, created_at
+        FROM orders
+        ORDER BY created_at DESC, id DESC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn get_order_items(pool: &PgPool, order_id: i32) -> Result<Vec<OrderItem>, sqlx::Error> {
     sqlx::query_as::<_, OrderItem>(
         r#"
@@ -347,6 +374,18 @@ pub async fn get_order_items(pool: &PgPool, order_id: i32) -> Result<Vec<OrderIt
         "#,
     )
     .bind(order_id)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn list_order_items(pool: &PgPool) -> Result<Vec<OrderItem>, sqlx::Error> {
+    sqlx::query_as::<_, OrderItem>(
+        r#"
+        SELECT id, order_id, flavor, has_liquor, quantity, unit_price, subtotal, created_at
+        FROM order_items
+        ORDER BY created_at DESC, id DESC
+        "#,
+    )
     .fetch_all(pool)
     .await
 }
@@ -386,10 +425,19 @@ pub async fn reset_conversation(pool: &PgPool, phone_number: &str) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::{
-        create_conversation, get_conversation, reset_conversation, update_customer_data,
-        update_state,
+        add_order_item, create_conversation, create_order, get_conversation, list_conversations,
+        list_order_items, list_orders, reset_conversation, update_customer_data, update_state,
     };
     use crate::db::models::ConversationStateData;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_suffix() -> String {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        nanos.to_string()
+    }
 
     #[tokio::test]
     #[ignore = "requires TEST_DATABASE_URL and a reachable PostgreSQL instance"]
@@ -489,5 +537,97 @@ mod tests {
         assert_eq!(loaded.customer_name.as_deref(), Some("Cliente Persistente"));
         assert_eq!(loaded.customer_phone.as_deref(), Some("573008888888"));
         assert_eq!(loaded.delivery_address.as_deref(), Some("Calle 123"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL and a reachable PostgreSQL instance"]
+    async fn list_queries_return_newest_rows_first() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .expect("TEST_DATABASE_URL must be set for ignored DB tests");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect(&database_url)
+            .await
+            .expect("db connection");
+        sqlx::migrate!().run(&pool).await.expect("migrations");
+
+        let suffix = unique_suffix();
+        let phone_a = format!("5731{}", &suffix[..9.min(suffix.len())]);
+        let phone_b = format!("5732{}", &suffix[..9.min(suffix.len())]);
+
+        let conversation_a = create_conversation(&pool, &phone_a)
+            .await
+            .expect("create first conversation");
+        let conversation_b = create_conversation(&pool, &phone_b)
+            .await
+            .expect("create second conversation");
+
+        let conversations = list_conversations(&pool).await.expect("list conversations");
+        let position_a = conversations
+            .iter()
+            .position(|conversation| conversation.id == conversation_a.id)
+            .expect("first conversation present");
+        let position_b = conversations
+            .iter()
+            .position(|conversation| conversation.id == conversation_b.id)
+            .expect("second conversation present");
+        assert!(position_b < position_a);
+
+        let order_a = create_order(
+            &pool,
+            conversation_a.id,
+            "immediate",
+            None,
+            None,
+            None,
+            None,
+            "cash",
+            None,
+            12000,
+        )
+        .await
+        .expect("create first order");
+        let order_b = create_order(
+            &pool,
+            conversation_b.id,
+            "scheduled",
+            None,
+            None,
+            Some("mañana"),
+            Some("7 pm"),
+            "transfer",
+            None,
+            18000,
+        )
+        .await
+        .expect("create second order");
+
+        let orders = list_orders(&pool).await.expect("list orders");
+        let order_position_a = orders
+            .iter()
+            .position(|order| order.id == order_a.id)
+            .expect("first order present");
+        let order_position_b = orders
+            .iter()
+            .position(|order| order.id == order_b.id)
+            .expect("second order present");
+        assert!(order_position_b < order_position_a);
+
+        let item_a = add_order_item(&pool, order_a.id, "fresa", false, 1, 6000, 6000)
+            .await
+            .expect("create first order item");
+        let item_b = add_order_item(&pool, order_b.id, "uva", true, 2, 9000, 18000)
+            .await
+            .expect("create second order item");
+
+        let order_items = list_order_items(&pool).await.expect("list order items");
+        let item_position_a = order_items
+            .iter()
+            .position(|item| item.id == item_a.id)
+            .expect("first item present");
+        let item_position_b = order_items
+            .iter()
+            .position(|item| item.id == item_b.id)
+            .expect("second item present");
+        assert!(item_position_b < item_position_a);
     }
 }

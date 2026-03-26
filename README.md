@@ -29,7 +29,10 @@ From there you can:
 - test advisor flows and timeouts
 - upload receipt images locally
 - inspect persisted conversation and order state
+- inspect raw `conversations`, `orders`, and `order_items` rows from the simulator UI
 - validate restarts and timer recovery without touching Meta
+
+The simulator frontend is not a separate app. It is served directly by the Rust backend from `src/routes/simulator.rs`, where the inline HTML/CSS/JS lives together with the simulator API routes.
 
 ## What It Does Not Replace
 
