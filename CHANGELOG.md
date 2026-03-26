@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-03-26
+
+- Refactor the simulator boundary so HTTP handlers move into `src/simulator/web.rs`, leaving `src/routes/simulator.rs` as a thin mount wrapper while keeping the shared production bot brain unchanged.
+- Extract the simulator frontend into editable files under `assets/simulator/` (`index.html`, `simulator.css`, `simulator.js`) and serve them through dedicated simulator asset routes.
+
 ## [1.5.0] - 2026-03-26
 
 - Upgrade the local simulator UI so the advisor pane is session-centric, the old advisor inbox panel is removed, and timer-driven transcript updates appear without manual page refresh.

@@ -30,7 +30,7 @@ Componentes principales:
 - `src/routes/`
   - `verify.rs`: verificacion de `GET /webhook`
   - `webhook.rs`: recepcion del webhook productivo y normalizacion de inputs
-  - `simulator.rs`: UI local inline HTML/CSS/JS y endpoints JSON para manual testing completo sin Meta
+  - `simulator.rs`: wrapper minimo que monta el runtime del simulator
   - `legal.rs`: paginas publicas `/privacy-policy` y `/terms-of-service`
 - `src/engine.rs`
   - procesamiento compartido de cliente/asesor
@@ -43,6 +43,7 @@ Componentes principales:
   - sesiones locales
   - transcriptos persistidos
   - media local para comprobantes e imagenes
+  - `web.rs`: handlers HTTP del simulator y serving de assets locales
 - `src/bot/`
   - maquina de estados
   - handlers por estado
@@ -80,7 +81,8 @@ Cuando `BOT_MODE=simulator`:
 - no se requieren credenciales `WHATSAPP_*`
 - el servicio se liga por defecto a `127.0.0.1`
 - la UI local vive en `/simulator`
-- el frontend del simulator esta embebido en `src/routes/simulator.rs`; no existe un frontend separado
+- el frontend del simulator vive en `assets/simulator/index.html`, `assets/simulator/simulator.css` y `assets/simulator/simulator.js`
+- el backend HTTP del simulator vive en `src/simulator/web.rs`
 - cada sesion local crea o reutiliza un cliente identificado por telefono y nombre de perfil opcional
 - el bot sigue usando `conversations`, `orders`, `order_items`, restauracion de timers y sweep periodico
 - las respuestas del bot se persisten en transcriptos locales en vez de salir a Meta

@@ -32,7 +32,13 @@ From there you can:
 - inspect raw `conversations`, `orders`, and `order_items` rows from the simulator UI
 - validate restarts and timer recovery without touching Meta
 
-The simulator frontend is not a separate app. It is served directly by the Rust backend from `src/routes/simulator.rs`, where the inline HTML/CSS/JS lives together with the simulator API routes.
+The simulator frontend is now split into editable assets:
+
+- `assets/simulator/index.html`
+- `assets/simulator/simulator.css`
+- `assets/simulator/simulator.js`
+
+The simulator backend HTTP handlers live in `src/simulator/web.rs`, while `src/routes/simulator.rs` stays as a thin mount wrapper.
 
 ## What It Does Not Replace
 

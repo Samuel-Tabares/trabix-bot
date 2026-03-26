@@ -172,6 +172,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.4.5`: top-level README onboarding for the project and local simulator quickstart
   - `v1.4.6`: finalize README onboarding and remove an accidentally tracked local simulator upload artifact
   - `v1.5.0`: simulator UI refresh with session-centric advisor chat, auto-refresh, and raw database inspector tabs
+  - `v1.5.1`: simulator HTTP handlers moved under `src/simulator/` and frontend assets extracted into `assets/simulator/`
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases

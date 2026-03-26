@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trabix Simulator</title>
+  <link rel="stylesheet" href="/simulator/assets/simulator.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="panel sidebar">
+      <div class="brand">
+        <p class="eyebrow">Local Transport</p>
+        <h1>Trabix Simulator</h1>
+        <p class="muted">Misma lógica del bot, sin Meta.</p>
+      </div>
+
+      <form id="create-session-form">
+        <label for="new-phone">Teléfono</label>
+        <input id="new-phone" name="customer_phone" placeholder="573001112233" required>
+        <label for="new-name" class="field-label">Nombre de perfil</label>
+        <input id="new-name" name="profile_name" placeholder="Cliente Local">
+        <button class="full-width" type="submit">Crear sesión</button>
+      </form>
+
+      <div class="box">
+        <div class="box-head">
+          <strong>Sesiones</strong>
+          <button class="ghost" id="refresh-sessions" type="button">Refrescar</button>
+        </div>
+        <div id="session-list" class="session-list"></div>
+      </div>
+
+      <div class="box">
+        <div class="box-head">
+          <strong>Ritmo local</strong>
+          <button class="ghost" id="reset-overrides" type="button">Restaurar</button>
+        </div>
+        <p class="muted flush-top">Ajusta solo el simulador. Los cambios aplican a timers nuevos.</p>
+        <div id="override-grid" class="override-grid"></div>
+      </div>
+    </aside>
+
+    <main class="layout">
+      <section class="panel header">
+        <div class="header-column">
+          <p class="eyebrow">Estado Persistido</p>
+          <div id="state-grid" class="header-grid"></div>
+        </div>
+        <div class="header-column">
+          <p class="eyebrow">Sesión Seleccionada</p>
+          <div id="session-summary" class="header-grid"></div>
+        </div>
+        <div class="header-column">
+          <p class="eyebrow">Timers Activos</p>
+          <div id="timer-list" class="timer-list"></div>
+        </div>
+      </section>
+
+      <section class="stack">
+        <article class="panel chat">
+          <div class="chat-head">
+            <p class="eyebrow">Cliente</p>
+            <div class="muted">Mensajes del cliente y respuestas del bot.</div>
+          </div>
+          <div id="customer-transcript" class="transcript"></div>
+          <div class="composer">
+            <textarea id="customer-text" placeholder="Escribe como cliente..."></textarea>
+            <div class="composer-actions">
+              <button id="send-customer-text" type="button">Enviar texto</button>
+              <input id="customer-image" type="file" accept="image/*">
+              <button id="send-customer-image" class="ghost" type="button">Enviar imagen</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel chat">
+          <div class="chat-head">
+            <p class="eyebrow">Asesor</p>
+            <div class="muted">Mensajes del asesor, respuestas del bot y timeouts de esta sesión.</div>
+          </div>
+          <div id="advisor-transcript" class="transcript"></div>
+          <div class="composer">
+            <textarea id="advisor-text" placeholder="Escribe como asesor..."></textarea>
+            <div class="composer-actions">
+              <button id="send-advisor-text" class="secondary" type="button">Enviar texto</button>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel db-panel">
+        <div class="db-head">
+          <div>
+            <p class="eyebrow">Base de Datos Local</p>
+            <div class="muted">Vista cruda de `conversations`, `orders` y `order_items`.</div>
+          </div>
+          <div class="db-controls">
+            <div id="db-meta" class="db-meta"></div>
+            <button class="ghost" id="refresh-db" type="button">Refrescar DB</button>
+          </div>
+        </div>
+        <div id="db-tabs" class="db-tabs"></div>
+        <div id="db-table-wrap" class="db-table-wrap"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/simulator/assets/simulator.js"></script>
+</body>
+</html>
