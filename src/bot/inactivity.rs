@@ -61,6 +61,7 @@ pub fn uses_customer_inactivity_timer(state: &ConversationState) -> bool {
             | ConversationState::SelectFlavor { .. }
             | ConversationState::SelectQuantity { .. }
             | ConversationState::AddMore
+            | ConversationState::ConfirmRestartOrder
             | ConversationState::ConfirmCustomerData
             | ConversationState::SelectCustomerDataField
             | ConversationState::EditCustomerName
@@ -103,6 +104,9 @@ pub fn reminder_actions(
             order::select_quantity_actions(&context.phone_number, *has_liquor, flavor)
         }
         ConversationState::AddMore => order::add_more_actions(context),
+        ConversationState::ConfirmRestartOrder => {
+            order::confirm_restart_order_actions(&context.phone_number)
+        }
         ConversationState::ConfirmCustomerData => checkout::confirm_address_actions(context),
         ConversationState::SelectCustomerDataField => {
             customer_data::select_customer_data_field_actions(context)

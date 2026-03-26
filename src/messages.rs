@@ -162,12 +162,17 @@ pub struct OrderMessages {
     pub add_more_body: String,
     pub add_more_button: String,
     pub finish_order_button: String,
+    pub restart_order_button: String,
     pub retry_add_more: String,
+    pub confirm_restart_order_body: String,
+    pub confirm_restart_order_button: String,
+    pub cancel_restart_order_button: String,
+    pub retry_confirm_restart_order: String,
+    pub restart_order_success_text: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CheckoutMessages {
-    pub modify_order_text: String,
     pub receipt_image_required: String,
     pub change_address_prompt: String,
     pub change_address_non_text: String,
@@ -189,8 +194,6 @@ pub struct CheckoutMessages {
     pub cash_on_delivery_description: String,
     pub pay_now_title: String,
     pub pay_now_description: String,
-    pub modify_order_title: String,
-    pub modify_order_description: String,
     pub cancel_order_title: String,
     pub cancel_order_description: String,
     pub confirm_customer_template: String,

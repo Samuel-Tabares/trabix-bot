@@ -13,11 +13,10 @@ use crate::{
     whatsapp::types::{Button, ButtonReplyPayload, ListRow, ListSection},
 };
 
-use super::{customer_data, menu, order};
+use super::{customer_data, menu};
 
 const CASH_ON_DELIVERY: &str = "cash_on_delivery";
 const PAY_NOW: &str = "pay_now";
-const MODIFY_ORDER: &str = "modify_order";
 const CANCEL_ORDER: &str = "cancel_order";
 const CHANGE_PAYMENT_METHOD: &str = "change_payment_method";
 pub fn handle_show_summary(
@@ -50,31 +49,6 @@ pub fn handle_show_summary(
                 ConversationState::WaitReceipt,
                 wait_receipt_entry_actions(context),
             ))
-        }
-        Some(MODIFY_ORDER) => {
-            let cancel_action = context
-                .current_order_id
-                .map(|order_id| BotAction::CancelCurrentOrder { order_id });
-            context.items.clear();
-            context.payment_method = None;
-            context.receipt_media_id = None;
-            context.receipt_timer_started_at = None;
-            context.current_order_id = None;
-            context.editing_address = false;
-            context.receipt_timer_expired = false;
-            context.clear_pending_selection();
-
-            let mut actions = Vec::new();
-            if let Some(action) = cancel_action {
-                actions.push(action);
-            }
-            actions.push(BotAction::SendText {
-                to: context.phone_number.clone(),
-                body: client_messages().checkout.modify_order_text.clone(),
-            });
-            actions.extend(order::select_type_actions(&context.phone_number));
-
-            Ok((ConversationState::SelectType, actions))
         }
         Some(CANCEL_ORDER) => Ok(cancel_order_transition(context)),
         _ => Ok((
@@ -183,11 +157,6 @@ pub fn show_summary_actions(context: &ConversationContext) -> Vec<BotAction> {
                         id: PAY_NOW.to_string(),
                         title: messages.pay_now_title.clone(),
                         description: messages.pay_now_description.clone(),
-                    },
-                    ListRow {
-                        id: MODIFY_ORDER.to_string(),
-                        title: messages.modify_order_title.clone(),
-                        description: messages.modify_order_description.clone(),
                     },
                     ListRow {
                         id: CANCEL_ORDER.to_string(),
@@ -399,7 +368,7 @@ fn format_currency(value: u32) -> String {
 mod tests {
     use crate::bot::state_machine::{ConversationContext, ConversationState, UserInput};
 
-    use super::{handle_show_summary, handle_wait_receipt};
+    use super::{handle_show_summary, handle_wait_receipt, show_summary_actions};
 
     fn context() -> ConversationContext {
         ConversationContext {
@@ -506,5 +475,39 @@ mod tests {
         assert_eq!(context.payment_method, None);
         assert_eq!(context.receipt_timer_started_at, None);
         assert!(!context.receipt_timer_expired);
+    }
+
+    #[test]
+    fn show_summary_actions_include_only_three_rows() {
+        let context = context();
+        let actions = show_summary_actions(&context);
+
+        assert!(matches!(
+            actions.get(1),
+            Some(crate::bot::state_machine::BotAction::SendList { sections, .. })
+            if sections.len() == 1
+                && sections[0].rows.len() == 3
+                && sections[0].rows.iter().all(|row| row.id != "modify_order")
+        ));
+    }
+
+    #[test]
+    fn stale_modify_order_reply_repeats_summary_without_clearing_order() {
+        let mut context = context();
+
+        let (state, actions) = handle_show_summary(
+            &UserInput::ListSelection("modify_order".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::ShowSummary);
+        assert_eq!(context.items.len(), 2);
+        assert_eq!(context.current_order_id, Some(7));
+        assert!(matches!(
+            actions.get(1),
+            Some(crate::bot::state_machine::BotAction::SendList { sections, .. })
+            if sections[0].rows.len() == 3
+        ));
     }
 }

@@ -1,7 +1,8 @@
 use crate::{
     bot::{
         state_machine::{
-            BotAction, ConversationContext, ConversationState, TransitionResult, UserInput,
+            BotAction, ConversationContext, ConversationState, TimerType, TransitionResult,
+            UserInput,
         },
         states::checkout,
     },
@@ -14,6 +15,9 @@ const WITH_LIQUOR: &str = "with_liquor";
 const WITHOUT_LIQUOR: &str = "without_liquor";
 const ADD_MORE: &str = "add_more";
 const FINISH_ORDER: &str = "finish_order";
+const RESTART_ORDER: &str = "restart_order";
+const CONFIRM_RESTART_ORDER: &str = "confirm_restart_order";
+const CANCEL_RESTART_ORDER: &str = "cancel_restart_order";
 
 const LIQUOR_FLAVOR_IDS: [&str; 7] = [
     "liquor_maracumango_ron_blanco",
@@ -146,6 +150,10 @@ pub fn handle_add_more(input: &UserInput, context: &mut ConversationContext) -> 
             ConversationState::SelectType,
             select_type_actions(&context.phone_number),
         )),
+        Some(RESTART_ORDER) => Ok((
+            ConversationState::ConfirmRestartOrder,
+            confirm_restart_order_actions(&context.phone_number),
+        )),
         Some(FINISH_ORDER) => Ok((
             ConversationState::ShowSummary,
             checkout::show_summary_actions(context),
@@ -156,6 +164,24 @@ pub fn handle_add_more(input: &UserInput, context: &mut ConversationContext) -> 
                 &context.phone_number,
                 &client_messages().order.retry_add_more,
                 add_more_actions(context),
+            ),
+        )),
+    }
+}
+
+pub fn handle_confirm_restart_order(
+    input: &UserInput,
+    context: &mut ConversationContext,
+) -> TransitionResult {
+    match selection_id(input).as_deref() {
+        Some(CONFIRM_RESTART_ORDER) => Ok(restart_order_transition(context)),
+        Some(CANCEL_RESTART_ORDER) => Ok((ConversationState::AddMore, add_more_actions(context))),
+        _ => Ok((
+            ConversationState::ConfirmRestartOrder,
+            retry_actions(
+                &context.phone_number,
+                &client_messages().order.retry_confirm_restart_order,
+                confirm_restart_order_actions(&context.phone_number),
             ),
         )),
     }
@@ -238,9 +264,25 @@ pub fn add_more_actions(context: &ConversationContext) -> Vec<BotAction> {
             buttons: vec![
                 reply_button(ADD_MORE, &messages.add_more_button),
                 reply_button(FINISH_ORDER, &messages.finish_order_button),
+                reply_button(RESTART_ORDER, &messages.restart_order_button),
             ],
         },
     ]
+}
+
+pub fn confirm_restart_order_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().order;
+    vec![BotAction::SendButtons {
+        to: phone.to_string(),
+        body: messages.confirm_restart_order_body.clone(),
+        buttons: vec![
+            reply_button(
+                CONFIRM_RESTART_ORDER,
+                &messages.confirm_restart_order_button,
+            ),
+            reply_button(CANCEL_RESTART_ORDER, &messages.cancel_restart_order_button),
+        ],
+    }]
 }
 
 pub fn validate_quantity(input: &str) -> Result<u32, String> {
@@ -328,6 +370,39 @@ fn retry_actions(phone: &str, message: &str, mut actions: Vec<BotAction>) -> Vec
     all
 }
 
+fn restart_order_transition(
+    context: &mut ConversationContext,
+) -> (ConversationState, Vec<BotAction>) {
+    let cancel_action = context
+        .current_order_id
+        .map(|order_id| BotAction::CancelCurrentOrder { order_id });
+
+    context.items.clear();
+    context.customer_review_scope = None;
+    context.payment_method = None;
+    context.receipt_media_id = None;
+    context.receipt_timer_started_at = None;
+    context.current_order_id = None;
+    context.editing_address = false;
+    context.receipt_timer_expired = false;
+    context.clear_pending_selection();
+
+    let mut actions = vec![BotAction::CancelTimer {
+        timer_type: TimerType::ReceiptUpload,
+        phone: context.phone_number.clone(),
+    }];
+    if let Some(action) = cancel_action {
+        actions.push(action);
+    }
+    actions.push(BotAction::SendText {
+        to: context.phone_number.clone(),
+        body: client_messages().order.restart_order_success_text.clone(),
+    });
+    actions.extend(select_type_actions(&context.phone_number));
+
+    (ConversationState::SelectType, actions)
+}
+
 fn selection_id(input: &UserInput) -> Option<String> {
     match input {
         UserInput::ButtonPress(id) | UserInput::ListSelection(id) => Some(id.clone()),
@@ -340,8 +415,9 @@ mod tests {
     use crate::bot::state_machine::{ConversationContext, ConversationState, UserInput};
 
     use super::{
-        handle_add_more, handle_select_flavor, handle_select_quantity, handle_select_type,
-        select_flavor_actions, validate_quantity,
+        add_more_actions, confirm_restart_order_actions, handle_add_more,
+        handle_confirm_restart_order, handle_select_flavor, handle_select_quantity,
+        handle_select_type, select_flavor_actions, validate_quantity,
     };
 
     fn context() -> ConversationContext {
@@ -476,5 +552,109 @@ mod tests {
         .expect("transition");
 
         assert_eq!(state, ConversationState::ShowSummary);
+    }
+
+    #[test]
+    fn add_more_actions_include_restart_button() {
+        let mut context = context();
+        context.items.push(crate::db::models::OrderItemData {
+            flavor: "Bonbonbum".to_string(),
+            has_liquor: false,
+            quantity: 2,
+        });
+
+        let actions = add_more_actions(&context);
+
+        assert!(matches!(
+            actions.get(1),
+            Some(crate::bot::state_machine::BotAction::SendButtons { buttons, .. })
+            if buttons.len() == 3
+                && buttons.iter().any(|button| button.reply.id == "restart_order")
+        ));
+    }
+
+    #[test]
+    fn add_more_restart_moves_to_confirmation() {
+        let mut context = context();
+        context.items.push(crate::db::models::OrderItemData {
+            flavor: "Bonbonbum".to_string(),
+            has_liquor: false,
+            quantity: 2,
+        });
+
+        let (state, actions) = handle_add_more(
+            &UserInput::ButtonPress("restart_order".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::ConfirmRestartOrder);
+        assert!(matches!(
+            actions.first(),
+            Some(crate::bot::state_machine::BotAction::SendButtons { buttons, .. })
+            if buttons.len() == 2
+        ));
+    }
+
+    #[test]
+    fn confirm_restart_clears_items_and_preserves_delivery_context() {
+        let mut context = context();
+        context.delivery_type = Some("scheduled".to_string());
+        context.scheduled_date = Some("2026-03-28".to_string());
+        context.scheduled_time = Some("18:00".to_string());
+        context.items.push(crate::db::models::OrderItemData {
+            flavor: "Bonbonbum".to_string(),
+            has_liquor: false,
+            quantity: 2,
+        });
+
+        let (state, _) = handle_confirm_restart_order(
+            &UserInput::ButtonPress("confirm_restart_order".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::SelectType);
+        assert!(context.items.is_empty());
+        assert_eq!(context.delivery_type.as_deref(), Some("scheduled"));
+        assert_eq!(context.scheduled_date.as_deref(), Some("2026-03-28"));
+        assert_eq!(context.scheduled_time.as_deref(), Some("18:00"));
+    }
+
+    #[test]
+    fn cancel_restart_returns_to_add_more_without_clearing_items() {
+        let mut context = context();
+        context.items.push(crate::db::models::OrderItemData {
+            flavor: "Bonbonbum".to_string(),
+            has_liquor: false,
+            quantity: 2,
+        });
+
+        let (state, actions) = handle_confirm_restart_order(
+            &UserInput::ButtonPress("cancel_restart_order".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::AddMore);
+        assert_eq!(context.items.len(), 1);
+        assert!(matches!(
+            actions.get(1),
+            Some(crate::bot::state_machine::BotAction::SendButtons { buttons, .. })
+            if buttons.len() == 3
+        ));
+    }
+
+    #[test]
+    fn confirm_restart_actions_include_warning_buttons() {
+        let actions = confirm_restart_order_actions("573001234567");
+
+        assert!(matches!(
+            actions.first(),
+            Some(crate::bot::state_machine::BotAction::SendButtons { buttons, .. })
+            if buttons.len() == 2
+                && buttons.iter().any(|button| button.reply.id == "confirm_restart_order")
+                && buttons.iter().any(|button| button.reply.id == "cancel_restart_order")
+        ));
     }
 }

@@ -73,11 +73,13 @@ graph TD
         SelectQuantity --> AddMore["➕ add_more<br/>Resumen parcial + botones"]
         AddMore -->|Agregar más| SelectType
         AddMore -->|Finalizar pedido| ShowSummary["📋 show_summary<br/>render_summary() + lista pago"]
+        AddMore -->|Reiniciar pedido| ConfirmRestart["⚠️ confirm_restart_order<br/>confirma borrado total de items"]
+        ConfirmRestart -->|Sí, reiniciar| SelectType
+        ConfirmRestart -->|No, volver| AddMore
 
         ShowSummary --> SummaryChoice{"Lista de pago y pedido"}
         SummaryChoice -->|Contra Entrega| ConfirmAddress["✅ confirm_address<br/>scope order_checkout<br/>muestra nombre + telefono + direccion"]
         SummaryChoice -->|Pago Ahora| WaitReceipt["📸 wait_receipt<br/>- TRANSFER_PAYMENT_TEXT<br/>- pide comprobante<br/>- timer 10m"]
-        SummaryChoice -->|Modificar Pedido| SelectType
         SummaryChoice -->|Cancelar Pedido| MainMenu
 
         WaitReceipt -->|imagen recibida| ConfirmAddress

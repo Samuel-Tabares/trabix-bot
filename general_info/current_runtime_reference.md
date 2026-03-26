@@ -141,7 +141,11 @@ Comportamiento actual:
 - primero se elige `Con Licor` o `Sin Licor`
 - luego se muestra una lista de sabores compatible con WhatsApp
 - luego se captura la cantidad
-- el cliente puede agregar mas items o finalizar el pedido
+- luego se muestra un resumen parcial con botones para:
+  - `Agregar más`
+  - `Finalizar pedido`
+  - `Reiniciar pedido`
+- `Reiniciar pedido` pide confirmacion y elimina todos los items actuales antes de volver a `select_type`
 
 La seleccion parcial vive en:
 
@@ -167,7 +171,6 @@ Opciones actuales:
 
 - `Contra Entrega`
 - `Pago Ahora`
-- `Modificar Pedido`
 - `Cancelar Pedido`
 
 ### Pago Ahora

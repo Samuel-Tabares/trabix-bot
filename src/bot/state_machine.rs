@@ -31,6 +31,7 @@ pub enum ConversationState {
     SelectFlavor { has_liquor: bool },
     SelectQuantity { has_liquor: bool, flavor: String },
     AddMore,
+    ConfirmRestartOrder,
     ConfirmCustomerData,
     SelectCustomerDataField,
     EditCustomerName,
@@ -73,6 +74,7 @@ impl ConversationState {
             Self::SelectFlavor { .. } => "select_flavor",
             Self::SelectQuantity { .. } => "select_quantity",
             Self::AddMore => "add_more",
+            Self::ConfirmRestartOrder => "confirm_restart_order",
             Self::ConfirmCustomerData => "confirm_address",
             Self::SelectCustomerDataField => "select_customer_data_field",
             Self::EditCustomerName => "edit_customer_name",
@@ -130,6 +132,7 @@ impl ConversationState {
                     .ok_or(StateMachineError::MissingContext("pending_flavor"))?,
             }),
             "add_more" => Ok(Self::AddMore),
+            "confirm_restart_order" => Ok(Self::ConfirmRestartOrder),
             "confirm_address" => {
                 if context.editing_address {
                     Ok(Self::EditCustomerAddress)
@@ -207,6 +210,7 @@ impl<'de> Deserialize<'de> for ConversationState {
                 flavor: String::new(),
             }),
             "add_more" => Ok(Self::AddMore),
+            "confirm_restart_order" => Ok(Self::ConfirmRestartOrder),
             "confirm_address" => Ok(Self::ConfirmCustomerData),
             "select_customer_data_field" => Ok(Self::SelectCustomerDataField),
             "edit_customer_name" => Ok(Self::EditCustomerName),
@@ -495,6 +499,9 @@ pub fn transition(
             order::handle_select_quantity(input, context, *has_liquor, flavor)
         }
         ConversationState::AddMore => order::handle_add_more(input, context),
+        ConversationState::ConfirmRestartOrder => {
+            order::handle_confirm_restart_order(input, context)
+        }
         ConversationState::ConfirmCustomerData => {
             customer_data::handle_confirm_customer_data(input, context)
         }

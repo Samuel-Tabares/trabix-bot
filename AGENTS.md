@@ -28,7 +28,7 @@ Current implementation status:
   - view menu and delivery scheduling
   - immediate vs scheduled delivery
   - customer data auto-prefill from inbound WhatsApp metadata plus ask-only-missing capture
-  - item loop until `ShowSummary`
+  - item loop until `ShowSummary`, with partial-summary buttons for `Agregar más`, `Finalizar pedido`, and confirmed `Reiniciar pedido`
   - persistence in PostgreSQL across messages and restarts
   - flexible text capture for programmed date/time with minimal length validation
   - flavor selection through WhatsApp lists after choosing `Con Licor` or `Sin Licor`
@@ -36,7 +36,7 @@ Current implementation status:
 - Phase 3 is implemented and validated as the checkout foundation:
   - real price calculation in `pricing.rs`, including liquor pair promo and wholesale tiers
   - `ShowSummary` with estimated total excluding delivery cost
-  - payment choice: `Contra Entrega` or `Pago Ahora`
+  - payment choice: `Contra Entrega` or `Pago Ahora`, plus `Cancelar Pedido`
   - transfer instructions plus receipt image capture
   - 10-minute receipt timer with timeout options to change payment or cancel
   - customer-data review/edit step before handoff, covering name, phone, and address
