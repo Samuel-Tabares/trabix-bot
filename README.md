@@ -1,6 +1,6 @@
 # Trabix Granizados Bot
 
-Trabix is a real Rust WhatsApp ordering bot for granizados. The repository now includes two ways to run it:
+Trabix is a real Rust WhatsApp ordering bot for granizados, located on Armenia, Quindío, Colombia. The repository now includes two ways to run it:
 
 - `production`: the real Meta/WhatsApp webhook runtime
 - `simulator`: a local web chat that uses the same bot brain without sending anything to Meta
