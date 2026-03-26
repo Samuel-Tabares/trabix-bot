@@ -4,13 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- Move the destructive order reset out of checkout: replace `Modificar Pedido` with a confirmed `Reiniciar Pedido` option in the partial-summary step, and keep the summary list to `Contra Entrega`, `Pago Ahora`, and `Cancelar Pedido`.
-- Add structured backend observability with masked phone markers, short message previews, state-transition logs, outbound action summaries, and quieter status-webhook noise at `DEBUG`.
-- Auto-fill `customer_phone` from inbound WhatsApp sender numbers and `customer_name` from `contacts[].profile.name` when Meta includes it, without overwriting manual edits.
-- Replace the old address-only confirmation with a customer-data review/edit step before order handoff, and add the same review/edit step to the `Hablar con Asesor` flow.
-- Replace the outdated phase-planning document set with `general_info/current_runtime_reference.md`, a single current runtime and validation reference aligned with the live system.
-- Make deploy/restart timer catch-up silent so boot does not send customer or advisor timeout messages for already overdue conversations; only active not-yet-expired timers are re-armed.
-- Fix the generic customer inactivity loop so `main_menu` does not re-arm reminder/reset timers after an inactivity reset or restart without a new inbound customer message.
+## [1.3.0] - 2026-03-26
+
+- Add a local `BOT_MODE=simulator` runtime that serves `/simulator` and exercises the same bot state machine, PostgreSQL persistence, advisor flow, pricing, and timers without calling Meta.
+- Refactor inbound processing and outbound action execution into a shared engine so webhook messages, simulator messages, and timer expirations all use the same runtime path.
+- Add simulator transcript and media persistence with new PostgreSQL tables for local sessions, chat history, and uploaded receipt/image files.
+- Add an Axum-served local chat UI with multi-session customer testing, advisor interaction, button/list replay, local image upload, and persisted state inspection.
 
 ## [1.2.0] - 2026-03-25
 

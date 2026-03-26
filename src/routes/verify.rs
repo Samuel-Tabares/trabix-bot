@@ -26,7 +26,9 @@ pub async fn verify_webhook(
     }
 
     match (query.verify_token.as_deref(), query.challenge) {
-        (Some(token), Some(challenge)) if token == state.config.whatsapp_verify_token => {
+        (Some(token), Some(challenge))
+            if token == state.config.production().whatsapp_verify_token =>
+        {
             (StatusCode::OK, challenge)
         }
         _ => (StatusCode::FORBIDDEN, String::new()),

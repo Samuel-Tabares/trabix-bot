@@ -11,10 +11,13 @@ Current source-of-truth areas:
 
 Current code layout:
 
-- `src/routes/`: webhook verification, inbound WhatsApp handling, and public legal pages for Meta review.
+- `src/routes/`: webhook verification, inbound WhatsApp handling, local simulator routes/UI, and public legal pages for Meta review.
 - `src/whatsapp/`: Meta Cloud API client, button/list builders, and payload types.
 - `src/bot/`: state machine and per-state handlers.
 - `src/db/`: SQLx models and conversation queries.
+- `src/engine.rs`: shared inbound-processing and outbound-action execution path used by webhook, simulator, and timers.
+- `src/simulator/`: local simulator persistence helpers for sessions, transcripts, and local media.
+- `src/transport.rs`: outbound transport selection between Meta and simulator recording.
 - `src/bin/`: local operational utilities such as media upload to Meta.
 - `migrations/`: PostgreSQL schema.
 - `tests/`: local integration and live smoke tests.
@@ -57,6 +60,12 @@ Current implementation status:
   - periodic database-backed timer sweep so missed in-memory tasks still expire receipt, advisor, relay, and customer inactivity waits
   - production number receiving real public WhatsApp messages once the Meta app is in `Live` mode and subscribed to the WABA
   - public legal endpoints for Meta review: `/privacy-policy` and `/terms-of-service`
+- Phase 5 is implemented and validated as the current local manual-testing runtime:
+  - `BOT_MODE=simulator` runs the same bot brain without Meta credentials
+  - local `/simulator` web UI with customer and advisor panes
+  - simulated customers identified by phone plus optional profile name
+  - reuse of `conversations`, `orders`, `order_items`, and timer behavior for faithful local persistence
+  - simulator transcript and local media persistence in PostgreSQL plus filesystem-backed uploads
 - The old phase-planning documents were removed because they no longer matched the live system. Use `general_info/current_runtime_reference.md` for the current runtime and validation reference.
 
 Current real runtime behavior:
@@ -70,6 +79,8 @@ Current real runtime behavior:
 - `mark_as_read` is best-effort only. If Meta rejects the read receipt request, the bot logs a warning and continues processing the message.
 - Generic customer inactivity is only armed by a real inbound customer message. After the 35-minute inactivity reset sends its notice and returns the conversation to `main_menu`, no new inactivity reminder/reset should fire until the customer writes again.
 - On deploy/restart, overdue timers are reconciled silently in persistence. The bot should not fan out timeout or inactivity WhatsApp messages just because the process booted; only still-active timers are re-armed for future expiration.
+- `BOT_MODE=simulator` is local-only transport mode. It uses the same runtime flow and persistence but records outbound messages in the simulator transcript instead of sending anything to Meta.
+- In simulator mode, local testing data must stay in the local environment: local database, local uploads directory, and local Axum UI only.
 
 ## Build, Test, and Development Commands
 Use these commands regularly:
@@ -81,6 +92,7 @@ Use these commands regularly:
 - `cargo test`: run local unit and integration coverage.
 - `cargo test --test live_whatsapp -- --ignored --test-threads=1`: run live WhatsApp transport smoke tests.
 - `cargo run --bin granizado-bot`: run the local bot service.
+- `BOT_MODE=simulator SIMULATOR_MENU_IMAGE_PATH=./ruta/menu-local.jpg cargo run --bin granizado-bot`: run the full local simulator without Meta.
 - `cargo run --bin upload_media -- /ruta/local/menu.jpg`: upload a local media file to Meta and print the `media_id`.
 - `curl -H "Authorization: Bearer $WHATSAPP_TOKEN" "https://graph.facebook.com/v21.0/$WABA_ID/phone_numbers"`: confirm which phone numbers the current token can operate.
 - `curl -H "Authorization: Bearer $WHATSAPP_TOKEN" "https://graph.facebook.com/v21.0/$WABA_ID/subscribed_apps"`: confirm the WABA is subscribed to the current Meta app.
@@ -89,12 +101,17 @@ Use these commands regularly:
 Operational notes:
 
 - Live tests rely on `.env`. They now load it via `dotenvy`, but still require valid credentials and reachable services.
+- `BOT_MODE=production` is still the default. Omit `BOT_MODE` in Railway unless you explicitly mean to run simulator mode.
+- `BOT_MODE=simulator` does not require WhatsApp credentials and should bind to `127.0.0.1` by default.
+- `SIMULATOR_MENU_IMAGE_PATH` must point to a local menu image if you want the simulator to render `Ver Menú`.
+- `SIMULATOR_UPLOAD_DIR` stores local receipt/image uploads for simulator conversations and should stay outside production deploy flows.
 - Customer-facing bot copy now lives in `config/messages.toml` and is loaded at startup; restart the service after editing that file.
 - `TRANSFER_PAYMENT_TEXT` is now optional fallback-only in `.env` for backward compatibility if `config/messages.toml` leaves `checkout.transfer_payment_text` empty.
 - `MENU_IMAGE_MEDIA_ID` must contain a valid Meta `media_id`; the runtime no longer expects separate media IDs for liquor/non-liquor flavor flows.
 - `FORCE_BOGOTA_NOW=YYYY-MM-DD HH:MM` is available only for local testing of after-hours scheduling. Do not enable it in Railway or production.
 - PostgreSQL sessions opened by the app are set to `America/Bogota` (`UTC-5`) on connect so SQL `NOW()` usage and timestamp display stay aligned with the operating timezone used by the bot.
 - Keep `ADVISOR_PHONE` different from `WHATSAPP_TEST_RECIPIENT` during local WhatsApp validation, otherwise tester messages are routed as advisor messages.
+- In simulator mode, no local message or media should ever be sent to Meta. If simulator testing appears in WhatsApp, treat it as a configuration bug.
 - Large menu images may be rejected by Meta. If needed, compress or resize locally before upload.
 - Operational menu images should not live under `src/` as tracked source code; the bot only needs the resulting `media_id`.
 - The production webhook callback URL is `/webhook`. Do not configure `/webhooks`, trailing variants, or alternate paths in Meta.
@@ -134,6 +151,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.1.1`: migration-checksum hotfix for Railway deployment safety
   - `v1.1.2`: timer-sweep hotfix for missed in-memory expirations
   - `v1.2.0`: main-menu simplification, `America/Bogota` SQL session timezone, generic customer inactivity handling, and 30-minute hard reset for stuck advisor-detail waits
+  - `v1.3.0`: full local simulator mode with shared engine/transport, persisted transcripts/media, and Axum-served customer/advisor chat UI
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases
@@ -181,6 +199,8 @@ Current important coverage areas:
 - `src/bot/states/relay.rs`: wholesale relay, advisor-contact relay, finish button, and text-only forwarding rules.
 - `src/bot/timers.rs`: receipt timeout, advisor timeout, relay inactivity timeout, and timer restoration after restart.
   - also includes the periodic database-backed sweep that catches missed expirations after deploys or runtime interruptions
+- `src/engine.rs`: shared customer/advisor processing and action execution across webhook, simulator, and timers
+- `src/routes/simulator.rs` and `src/simulator/`: local simulator transport, transcript persistence, and upload/media handling
 
 For manual WhatsApp validation:
 
@@ -193,6 +213,16 @@ For manual WhatsApp validation:
 - do not use `ADVISOR_PHONE` to validate the customer flow; it is routed through advisor logic by design
 - check PostgreSQL state when the acceptance criteria require persistence evidence
 - use `general_info/current_runtime_reference.md` as the current checklist for advisor, timeout, relay, restart, and operational validation scenarios
+
+For manual simulator validation:
+
+- run with `BOT_MODE=simulator`
+- use a local PostgreSQL database only
+- create a local customer session with phone and optional profile name
+- validate that phone/name auto-prefill, manual edits, and `main_menu` resets preserve persisted customer data
+- validate immediate order, scheduled order, advisor handoff, relay, timeout, and restart-recovery paths through `/simulator`
+- validate receipt upload with a real local image file
+- confirm that no local testing event appears in WhatsApp or requires Meta credentials
 
 ## Commit & Pull Request Guidelines
 The current history is minimal and uses a plain descriptive subject (`setting AGENTS.MD and secuencial phase of the project`). Keep future commit subjects short, imperative, and specific. Prefer patterns like `docs: refine implementation phases` or `feat: scaffold webhook routes` over vague multi-topic messages.

@@ -19,7 +19,7 @@ use crate::{
             reminder_actions, reset_notice_actions, CONVERSATION_REMINDER_TIMEOUT,
             CONVERSATION_RESET_TIMEOUT,
         },
-        state_machine::{BotAction, ConversationContext, ConversationState, ImageAsset, TimerType},
+        state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
     },
     db::{
         models::ConversationStateData,
@@ -28,7 +28,11 @@ use crate::{
             update_order_status, update_state,
         },
     },
-    logging::{log_bot_action, mask_phone},
+    engine::{
+        clear_advisor_session as clear_bound_advisor_session,
+        send_timer_actions as dispatch_timer_actions,
+    },
+    logging::mask_phone,
     messages::client_messages,
     whatsapp::types::{Button, ButtonReplyPayload},
     AppState,
@@ -177,7 +181,7 @@ async fn reconcile_boot_expired_timer(
             let mut state_data = conversation.state_data.0.clone();
             state_data.advisor_timer_expired = true;
             state_data.advisor_timer_started_at = None;
-            clear_advisor_session(&state).await?;
+            clear_bound_advisor_session(&state, &state.config.advisor_phone).await?;
             update_state(
                 &state.pool,
                 &conversation.phone_number,
@@ -199,7 +203,7 @@ async fn reconcile_boot_expired_timer(
             reset_conversation(&state.pool, &conversation.phone_number).await?;
 
             if clear_advisor_session {
-                crate::bot::timers::clear_advisor_session(&state).await?;
+                clear_bound_advisor_session(&state, &state.config.advisor_phone).await?;
             }
         }
         BootExpirationAction::MarkInactivityReminderAndRestore { started_at } => {
@@ -502,7 +506,7 @@ pub async fn expire_receipt_timer(
         timer_type = %TimerType::ReceiptUpload.as_str(),
         "receipt timer expired"
     );
-    send_timer_actions(
+    dispatch_timer_actions(
         &state,
         &[
             BotAction::SendText {
@@ -521,6 +525,7 @@ pub async fn expire_receipt_timer(
                 buttons: receipt_timeout_buttons(),
             },
         ],
+        Some(&phone_number),
     )
     .await?;
 
@@ -544,7 +549,7 @@ pub async fn expire_advisor_timer(
         return Ok(());
     }
 
-    clear_advisor_session(&state).await?;
+    clear_bound_advisor_session(&state, &state.config.advisor_phone).await?;
 
     match timeout_kind {
         AdvisorTimeoutKind::FallbackButtons => {
@@ -561,7 +566,7 @@ pub async fn expire_advisor_timer(
 
             match conversation.state.as_str() {
                 "wait_advisor_contact" => {
-                    send_timer_actions(
+                    dispatch_timer_actions(
                         &state,
                         &[BotAction::SendButtons {
                             to: phone_number.clone(),
@@ -571,6 +576,7 @@ pub async fn expire_advisor_timer(
                                 .clone(),
                             buttons: contact_timeout_buttons(),
                         }],
+                        Some(&phone_number),
                     )
                     .await?;
                 }
@@ -582,7 +588,7 @@ pub async fn expire_advisor_timer(
                     } else {
                         &client_messages().timers_customer.advisor_timeout_text
                     };
-                    send_timer_actions(
+                    dispatch_timer_actions(
                         &state,
                         &[
                             BotAction::SendText {
@@ -598,6 +604,7 @@ pub async fn expire_advisor_timer(
                                 buttons: advisor_timeout_buttons(),
                             },
                         ],
+                        Some(&phone_number),
                     )
                     .await?;
                 }
@@ -616,7 +623,7 @@ pub async fn expire_advisor_timer(
                 order_id = ?state_data.current_order_id,
                 "advisor stuck timer reset conversation"
             );
-            send_timer_actions(
+            dispatch_timer_actions(
                 &state,
                 &[BotAction::SendText {
                     to: phone_number.clone(),
@@ -625,6 +632,7 @@ pub async fn expire_advisor_timer(
                         .advisor_stuck_timeout_text
                         .clone(),
                 }],
+                Some(&phone_number),
             )
             .await?;
         }
@@ -646,13 +654,13 @@ pub async fn expire_relay_timer(
     }
 
     reset_conversation(&state.pool, &phone_number).await?;
-    clear_advisor_session(&state).await?;
+    clear_bound_advisor_session(&state, &state.config.advisor_phone).await?;
     tracing::info!(
         phone = %mask_phone(&phone_number),
         timer_type = %TimerType::RelayInactivity.as_str(),
         "relay timer expired"
     );
-    send_timer_actions(
+    dispatch_timer_actions(
         &state,
         &[
             BotAction::SendText {
@@ -667,6 +675,7 @@ pub async fn expire_relay_timer(
                 ),
             },
         ],
+        Some(&phone_number),
     )
     .await?;
 
@@ -722,7 +731,7 @@ pub async fn expire_conversation_abandon(
             state = %conversation.state,
             "sending inactivity reminder"
         );
-        send_timer_actions(&state, &actions).await?;
+        dispatch_timer_actions(&state, &actions, Some(&phone_number)).await?;
 
         state_data.conversation_abandon_started_at = Some(started_at);
         state_data.conversation_abandon_reminder_sent = true;
@@ -731,7 +740,12 @@ pub async fn expire_conversation_abandon(
         return Ok(());
     }
 
-    send_timer_actions(&state, &reset_notice_actions(&phone_number)).await?;
+    dispatch_timer_actions(
+        &state,
+        &reset_notice_actions(&phone_number),
+        Some(&phone_number),
+    )
+    .await?;
     reset_conversation(&state.pool, &phone_number).await?;
     tracing::info!(
         phone = %mask_phone(&phone_number),
@@ -842,62 +856,6 @@ fn customer_inactivity_state(state: &str) -> bool {
     )
 }
 
-async fn send_timer_actions(
-    state: &AppState,
-    actions: &[BotAction],
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    for action in actions {
-        log_bot_action(action);
-        match action {
-            BotAction::SendText { to, body } => {
-                state.wa_client.send_text(to, body).await?;
-            }
-            BotAction::SendButtons { to, body, buttons } => {
-                state
-                    .wa_client
-                    .send_buttons(to, body, buttons.clone())
-                    .await?;
-            }
-            BotAction::SendList {
-                to,
-                body,
-                button_text,
-                sections,
-            } => {
-                state
-                    .wa_client
-                    .send_list(to, body, button_text, sections.clone())
-                    .await?;
-            }
-            BotAction::SendImage {
-                to,
-                media_id,
-                caption,
-            } => {
-                state
-                    .wa_client
-                    .send_image(to, media_id, caption.as_deref())
-                    .await?;
-            }
-            BotAction::SendAssetImage { to, asset, caption } => {
-                let media_id = match *asset {
-                    ImageAsset::Menu => &state.config.menu_image_media_id,
-                };
-                state
-                    .wa_client
-                    .send_image(to, media_id, caption.as_deref())
-                    .await?;
-            }
-            BotAction::NoOp => {}
-            _ => {
-                tracing::warn!("skipping unsupported timer action during inactivity resend");
-            }
-        }
-    }
-
-    Ok(())
-}
-
 pub fn rehydrate_context_for_timer(
     phone_number: String,
     advisor_phone: String,
@@ -914,28 +872,6 @@ pub fn rehydrate_context_for_timer(
         delivery_address,
         state_data,
     )
-}
-
-async fn clear_advisor_session(state: &AppState) -> Result<(), sqlx::Error> {
-    if let Some(advisor_conversation) =
-        get_conversation(&state.pool, &state.config.advisor_phone).await?
-    {
-        let mut state_data = advisor_conversation.state_data.0;
-        state_data.advisor_target_phone = None;
-        update_state(
-            &state.pool,
-            &state.config.advisor_phone,
-            &advisor_conversation.state,
-            &state_data,
-        )
-        .await?;
-        tracing::info!(
-            advisor_phone = %mask_phone(&state.config.advisor_phone),
-            "cleared advisor session binding"
-        );
-    }
-
-    Ok(())
 }
 
 fn receipt_timeout_buttons() -> Vec<Button> {

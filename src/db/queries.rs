@@ -385,7 +385,10 @@ pub async fn reset_conversation(pool: &PgPool, phone_number: &str) -> Result<(),
 
 #[cfg(test)]
 mod tests {
-    use super::{create_conversation, get_conversation, update_state};
+    use super::{
+        create_conversation, get_conversation, reset_conversation, update_customer_data,
+        update_state,
+    };
     use crate::db::models::ConversationStateData;
 
     #[tokio::test]
@@ -441,5 +444,50 @@ mod tests {
             loaded.state_data.0.delivery_type.as_deref(),
             Some("immediate")
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL and a reachable PostgreSQL instance"]
+    async fn reset_conversation_preserves_customer_fields() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .expect("TEST_DATABASE_URL must be set for ignored DB tests");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect(&database_url)
+            .await
+            .expect("db connection");
+        sqlx::migrate!().run(&pool).await.expect("migrations");
+        create_conversation(&pool, "573008888888")
+            .await
+            .expect("create conversation");
+        update_customer_data(
+            &pool,
+            "573008888888",
+            Some("Cliente Persistente"),
+            Some("573008888888"),
+            Some("Calle 123"),
+        )
+        .await
+        .expect("update customer data");
+
+        let state_data = ConversationStateData {
+            delivery_type: Some("immediate".into()),
+            ..ConversationStateData::default()
+        };
+        update_state(&pool, "573008888888", "collect_name", &state_data)
+            .await
+            .expect("update state");
+        reset_conversation(&pool, "573008888888")
+            .await
+            .expect("reset conversation");
+
+        let loaded = get_conversation(&pool, "573008888888")
+            .await
+            .expect("get conversation")
+            .expect("conversation");
+
+        assert_eq!(loaded.state, "main_menu");
+        assert_eq!(loaded.customer_name.as_deref(), Some("Cliente Persistente"));
+        assert_eq!(loaded.customer_phone.as_deref(), Some("573008888888"));
+        assert_eq!(loaded.delivery_address.as_deref(), Some("Calle 123"));
     }
 }

@@ -1,12 +1,13 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 
 use axum::Router;
 use granizado_bot::{
     bot::timers::{new_timer_map, restore_pending_timers, spawn_timer_sweeper},
-    config::Config,
+    config::{BotMode, Config},
     db::init_pool,
     messages::{set_client_messages, ClientMessages},
     routes,
+    transport::{OutboundTransport, SimulatorTransport},
     whatsapp::client::WhatsAppClient,
     AppState,
 };
@@ -28,24 +29,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = init_pool(&config.database_url).await?;
     sqlx::migrate!().run(&pool).await?;
 
-    let wa_client = WhatsAppClient::new(
-        config.whatsapp_token.clone(),
-        config.whatsapp_phone_id.clone(),
-    );
+    let transport = match config.mode {
+        BotMode::Production => {
+            let production = config.production();
+            OutboundTransport::Production(WhatsAppClient::new(
+                production.whatsapp_token.clone(),
+                production.whatsapp_phone_id.clone(),
+            ))
+        }
+        BotMode::Simulator => {
+            let simulator = config.simulator();
+            std::fs::create_dir_all(&simulator.upload_dir)?;
+            OutboundTransport::Simulator(SimulatorTransport {
+                menu_image_path: simulator.menu_image_path.clone(),
+            })
+        }
+    };
 
     let app_state = AppState {
         config: config.clone(),
         pool,
-        wa_client,
+        transport,
         timers: new_timer_map(),
     };
 
     restore_pending_timers(app_state.clone()).await?;
     let _timer_sweeper = spawn_timer_sweeper(app_state.clone());
 
-    let app: Router = routes::router().with_state(app_state);
+    let app: Router = routes::router(&config).with_state(app_state);
 
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
+    let addr = SocketAddr::new(config.bind_ip, config.port);
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     tracing::info!("server listening on {}", addr);

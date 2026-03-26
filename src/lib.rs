@@ -1,15 +1,18 @@
 pub mod bot;
 pub mod config;
 pub mod db;
+pub mod engine;
 pub mod logging;
 pub mod messages;
 pub mod routes;
+pub mod simulator;
+pub mod transport;
 pub mod whatsapp;
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: config::Config,
     pub pool: sqlx::PgPool,
-    pub wa_client: whatsapp::client::WhatsAppClient,
+    pub transport: transport::OutboundTransport,
     pub timers: bot::timers::TimerMap,
 }
