@@ -86,6 +86,7 @@ Current real runtime behavior:
 - On deploy/restart, overdue timers are reconciled silently in persistence. The bot should not fan out timeout or inactivity WhatsApp messages just because the process booted; only still-active timers are re-armed for future expiration.
 - `BOT_MODE=simulator` is local-only transport mode. It uses the same runtime flow and persistence but records outbound messages in the simulator transcript instead of sending anything to Meta.
 - In simulator mode, local testing data must stay in the local environment: local database, local uploads directory, and local Axum UI only.
+- Production and simulator must stay aligned for all shared bot-brain behavior: state machine transitions, timers, persistence, pricing, order flow, advisor flow, and customer-facing outcomes. If production logic changes one of those areas, simulator behavior must change too. Only Meta/webhook transport concerns may intentionally differ.
 
 ## Build, Test, and Development Commands
 Use these commands regularly:
@@ -134,6 +135,7 @@ Every meaningful code change should leave a clear trace in the repository histor
 - Keep commits focused. Do not mix runtime fixes, docs cleanup, refactors, and release metadata in the same commit unless they are inseparable.
 - Before committing, inspect the exact diff with `git diff` and ensure unrelated files are not included by accident.
 - If a change affects runtime behavior, persistence, pricing, timers, or WhatsApp flow, add or update tests in the same work cycle.
+- If a change affects shared bot behavior, update production and simulator together. Do not land production-only logic in shared engine/state/timer paths unless the simulator is updated to match the resulting customer/advisor behavior.
 - If a change affects customer-facing copy, note whether it came from `config/messages.toml`, `.env` fallback behavior, or hardcoded runtime text.
 - If a bug is found in production, document the root cause in the commit message or changelog entry, not only in chat or deployment logs.
 
