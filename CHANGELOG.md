@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-03-26
+
+- Add a top-level `README.md` that explains the project, the proprietary repository terms, and how to run the real production bot brain locally through the simulator on macOS, Linux, and Windows.
+- Document simulator boundaries clearly so users understand that shared bot logic is reused locally while Meta-specific transport behavior still requires real WhatsApp validation.
+
 ## [1.4.4] - 2026-03-26
 
 - Replace the simulator placeholder menu asset with the real tracked menu image at `assets/trabix-menu.png`.

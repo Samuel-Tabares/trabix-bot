@@ -6,6 +6,7 @@ This repository started as documentation-first, but it now contains a working Ru
 Current source-of-truth areas:
 
 - `AGENTS.md`: contributor instructions for this repository.
+- `README.md`: public project overview and local simulator quickstart.
 - `general_info/Flow_Design_Diagram_v2.mermaid`: end-to-end conversation flow.
 - `general_info/current_runtime_reference.md`: current runtime behavior, operational constraints, persistence, timers, and validation checklist.
 - `LICENSE`: proprietary repository distribution terms with `All Rights Reserved` and limited evaluation-only simulator permission.
@@ -168,6 +169,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.4.2`: cross-platform simulator launcher scripts and tracked fallback menu asset
   - `v1.4.3`: fixed simulator menu asset path using the tracked fallback file only
   - `v1.4.4`: real tracked simulator menu image replaces the placeholder asset
+  - `v1.4.5`: top-level README onboarding for the project and local simulator quickstart
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases
