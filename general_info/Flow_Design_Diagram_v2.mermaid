@@ -1,6 +1,8 @@
 %%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor':'#667eea', 'primaryBorderColor':'#7b9bff', 'background':'#1e1e2e', 'mainBkg':'#2a2a3a', 'tertiaryBkg':'#333344', 'lineColor':'#7b9bff', 'textColor':'#e0e0e0', 'clusterBkg':'#2a2a3a', 'clusterBorder':'#7b9bff'}}}%%
-%% Release baseline: v1.3.0 - 2026-03-26
+%% Release baseline: v1.4.0 - 2026-03-26
 %% Includes local simulator mode with shared engine/transport, persisted local transcripts/media,
+%% simulator transcript timestamps in America/Bogota, active timer inspection/countdowns,
+%% simulator-only timer overrides, and timeout source notices for runtime/sweep/boot reconciliation,
 %% plus the existing main-menu simplification, America/Bogota SQL sessions,
 %% generic customer inactivity reminder/reset only while explicitly armed by inbound customer activity,
 %% and 30-minute stuck advisor hard resets.
@@ -36,9 +38,9 @@ graph TD
         Orders["🧾 orders<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- receipt_media_id<br/>- delivery_cost<br/>- total_estimated<br/>- total_final<br/>- status"]
         OrderItems["🧊 order_items<br/>- flavor<br/>- has_liquor<br/>- quantity<br/>- unit_price<br/>- subtotal"]
         SimSessions["🧪 simulator_sessions<br/>- customer_phone<br/>- profile_name"]
-        SimMessages["💬 simulator_messages<br/>- actor<br/>- audience<br/>- message_kind<br/>- body<br/>- payload JSONB"]
+        SimMessages["💬 simulator_messages<br/>- actor<br/>- audience<br/>- message_kind<br/>- body<br/>- payload JSONB<br/>- created_at timestamp"]
         SimMedia["🖼️ simulator_media<br/>- file_path<br/>- mime_type<br/>- original_filename"]
-        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- advisor_detail_stuck 30m<br/>- relay_inactivity 30m<br/>- restore_pending_timers()<br/>- sweep_expired_timers()"]
+        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- advisor_detail_stuck 30m<br/>- relay_inactivity 30m<br/>- inactivity reminder 2m / reset 35m<br/>- restore_pending_timers()<br/>- sweep_expired_timers()<br/>- simulator UI overrides/countdowns"]
     end
 
     Engine -->|Cliente| LoadClient["load_or_create_conversation + rehydrate context + seed inbound name/phone"]

@@ -16,8 +16,8 @@ use crate::{
         },
         states::{advisor::parse_advisor_button_id, data_collect},
         timers::{
-            cancel_timer, expire_advisor_timer, expire_receipt_timer, expire_relay_timer,
-            start_timer,
+            cancel_timer, effective_duration_for_start_timer, expire_advisor_timer,
+            expire_receipt_timer, expire_relay_timer, start_timer,
         },
     },
     db::{
@@ -383,10 +383,12 @@ pub async fn execute_actions(
                 let timer_type = timer_type.clone();
                 let phone = phone.clone();
                 let app_state = state.clone();
+                let effective_duration =
+                    effective_duration_for_start_timer(state, &timer_type, *duration);
                 start_timer(
                     state.timers.clone(),
                     (phone.clone(), timer_type.clone()),
-                    *duration,
+                    effective_duration,
                     move || async move {
                         match timer_type {
                             TimerType::ReceiptUpload => {

@@ -15,4 +15,5 @@ pub struct AppState {
     pub pool: sqlx::PgPool,
     pub transport: transport::OutboundTransport,
     pub timers: bot::timers::TimerMap,
+    pub timer_overrides: bot::timers::TimerOverridesHandle,
 }

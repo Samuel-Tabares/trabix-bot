@@ -77,6 +77,10 @@ Cuando `BOT_MODE=simulator`:
 - el bot sigue usando `conversations`, `orders`, `order_items`, restauracion de timers y sweep periodico
 - las respuestas del bot se persisten en transcriptos locales en vez de salir a Meta
 - los comprobantes o imagenes de prueba se guardan en disco local y se referencian por id local
+- cada mensaje del transcript muestra su `created_at` en `America/Bogota`
+- la UI expone timers activos con inicio, vencimiento, countdown y fase del timeout
+- la UI permite overrides locales de timers solo para nuevas esperas creadas en simulator
+- los timeouts del simulator registran avisos de sistema indicando si se dispararon por runtime, sweep o reconciliacion de arranque
 
 El objetivo del simulator es validar localmente el mismo comportamiento productivo del bot, incluyendo:
 

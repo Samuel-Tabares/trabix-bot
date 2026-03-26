@@ -66,6 +66,10 @@ Current implementation status:
   - simulated customers identified by phone plus optional profile name
   - reuse of `conversations`, `orders`, `order_items`, and timer behavior for faithful local persistence
   - simulator transcript and local media persistence in PostgreSQL plus filesystem-backed uploads
+  - per-message `America/Bogota` timestamps in the simulator transcript
+  - active timer inspector with countdowns, deadlines, and timeout phase/state visibility
+  - simulator-only timer overrides from the UI for faster local timeout validation
+  - simulator system notices when a timeout comes from runtime expiry, periodic sweep, or boot reconciliation
 - The old phase-planning documents were removed because they no longer matched the live system. Use `general_info/current_runtime_reference.md` for the current runtime and validation reference.
 
 Current real runtime behavior:
@@ -152,6 +156,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.1.2`: timer-sweep hotfix for missed in-memory expirations
   - `v1.2.0`: main-menu simplification, `America/Bogota` SQL session timezone, generic customer inactivity handling, and 30-minute hard reset for stuck advisor-detail waits
   - `v1.3.0`: full local simulator mode with shared engine/transport, persisted transcripts/media, and Axum-served customer/advisor chat UI
+  - `v1.4.0`: simulator timer observability with timestamps, countdown/debug panel, UI overrides, and timeout source notices
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases
@@ -222,6 +227,9 @@ For manual simulator validation:
 - validate that phone/name auto-prefill, manual edits, and `main_menu` resets preserve persisted customer data
 - validate immediate order, scheduled order, advisor handoff, relay, timeout, and restart-recovery paths through `/simulator`
 - validate receipt upload with a real local image file
+- verify every transcript row shows a Bogota timestamp
+- verify the timer panel shows countdown, start time, expiration time, and timeout phase/state
+- use simulator timer overrides only for local validation of new waits
 - confirm that no local testing event appears in WhatsApp or requires Meta credentials
 
 ## Commit & Pull Request Guidelines

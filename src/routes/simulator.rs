@@ -16,7 +16,13 @@ use serde_json::json;
 use tokio::fs;
 
 use crate::{
-    bot::state_machine::UserInput,
+    bot::{
+        state_machine::UserInput,
+        timers::{
+            simulator_timer_rules, simulator_timer_snapshots, update_simulator_timer_overrides,
+            SimulatorTimerOverrides, SimulatorTimerRuleInfo, SimulatorTimerSnapshot,
+        },
+    },
     engine::{process_advisor_input, process_customer_input},
     simulator::{
         create_media, create_message, create_or_update_session, ensure_session_conversation,
@@ -36,6 +42,10 @@ pub fn mount(router: Router<AppState>) -> Router<AppState> {
             get(api_list_sessions).post(api_create_session),
         )
         .route("/simulator/api/advisor/inbox", get(api_advisor_inbox))
+        .route(
+            "/simulator/api/timer-overrides",
+            get(api_get_timer_overrides).post(api_update_timer_overrides),
+        )
         .route("/simulator/api/menu-asset", get(api_menu_asset))
         .route("/simulator/api/media/:id", get(api_media))
         .route(
@@ -97,6 +107,8 @@ struct SelectionRequest {
 struct SessionStateResponse {
     session: SimulatorSession,
     conversation: Option<ConversationSnapshot>,
+    generated_at: chrono::DateTime<chrono::Utc>,
+    timers: Vec<SimulatorTimerSnapshot>,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,6 +121,11 @@ struct ConversationSnapshot {
     delivery_address: Option<String>,
     last_message_at: chrono::DateTime<chrono::Utc>,
     created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize)]
+struct TimerOverridesResponse {
+    rules: Vec<SimulatorTimerRuleInfo>,
 }
 
 async fn api_list_sessions(
@@ -166,6 +183,23 @@ async fn api_advisor_inbox(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+async fn api_get_timer_overrides(
+    State(state): State<AppState>,
+) -> Result<Json<TimerOverridesResponse>, StatusCode> {
+    Ok(Json(TimerOverridesResponse {
+        rules: simulator_timer_rules(&state),
+    }))
+}
+
+async fn api_update_timer_overrides(
+    State(state): State<AppState>,
+    Json(request): Json<SimulatorTimerOverrides>,
+) -> Result<Json<TimerOverridesResponse>, StatusCode> {
+    Ok(Json(TimerOverridesResponse {
+        rules: update_simulator_timer_overrides(&state, request),
+    }))
+}
+
 async fn api_session_state(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<i32>,
@@ -174,6 +208,12 @@ async fn api_session_state(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let now = chrono::Utc::now();
+    let timers = snapshot
+        .conversation
+        .as_ref()
+        .map(|conversation| simulator_timer_snapshots(&state, conversation, now))
+        .unwrap_or_default();
 
     Ok(Json(SessionStateResponse {
         session: snapshot.session,
@@ -189,6 +229,8 @@ async fn api_session_state(
                 last_message_at: conversation.last_message_at,
                 created_at: conversation.created_at,
             }),
+        generated_at: now,
+        timers,
     }))
 }
 
@@ -628,8 +670,9 @@ fn render_simulator_html() -> String {
     .header {
       padding: 18px;
       display: grid;
-      grid-template-columns: 1.2fr 1fr;
+      grid-template-columns: 1.15fr 0.95fr 1.1fr;
       gap: 18px;
+      align-items: start;
     }
     .header-grid {
       display: grid;
@@ -637,6 +680,11 @@ fn render_simulator_html() -> String {
       gap: 10px;
       font-family: "SFMono-Regular", "Menlo", monospace;
       font-size: 0.88rem;
+    }
+    .header-column {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
     .stack {
       display: grid;
@@ -686,11 +734,21 @@ fn render_simulator_html() -> String {
     .msg.system { align-self: center; background: #f3eee7; }
     .meta {
       margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
       font-family: "SFMono-Regular", "Menlo", monospace;
       font-size: 0.75rem;
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.08em;
+    }
+    .stamp {
+      font-family: "SFMono-Regular", "Menlo", monospace;
+      font-size: 0.74rem;
+      color: var(--muted);
     }
     .actions {
       display: flex;
@@ -708,10 +766,79 @@ fn render_simulator_html() -> String {
       border: 1px solid rgba(217, 196, 166, 0.75);
       margin-top: 10px;
     }
+    .timer-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .timer-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px;
+      background:
+        linear-gradient(135deg, rgba(191, 90, 36, 0.08), rgba(255,255,255,0.75)),
+        #fffdf9;
+    }
+    .timer-card.expired {
+      border-color: #b8482f;
+      background:
+        linear-gradient(135deg, rgba(184, 72, 47, 0.12), rgba(255,255,255,0.8)),
+        #fff6f2;
+    }
+    .timer-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+    .countdown {
+      font-family: "SFMono-Regular", "Menlo", monospace;
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--accent-2);
+    }
+    .expired .countdown {
+      color: #b8482f;
+    }
+    .timer-grid, .override-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .timer-note {
+      font-family: "SFMono-Regular", "Menlo", monospace;
+      font-size: 0.78rem;
+      color: var(--muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .override-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px;
+      background: rgba(255,255,255,0.72);
+    }
+    .override-card label {
+      display: block;
+      font-size: 0.84rem;
+      margin-bottom: 8px;
+    }
+    .override-card input {
+      font-family: "SFMono-Regular", "Menlo", monospace;
+      margin-bottom: 8px;
+    }
+    .override-meta {
+      font-family: "SFMono-Regular", "Menlo", monospace;
+      font-size: 0.75rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
     @media (max-width: 1100px) {
       .shell, .stack, .header { grid-template-columns: 1fr; }
       .sidebar, .layout { min-height: auto; }
       .session-list { max-height: none; }
+      .timer-grid, .override-grid, .header-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -742,16 +869,28 @@ fn render_simulator_html() -> String {
         <p class="muted" style="margin-top:8px;">Muestra mensajes del bot dirigidos al asesor en todas las sesiones.</p>
         <div id="advisor-inbox" class="session-list"></div>
       </div>
+      <div class="box">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
+          <strong>Ritmo local</strong>
+          <button class="ghost" id="reset-overrides" type="button">Restaurar</button>
+        </div>
+        <p class="muted" style="margin-top:0;">Ajusta solo el simulador. Los cambios aplican a timers nuevos.</p>
+        <div id="override-grid" class="override-grid"></div>
+      </div>
     </aside>
     <main class="layout">
       <section class="panel header">
-        <div>
+        <div class="header-column">
           <p class="eyebrow">Estado Persistido</p>
           <div id="state-grid" class="header-grid"></div>
         </div>
-        <div>
+        <div class="header-column">
           <p class="eyebrow">Sesión Seleccionada</p>
           <div id="session-summary" class="header-grid"></div>
+        </div>
+        <div class="header-column">
+          <p class="eyebrow">Timers Activos</p>
+          <div id="timer-list" class="timer-list"></div>
         </div>
       </section>
       <section class="stack">
@@ -787,7 +926,32 @@ fn render_simulator_html() -> String {
     </main>
   </div>
   <script>
-    const state = { sessions: [], selectedSessionId: null, selectedMessages: [] };
+    const state = {
+      sessions: [],
+      selectedSessionId: null,
+      selectedMessages: [],
+      selectedSnapshot: null,
+      snapshotFetchedAt: null,
+      timerRules: [],
+    };
+    const TIMER_FIELDS = [
+      { key: 'advisor_response', field: 'advisor_response_seconds' },
+      { key: 'receipt_upload', field: 'receipt_upload_seconds' },
+      { key: 'advisor_stuck', field: 'advisor_stuck_seconds' },
+      { key: 'relay_inactivity', field: 'relay_inactivity_seconds' },
+      { key: 'conversation_reminder', field: 'conversation_reminder_seconds' },
+      { key: 'conversation_reset', field: 'conversation_reset_seconds' },
+    ];
+    const bogotaFormatter = new Intl.DateTimeFormat('es-CO', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
 
     const sessionList = document.getElementById('session-list');
     const advisorInbox = document.getElementById('advisor-inbox');
@@ -795,6 +959,8 @@ fn render_simulator_html() -> String {
     const advisorTranscript = document.getElementById('advisor-transcript');
     const stateGrid = document.getElementById('state-grid');
     const sessionSummary = document.getElementById('session-summary');
+    const timerList = document.getElementById('timer-list');
+    const overrideGrid = document.getElementById('override-grid');
 
     async function fetchJson(url, options) {
       const response = await fetch(url, options);
@@ -808,15 +974,19 @@ fn render_simulator_html() -> String {
     async function loadSessions() {
       state.sessions = await fetchJson('/simulator/api/sessions');
       renderSessions();
-      await loadAdvisorInbox();
+      await Promise.all([loadAdvisorInbox(), loadTimerRules()]);
       if (!state.selectedSessionId && state.sessions.length) {
         state.selectedSessionId = state.sessions[0].id;
       }
       if (state.selectedSessionId) {
         await loadSession(state.selectedSessionId);
       } else {
+        state.selectedSnapshot = null;
         customerTranscript.innerHTML = '';
         advisorTranscript.innerHTML = '';
+        timerList.innerHTML = '<div class="box muted">Selecciona una sesión para ver timers.</div>';
+        stateGrid.innerHTML = '';
+        sessionSummary.innerHTML = '';
       }
     }
 
@@ -827,9 +997,17 @@ fn render_simulator_html() -> String {
         fetchJson(`/simulator/api/sessions/${sessionId}/state`),
       ]);
       state.selectedMessages = messages;
+      state.selectedSnapshot = snapshot;
+      state.snapshotFetchedAt = Date.now();
       renderSessions();
       renderState(snapshot);
       renderTranscripts();
+    }
+
+    async function loadTimerRules() {
+      const response = await fetchJson('/simulator/api/timer-overrides');
+      state.timerRules = response.rules || [];
+      renderTimerOverrides();
     }
 
     async function loadAdvisorInbox() {
@@ -838,6 +1016,7 @@ fn render_simulator_html() -> String {
         <div class="session-card">
           <div><strong>${message.message_kind}</strong></div>
           <div class="muted">${escapeHtml(message.body || '')}</div>
+          <div class="stamp">${escapeHtml(formatBogotaTimestamp(message.created_at))}</div>
         </div>
       `).join('');
     }
@@ -849,6 +1028,7 @@ fn render_simulator_html() -> String {
           <div class="muted">${escapeHtml(session.customer_phone)}</div>
           <div class="muted">Estado: ${escapeHtml(session.state)}</div>
           <div class="muted">Dirección: ${escapeHtml(session.delivery_address || 'Pendiente')}</div>
+          <div class="stamp">${escapeHtml(formatBogotaTimestamp(session.updated_at))}</div>
         </div>
       `).join('');
       for (const element of sessionList.querySelectorAll('[data-session-id]')) {
@@ -857,6 +1037,7 @@ fn render_simulator_html() -> String {
     }
 
     function renderState(snapshot) {
+      state.selectedSnapshot = snapshot;
       const conversation = snapshot.conversation || {};
       const entries = {
         state: conversation.state || 'main_menu',
@@ -872,15 +1053,70 @@ fn render_simulator_html() -> String {
         session_id: snapshot.session.id,
         profile_name: snapshot.session.profile_name || '(vacío)',
         session_phone: snapshot.session.customer_phone,
-        created_at: snapshot.session.created_at,
-        updated_at: snapshot.session.updated_at,
+        created_at: formatBogotaTimestamp(snapshot.session.created_at),
+        updated_at: formatBogotaTimestamp(snapshot.session.updated_at),
+        generated_at: formatBogotaTimestamp(snapshot.generated_at),
       };
       stateGrid.innerHTML = Object.entries(entries).map(([key, value]) => `
-        <div class="box"><strong>${escapeHtml(key)}</strong><div class="muted">${escapeHtml(String(value))}</div></div>
+        <div class="box"><strong>${escapeHtml(key)}</strong><div class="timer-note">${escapeHtml(String(value))}</div></div>
       `).join('');
       sessionSummary.innerHTML = Object.entries(sessionEntries).map(([key, value]) => `
-        <div class="box"><strong>${escapeHtml(key)}</strong><div class="muted">${escapeHtml(String(value))}</div></div>
+        <div class="box"><strong>${escapeHtml(key)}</strong><div class="timer-note">${escapeHtml(String(value))}</div></div>
       `).join('');
+      renderTimerList(snapshot);
+    }
+
+    function renderTimerList(snapshot = state.selectedSnapshot) {
+      if (!snapshot || !Array.isArray(snapshot.timers) || !snapshot.timers.length) {
+        timerList.innerHTML = '<div class="box muted">No hay timers activos para esta sesión.</div>';
+        return;
+      }
+      const elapsedClientSeconds = state.snapshotFetchedAt
+        ? Math.max(0, Math.floor((Date.now() - state.snapshotFetchedAt) / 1000))
+        : 0;
+      timerList.innerHTML = snapshot.timers.map((timer) => {
+        const remaining = Math.max(0, (timer.remaining_seconds || 0) - elapsedClientSeconds);
+        const expired = timer.expired || remaining <= 0;
+        return `
+          <div class="timer-card ${expired ? 'expired' : ''}">
+            <div class="timer-top">
+              <strong>${escapeHtml(timer.label)}</strong>
+              <span class="countdown">${expired ? 'Vencido' : escapeHtml(formatCountdown(remaining))}</span>
+            </div>
+            <div class="timer-grid">
+              <div class="box"><strong>rule</strong><div class="timer-note">${escapeHtml(timer.rule_key)}</div></div>
+              <div class="box"><strong>phase</strong><div class="timer-note">${escapeHtml(timer.phase)}</div></div>
+              <div class="box"><strong>state</strong><div class="timer-note">${escapeHtml(timer.state)}</div></div>
+              <div class="box"><strong>window</strong><div class="timer-note">${escapeHtml(String(timer.effective_seconds))} s</div></div>
+              <div class="box"><strong>started</strong><div class="timer-note">${escapeHtml(formatBogotaTimestamp(timer.started_at))}</div></div>
+              <div class="box"><strong>expires</strong><div class="timer-note">${escapeHtml(formatBogotaTimestamp(timer.expires_at))}</div></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderTimerOverrides() {
+      overrideGrid.innerHTML = state.timerRules.map((rule) => `
+        <div class="override-card">
+          <label for="override-${rule.key}">${escapeHtml(rule.label)}</label>
+          <input
+            id="override-${rule.key}"
+            data-override-field="${lookupTimerField(rule.key)}"
+            type="number"
+            min="1"
+            step="1"
+            placeholder="${rule.default_seconds}"
+            value="${rule.override_seconds ?? ''}">
+          <div class="override-meta">
+            base: ${escapeHtml(String(rule.default_seconds))} s
+            <br>efectivo: ${escapeHtml(String(rule.effective_seconds))} s
+          </div>
+        </div>
+      `).join('');
+      for (const input of overrideGrid.querySelectorAll('[data-override-field]')) {
+        input.addEventListener('change', persistTimerOverridesFromInputs);
+      }
     }
 
     function renderTranscripts() {
@@ -903,7 +1139,10 @@ fn render_simulator_html() -> String {
       const actions = renderActions(message, pane);
       return `
         <div class="msg ${message.actor}">
-          <div class="meta">${escapeHtml(message.actor)} · ${escapeHtml(message.message_kind)}</div>
+          <div class="meta">
+            <span>${escapeHtml(message.actor)} · ${escapeHtml(message.message_kind)}</span>
+            <span class="stamp">${escapeHtml(formatBogotaTimestamp(message.created_at))}</span>
+          </div>
           <div>${escapeHtml(message.body || '')}</div>
           ${extraImage}
           ${actions}
@@ -925,6 +1164,27 @@ fn render_simulator_html() -> String {
         `).join('')}</div>`;
       }
       return '';
+    }
+
+    async function persistTimerOverridesFromInputs() {
+      const payload = {};
+      for (const field of TIMER_FIELDS) {
+        payload[field.field] = null;
+      }
+      for (const input of overrideGrid.querySelectorAll('[data-override-field]')) {
+        const value = input.value.trim();
+        payload[input.dataset.overrideField] = value ? Number(value) : null;
+      }
+      const response = await fetchJson('/simulator/api/timer-overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      state.timerRules = response.rules || [];
+      renderTimerOverrides();
+      if (state.selectedSnapshot) {
+        renderTimerList();
+      }
     }
 
     function bindInteractiveActions() {
@@ -980,6 +1240,24 @@ fn render_simulator_html() -> String {
         .replaceAll('"', '&quot;');
     }
 
+    function lookupTimerField(key) {
+      return TIMER_FIELDS.find((item) => item.key === key)?.field || '';
+    }
+
+    function formatBogotaTimestamp(value) {
+      if (!value) return '(vacío)';
+      return bogotaFormatter.format(new Date(value));
+    }
+
+    function formatCountdown(totalSeconds) {
+      const seconds = Math.max(0, Number(totalSeconds) || 0);
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const remainder = seconds % 60;
+      const hh = hours ? `${String(hours).padStart(2, '0')}:` : '';
+      return `${hh}${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+    }
+
     document.getElementById('create-session-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const customer_phone = document.getElementById('new-phone').value.trim();
@@ -995,9 +1273,26 @@ fn render_simulator_html() -> String {
       await loadSessions();
     });
     document.getElementById('refresh-sessions').addEventListener('click', loadSessions);
+    document.getElementById('reset-overrides').addEventListener('click', async () => {
+      const payload = {};
+      for (const field of TIMER_FIELDS) {
+        payload[field.field] = null;
+      }
+      const response = await fetchJson('/simulator/api/timer-overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      state.timerRules = response.rules || [];
+      renderTimerOverrides();
+    });
     document.getElementById('send-customer-text').addEventListener('click', () => sendText('customer'));
     document.getElementById('send-advisor-text').addEventListener('click', () => sendText('advisor'));
     document.getElementById('send-customer-image').addEventListener('click', sendCustomerImage);
+    setInterval(() => renderTimerList(), 1000);
+    setInterval(() => {
+      loadSessions().catch(() => {});
+    }, 5000);
     loadSessions();
   </script>
 </body>

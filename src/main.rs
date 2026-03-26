@@ -2,7 +2,9 @@ use std::net::SocketAddr;
 
 use axum::Router;
 use granizado_bot::{
-    bot::timers::{new_timer_map, restore_pending_timers, spawn_timer_sweeper},
+    bot::timers::{
+        new_timer_map, new_timer_overrides, restore_pending_timers, spawn_timer_sweeper,
+    },
     config::{BotMode, Config},
     db::init_pool,
     messages::{set_client_messages, ClientMessages},
@@ -51,6 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool,
         transport,
         timers: new_timer_map(),
+        timer_overrides: new_timer_overrides(),
     };
 
     restore_pending_timers(app_state.clone()).await?;
