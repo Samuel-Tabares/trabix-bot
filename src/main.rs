@@ -9,7 +9,7 @@ use granizado_bot::{
     db::init_pool,
     messages::{set_client_messages, ClientMessages},
     routes,
-    transport::{OutboundTransport, SimulatorTransport},
+    transport::OutboundTransport,
     whatsapp::client::WhatsAppClient,
     AppState,
 };
@@ -42,9 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         BotMode::Simulator => {
             let simulator = config.simulator();
             std::fs::create_dir_all(&simulator.upload_dir)?;
-            OutboundTransport::Simulator(SimulatorTransport {
-                menu_image_path: simulator.menu_image_path.clone(),
-            })
+            OutboundTransport::Simulator
         }
     };
 

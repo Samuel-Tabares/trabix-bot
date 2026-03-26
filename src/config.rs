@@ -34,7 +34,6 @@ pub struct ProductionConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SimulatorConfig {
-    pub menu_image_path: PathBuf,
     pub upload_dir: PathBuf,
 }
 
@@ -87,7 +86,6 @@ impl Config {
         let simulator = match mode {
             BotMode::Production => None,
             BotMode::Simulator => Some(SimulatorConfig {
-                menu_image_path: PathBuf::from(read_required("SIMULATOR_MENU_IMAGE_PATH")?),
                 upload_dir: PathBuf::from(
                     env::var("SIMULATOR_UPLOAD_DIR")
                         .unwrap_or_else(|_| ".simulator_uploads".to_string()),
@@ -177,7 +175,6 @@ mod tests {
             "WHATSAPP_VERIFY_TOKEN",
             "WHATSAPP_APP_SECRET",
             "MENU_IMAGE_MEDIA_ID",
-            "SIMULATOR_MENU_IMAGE_PATH",
             "SIMULATOR_UPLOAD_DIR",
             "BIND_IP",
         ] {
@@ -201,7 +198,6 @@ mod tests {
         std::env::set_var("BOT_MODE", "simulator");
         std::env::set_var("DATABASE_URL", "postgres://local");
         std::env::set_var("ADVISOR_PHONE", "573001234567");
-        std::env::set_var("SIMULATOR_MENU_IMAGE_PATH", "./menu.jpg");
 
         let config = Config::from_env().expect("simulator config should load");
         assert_eq!(config.mode, BotMode::Simulator);

@@ -29,6 +29,7 @@ use crate::{
         get_media, get_session, list_advisor_inbox, list_messages_for_session, list_sessions,
         snapshot_state, NewSimulatorMedia, NewSimulatorMessage, SimulatorSession,
     },
+    transport::SIMULATOR_MENU_ASSET_PATH,
     AppState,
 };
 
@@ -459,8 +460,8 @@ async fn api_media(
 }
 
 async fn api_menu_asset(State(state): State<AppState>) -> Result<Response<Body>, StatusCode> {
-    let path = state.config.simulator().menu_image_path.clone();
-    file_response(path, None).await
+    let _ = state;
+    file_response(PathBuf::from(SIMULATOR_MENU_ASSET_PATH), None).await
 }
 
 async fn ensure_session_exists(
@@ -533,6 +534,7 @@ fn sanitized_filename(name: &str) -> String {
 fn content_type_for_path(path: &Path) -> &'static str {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
         Some("webp") => "image/webp",
         Some("gif") => "image/gif",
         _ => "image/jpeg",

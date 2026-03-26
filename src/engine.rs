@@ -31,7 +31,7 @@ use crate::{
     logging::{log_bot_action, mask_phone, summarize_action_kinds},
     messages::client_messages,
     simulator::{create_message, get_media, get_session_by_phone, NewSimulatorMessage},
-    transport::OutboundTransport,
+    transport::{OutboundTransport, SIMULATOR_MENU_ASSET_PATH},
     AppState,
 };
 
@@ -656,7 +656,7 @@ async fn send_via_transport(
             }
             _ => {}
         },
-        OutboundTransport::Simulator(_) => {
+        OutboundTransport::Simulator => {
             let session_id = resolve_session_id_for_send(state, to, session_phone).await?;
             let audience = if to == state.config.advisor_phone {
                 "advisor"
@@ -706,7 +706,7 @@ async fn send_image(
             )
             .await
         }
-        OutboundTransport::Simulator(_) => {
+        OutboundTransport::Simulator => {
             let file_path = get_media(&state.pool, media_id)
                 .await?
                 .map(|media| media.file_path);
@@ -750,7 +750,7 @@ async fn send_asset_image(
             )
             .await
         }
-        (OutboundTransport::Simulator(transport), ImageAsset::Menu) => {
+        (OutboundTransport::Simulator, ImageAsset::Menu) => {
             send_via_transport(
                 state,
                 to,
@@ -762,7 +762,7 @@ async fn send_asset_image(
                     "media_url": "/simulator/api/menu-asset",
                 }),
                 session_phone,
-                Some(&transport.menu_image_path),
+                Some(Path::new(SIMULATOR_MENU_ASSET_PATH)),
             )
             .await
         }

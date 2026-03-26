@@ -88,6 +88,10 @@ Cuando `BOT_MODE=simulator`:
 - la UI expone timers activos con inicio, vencimiento, countdown y fase del timeout
 - la UI permite overrides locales de timers solo para nuevas esperas creadas en simulator
 - los timeouts del simulator registran avisos de sistema indicando si se dispararon por runtime, sweep o reconciliacion de arranque
+- el repositorio incluye launchers en `scripts/` para arrancar el simulator con defaults razonables en macOS/Linux y Windows
+- esos launchers pueden crear o arrancar un Postgres local via Docker si `DATABASE_URL` no fue configurado manualmente
+- el simulator siempre usa `assets/menu-placeholder.svg` como imagen local rastreada para `Ver Menú`
+- si quieres que otro equipo vea el menú real al clonar el repo, reemplaza ese archivo rastreado y súbelo a GitHub
 
 El objetivo del simulator es validar localmente el mismo comportamiento productivo del bot, incluyendo:
 
@@ -515,7 +519,6 @@ Variables y datos operativos clave:
 - `WHATSAPP_APP_SECRET`
 - `ADVISOR_PHONE`
 - `MENU_IMAGE_MEDIA_ID`
-- `SIMULATOR_MENU_IMAGE_PATH`
 - `SIMULATOR_UPLOAD_DIR`
 
 Notas actuales:
@@ -526,7 +529,7 @@ Notas actuales:
 - `FORCE_BOGOTA_NOW=YYYY-MM-DD HH:MM` es solo para pruebas locales de horario
 - `WHATSAPP_TEST_RECIPIENT` sirve para smoke tests live, no define el numero productivo escuchado por el bot
 - `BOT_MODE=simulator` no usa `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` ni `MENU_IMAGE_MEDIA_ID`
-- `SIMULATOR_MENU_IMAGE_PATH` define la imagen local usada por `Ver Menú` en simulator
+- `assets/menu-placeholder.svg` es la imagen rastreada usada por `Ver Menú` en simulator
 - `SIMULATOR_UPLOAD_DIR` guarda imagenes locales de prueba como comprobantes o capturas
 
 Validaciones operativas importantes:
@@ -545,7 +548,7 @@ cargo check
 cargo test
 cargo test --test live_whatsapp -- --ignored --test-threads=1
 cargo run --bin granizado-bot
-BOT_MODE=simulator SIMULATOR_MENU_IMAGE_PATH=./ruta/menu-local.jpg cargo run --bin granizado-bot
+BOT_MODE=simulator cargo run --bin granizado-bot
 ```
 
 ### Checklist Manual Minimo

@@ -1,5 +1,6 @@
 target/
 .env
 /src/menu.PNG
+.simulator_uploads/
 *.pdb
 .DS_Store

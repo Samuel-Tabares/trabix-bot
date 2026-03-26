@@ -19,6 +19,7 @@ Current code layout:
 - `src/engine.rs`: shared inbound-processing and outbound-action execution path used by webhook, simulator, and timers.
 - `src/simulator/`: local simulator persistence helpers for sessions, transcripts, and local media.
 - `src/transport.rs`: outbound transport selection between Meta and simulator recording.
+- `scripts/`: local launch helpers, including cross-platform simulator startup wrappers.
 - `src/bin/`: local operational utilities such as media upload to Meta.
 - `migrations/`: PostgreSQL schema.
 - `tests/`: local integration and live smoke tests.
@@ -71,6 +72,7 @@ Current implementation status:
   - active timer inspector with countdowns, deadlines, and timeout phase/state visibility
   - simulator-only timer overrides from the UI for faster local timeout validation
   - simulator system notices when a timeout comes from runtime expiry, periodic sweep, or boot reconciliation
+  - cross-platform simulator launch helpers for macOS/Linux and Windows, with optional Docker-based local Postgres bootstrap
 - The old phase-planning documents were removed because they no longer matched the live system. Use `general_info/current_runtime_reference.md` for the current runtime and validation reference.
 
 Current real runtime behavior:
@@ -98,7 +100,9 @@ Use these commands regularly:
 - `cargo test`: run local unit and integration coverage.
 - `cargo test --test live_whatsapp -- --ignored --test-threads=1`: run live WhatsApp transport smoke tests.
 - `cargo run --bin granizado-bot`: run the local bot service.
-- `BOT_MODE=simulator SIMULATOR_MENU_IMAGE_PATH=./ruta/menu-local.jpg cargo run --bin granizado-bot`: run the full local simulator without Meta.
+- `BOT_MODE=simulator cargo run --bin granizado-bot`: run the full local simulator without Meta.
+- `./scripts/run_simulator.sh`: launch the simulator on macOS/Linux with sensible defaults and optional Docker-backed local Postgres.
+- `scripts\\run_simulator.bat`: launch the simulator on Windows through the PowerShell wrapper.
 - `cargo run --bin upload_media -- /ruta/local/menu.jpg`: upload a local media file to Meta and print the `media_id`.
 - `curl -H "Authorization: Bearer $WHATSAPP_TOKEN" "https://graph.facebook.com/v21.0/$WABA_ID/phone_numbers"`: confirm which phone numbers the current token can operate.
 - `curl -H "Authorization: Bearer $WHATSAPP_TOKEN" "https://graph.facebook.com/v21.0/$WABA_ID/subscribed_apps"`: confirm the WABA is subscribed to the current Meta app.
@@ -109,7 +113,7 @@ Operational notes:
 - Live tests rely on `.env`. They now load it via `dotenvy`, but still require valid credentials and reachable services.
 - `BOT_MODE=production` is still the default. Omit `BOT_MODE` in Railway unless you explicitly mean to run simulator mode.
 - `BOT_MODE=simulator` does not require WhatsApp credentials and should bind to `127.0.0.1` by default.
-- `SIMULATOR_MENU_IMAGE_PATH` must point to a local menu image if you want the simulator to render `Ver Menú`.
+- The simulator always uses the tracked file `assets/menu-placeholder.svg` for `Ver Menú`. Replace that file in the repository if you want a real menu image to be pushed with the project.
 - `SIMULATOR_UPLOAD_DIR` stores local receipt/image uploads for simulator conversations and should stay outside production deploy flows.
 - Customer-facing bot copy now lives in `config/messages.toml` and is loaded at startup; restart the service after editing that file.
 - `TRANSFER_PAYMENT_TEXT` is now optional fallback-only in `.env` for backward compatibility if `config/messages.toml` leaves `checkout.transfer_payment_text` empty.
@@ -161,6 +165,8 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.3.0`: full local simulator mode with shared engine/transport, persisted transcripts/media, and Axum-served customer/advisor chat UI
   - `v1.4.0`: simulator timer observability with timestamps, countdown/debug panel, UI overrides, and timeout source notices
   - `v1.4.1`: repository licensing metadata with proprietary `All Rights Reserved` terms and evaluation-only simulator permission
+  - `v1.4.2`: cross-platform simulator launcher scripts and tracked fallback menu asset
+  - `v1.4.3`: fixed simulator menu asset path using the tracked fallback file only
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases
