@@ -62,9 +62,9 @@ open_browser() {
 
 mkdir -p "$SIMULATOR_UPLOAD_DIR"
 
-if [[ ! -f "$ROOT_DIR/assets/menu-placeholder.svg" ]]; then
+if [[ ! -f "$ROOT_DIR/assets/trabix-menu.png" ]]; then
   echo "No existe el menú fallback del simulador:"
-  echo "  $ROOT_DIR/assets/menu-placeholder.svg"
+  echo "  $ROOT_DIR/assets/trabix-menu.png"
   exit 1
 fi
 
@@ -74,7 +74,7 @@ fi
 
 echo "Lanzando simulator en $SIMULATOR_URL"
 echo "DATABASE_URL=$DATABASE_URL"
-echo "SIMULATOR_MENU_ASSET=$ROOT_DIR/assets/menu-placeholder.svg"
+echo "SIMULATOR_MENU_ASSET=$ROOT_DIR/assets/trabix-menu.png"
 
 cd "$ROOT_DIR"
 open_browser

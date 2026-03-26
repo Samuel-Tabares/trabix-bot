@@ -1,5 +1,5 @@
 use crate::whatsapp::client::WhatsAppClient;
-pub const SIMULATOR_MENU_ASSET_PATH: &str = "assets/menu-placeholder.svg";
+pub const SIMULATOR_MENU_ASSET_PATH: &str = "assets/trabix-menu.png";
 
 #[derive(Debug, Clone)]
 pub enum OutboundTransport {

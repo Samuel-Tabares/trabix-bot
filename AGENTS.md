@@ -113,7 +113,7 @@ Operational notes:
 - Live tests rely on `.env`. They now load it via `dotenvy`, but still require valid credentials and reachable services.
 - `BOT_MODE=production` is still the default. Omit `BOT_MODE` in Railway unless you explicitly mean to run simulator mode.
 - `BOT_MODE=simulator` does not require WhatsApp credentials and should bind to `127.0.0.1` by default.
-- The simulator always uses the tracked file `assets/menu-placeholder.svg` for `Ver Menú`. Replace that file in the repository if you want a real menu image to be pushed with the project.
+- The simulator always uses the tracked file `assets/trabix-menu.png` for `Ver Menú`. Replace that tracked file if the shared simulator menu image changes in the future.
 - `SIMULATOR_UPLOAD_DIR` stores local receipt/image uploads for simulator conversations and should stay outside production deploy flows.
 - Customer-facing bot copy now lives in `config/messages.toml` and is loaded at startup; restart the service after editing that file.
 - `TRANSFER_PAYMENT_TEXT` is now optional fallback-only in `.env` for backward compatibility if `config/messages.toml` leaves `checkout.transfer_payment_text` empty.
@@ -167,6 +167,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.4.1`: repository licensing metadata with proprietary `All Rights Reserved` terms and evaluation-only simulator permission
   - `v1.4.2`: cross-platform simulator launcher scripts and tracked fallback menu asset
   - `v1.4.3`: fixed simulator menu asset path using the tracked fallback file only
+  - `v1.4.4`: real tracked simulator menu image replaces the placeholder asset
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases

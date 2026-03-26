@@ -90,7 +90,7 @@ Cuando `BOT_MODE=simulator`:
 - los timeouts del simulator registran avisos de sistema indicando si se dispararon por runtime, sweep o reconciliacion de arranque
 - el repositorio incluye launchers en `scripts/` para arrancar el simulator con defaults razonables en macOS/Linux y Windows
 - esos launchers pueden crear o arrancar un Postgres local via Docker si `DATABASE_URL` no fue configurado manualmente
-- el simulator siempre usa `assets/menu-placeholder.svg` como imagen local rastreada para `Ver Menú`
+- el simulator siempre usa `assets/trabix-menu.png` como imagen local rastreada para `Ver Menú`
 - si quieres que otro equipo vea el menú real al clonar el repo, reemplaza ese archivo rastreado y súbelo a GitHub
 
 El objetivo del simulator es validar localmente el mismo comportamiento productivo del bot, incluyendo:
@@ -529,7 +529,7 @@ Notas actuales:
 - `FORCE_BOGOTA_NOW=YYYY-MM-DD HH:MM` es solo para pruebas locales de horario
 - `WHATSAPP_TEST_RECIPIENT` sirve para smoke tests live, no define el numero productivo escuchado por el bot
 - `BOT_MODE=simulator` no usa `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` ni `MENU_IMAGE_MEDIA_ID`
-- `assets/menu-placeholder.svg` es la imagen rastreada usada por `Ver Menú` en simulator
+- `assets/trabix-menu.png` es la imagen rastreada usada por `Ver Menú` en simulator
 - `SIMULATOR_UPLOAD_DIR` guarda imagenes locales de prueba como comprobantes o capturas
 
 Validaciones operativas importantes:

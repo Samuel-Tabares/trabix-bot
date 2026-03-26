@@ -4,9 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-03-26
+
+- Replace the simulator placeholder menu asset with the real tracked menu image at `assets/trabix-menu.png`.
+- Keep simulator menu serving fixed to the tracked repository asset so every clone sees the same menu by default.
+
 ## [1.4.3] - 2026-03-26
 
-- Remove `SIMULATOR_MENU_IMAGE_PATH` from simulator configuration and always serve the tracked fallback asset at `assets/menu-placeholder.svg` for `Ver Menú`.
+- Remove `SIMULATOR_MENU_IMAGE_PATH` from simulator configuration and always serve the tracked fallback asset for `Ver Menú`.
 - Keep the cross-platform simulator launchers but simplify them to the fixed tracked menu asset workflow so teams can replace that file and push it with the repository.
 
 ## [1.4.2] - 2026-03-26

@@ -44,7 +44,7 @@ function Ensure-DockerDatabase {
 
 New-Item -ItemType Directory -Force -Path $env:SIMULATOR_UPLOAD_DIR | Out-Null
 
-$menuAssetPath = Join-Path $rootDir "assets/menu-placeholder.svg"
+$menuAssetPath = Join-Path $rootDir "assets/trabix-menu.png"
 if (-not (Test-Path $menuAssetPath)) {
     throw "No existe el menú fallback del simulador: $menuAssetPath"
 }
