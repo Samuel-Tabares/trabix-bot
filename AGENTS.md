@@ -8,6 +8,7 @@ Current source-of-truth areas:
 - `AGENTS.md`: contributor instructions for this repository.
 - `general_info/Flow_Design_Diagram_v2.mermaid`: end-to-end conversation flow.
 - `general_info/current_runtime_reference.md`: current runtime behavior, operational constraints, persistence, timers, and validation checklist.
+- `LICENSE`: proprietary repository distribution terms with `All Rights Reserved` and limited evaluation-only simulator permission.
 
 Current code layout:
 
@@ -157,6 +158,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.2.0`: main-menu simplification, `America/Bogota` SQL session timezone, generic customer inactivity handling, and 30-minute hard reset for stuck advisor-detail waits
   - `v1.3.0`: full local simulator mode with shared engine/transport, persisted transcripts/media, and Axum-served customer/advisor chat UI
   - `v1.4.0`: simulator timer observability with timestamps, countdown/debug panel, UI overrides, and timeout source notices
+  - `v1.4.1`: repository licensing metadata with proprietary `All Rights Reserved` terms and evaluation-only simulator permission
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases

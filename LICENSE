@@ -1,0 +1,58 @@
+Copyright (c) 2026 Samuel Tabares
+All Rights Reserved.
+
+This repository and all contents within it, including but not limited to source code,
+documentation, configuration, assets, database schema, and related materials
+(collectively, the "Software"), are proprietary and confidential.
+
+No license or other right is granted except as expressly stated below.
+
+Limited Permission
+
+You may:
+
+1. View the Software on GitHub or other authorized public repository pages.
+2. Run the local simulator strictly for personal, non-commercial evaluation, testing,
+   or demonstration of the Software as provided by the repository owner.
+
+Restrictions
+
+Except for the limited permission above, you may not, without prior written permission
+from the copyright owner:
+
+1. Copy, reproduce, archive, or store the Software in whole or in part.
+2. Modify, adapt, translate, reverse engineer, decompile, disassemble, or create
+   derivative works based on the Software.
+3. Distribute, publish, sublicense, lend, rent, lease, transfer, or otherwise make
+   the Software available to any third party.
+4. Sell, commercialize, host, deploy, or use the Software or any part of it for any
+   commercial purpose.
+5. Use the Software or any portion of it in another project, product, service, bot,
+   workflow, or dataset.
+6. Remove, alter, or obscure any copyright, attribution, or proprietary notice.
+
+No Open Source License
+
+The Software is not licensed under any open source license. Public availability of the
+repository does not grant permission to use, copy, modify, redistribute, or commercialize
+the Software beyond the limited permission stated above.
+
+Ownership
+
+All rights, title, and interest in and to the Software remain exclusively with the
+copyright owner.
+
+Termination
+
+Any violation of these terms automatically terminates the limited permission granted above.
+
+Disclaimer
+
+The Software is provided "AS IS", without warranty of any kind, express or implied, including
+but not limited to warranties of merchantability, fitness for a particular purpose, and
+non-infringement.
+
+Contact
+
+For licensing requests or permission to use the Software beyond the scope above, contact
+the repository owner directly.

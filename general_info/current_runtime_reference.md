@@ -10,6 +10,13 @@ Este archivo debe mantenerse alineado con:
 - `AGENTS.md`
 - `general_info/Flow_Design_Diagram_v2.mermaid`
 - la implementacion vigente en `src/`
+- `LICENSE`
+
+Licenciamiento actual del repositorio:
+
+- el repositorio es propietario y se distribuye bajo `All Rights Reserved`
+- la visibilidad publica del codigo no concede permiso para copiarlo, modificarlo, redistribuirlo o venderlo
+- solo se permite ver el codigo y ejecutar el simulator localmente para evaluacion personal no comercial, segun `LICENSE`
 
 ## Arquitectura Actual
 
