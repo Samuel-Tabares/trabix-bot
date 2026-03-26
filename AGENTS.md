@@ -7,7 +7,8 @@ Current source-of-truth areas:
 
 - `AGENTS.md`: contributor instructions for this repository.
 - `README.md`: public project overview and local simulator quickstart.
-- `general_info/Flow_Design_Diagram_v2.mermaid`: end-to-end conversation flow.
+- `general_info/complex_diagram.mermaid`: detailed end-to-end runtime and architecture flow.
+- `general_info/simple_diagram.mermaid`: simplified customer/advisor flow diagram.
 - `general_info/current_runtime_reference.md`: current runtime behavior, operational constraints, persistence, timers, and validation checklist.
 - `LICENSE`: proprietary repository distribution terms with `All Rights Reserved` and limited evaluation-only simulator permission.
 
@@ -155,7 +156,7 @@ This project uses SQLx migrations at startup. Migration discipline is mandatory.
 - After adding a migration, confirm the code paths that read and write the new fields are updated together: model, queries, runtime logic, and tests.
 
 ## Versioning & Releases
-This repository now uses release versions and tags, every change made on the project is named and versioned so we can keep a full audit, every change made is also updated on these 3 files: AGENTS.md ; CHANGELOG.md ; Flow_Design_Diagram_v2.mermaid.
+This repository now uses release versions and tags, every change made on the project is named and versioned so we can keep a full audit, every change made is also updated on these 3 files: AGENTS.md ; CHANGELOG.md ; the current source-of-truth Mermaid flow diagram (`general_info/complex_diagram.mermaid` when the runtime flow changes).
 
 - Stable release line:
   - `v1` / `v1.0.0`: baseline project state before the post-release workflow fixes
