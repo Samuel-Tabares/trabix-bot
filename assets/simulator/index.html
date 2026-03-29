@@ -39,6 +39,31 @@
           <button id="show-chat-view" class="view-toggle active" type="button">Conversaciones</button>
           <button id="show-db-view" class="view-toggle" type="button">Base de datos</button>
         </div>
+        <div class="sidebar-tools">
+          <button
+            id="toggle-timers-popover"
+            class="timers-trigger"
+            type="button"
+            aria-expanded="false"
+            aria-controls="timers-popover">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 2.75a1 1 0 0 1 1-1h4a1 1 0 1 1 0 2h-4a1 1 0 0 1-1-1Z" fill="currentColor"/>
+              <path d="M17.55 5.03a1 1 0 0 1 1.41 0l1.3 1.3a1 1 0 0 1-1.42 1.42l-1.29-1.3a1 1 0 0 1 0-1.42Z" fill="currentColor"/>
+              <path d="M6.46 5.03a1 1 0 0 1 0 1.42L5.17 7.74a1 1 0 1 1-1.42-1.42l1.3-1.3a1 1 0 0 1 1.41 0Z" fill="currentColor"/>
+              <path d="M12 4.75a7.25 7.25 0 1 0 7.25 7.25A7.26 7.26 0 0 0 12 4.75Zm0 2a1 1 0 0 1 1 1v3.84l2.27 1.3a1 1 0 1 1-.99 1.73l-2.78-1.6a1 1 0 0 1-.5-.87V7.75a1 1 0 0 1 1-1Z" fill="currentColor"/>
+              <path d="M8 20.25a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H9a1 1 0 0 1-1-1Z" fill="currentColor"/>
+            </svg>
+            <span>timers</span>
+          </button>
+
+          <div id="timers-popover" class="timers-popover" hidden>
+            <div class="timers-popover-head">
+              <p class="eyebrow">Timers</p>
+              <span class="summary-hint">Vista rápida</span>
+            </div>
+            <div id="timers-popover-list" class="timers-popover-list"></div>
+          </div>
+        </div>
       </section>
 
       <form id="create-session-form" class="sidebar-card">
@@ -90,11 +115,33 @@
               <div id="customer-transcript" class="transcript"></div>
 
               <div class="composer">
-                <textarea id="customer-text" placeholder="Escribe como cliente..."></textarea>
-                <div class="composer-actions">
-                  <button id="send-customer-text" type="button">Enviar texto</button>
-                  <input id="customer-image" type="file" accept="image/*">
-                  <button id="send-customer-image" class="ghost" type="button">Enviar imagen</button>
+                <div class="composer-shell">
+                  <input id="customer-image" class="visually-hidden-file" type="file" accept="image/*">
+                  <button
+                    id="pick-customer-image"
+                    class="icon-button ghost composer-attach"
+                    type="button"
+                    title="Seleccionar imagen"
+                    aria-label="Seleccionar imagen">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M5 5.5h9.5a2.5 2.5 0 0 1 2.5 2.5v.5h-2V8a.5.5 0 0 0-.5-.5H5a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h10.5v2H5A2.5 2.5 0 0 1 2.5 16V8A2.5 2.5 0 0 1 5 5.5Z" fill="currentColor"/>
+                      <path d="M6.5 15h7.2l-2.3-3.1-2 2.2-1.2-1.5L6.5 15Zm2.2-4.7a1.35 1.35 0 1 0 0-2.7 1.35 1.35 0 0 0 0 2.7Z" fill="currentColor"/>
+                      <path d="M18 9.5v2.5h2.5a1 1 0 1 1 0 2H18v2.5a1 1 0 1 1-2 0V14h-2.5a1 1 0 1 1 0-2H16V9.5a1 1 0 1 1 2 0Z" fill="currentColor"/>
+                    </svg>
+                  </button>
+                  <div class="composer-field">
+                    <textarea id="customer-text" placeholder="Escribe como cliente..."></textarea>
+                    <button
+                      id="send-customer"
+                      class="icon-button composer-send"
+                      type="button"
+                      title="Enviar mensaje o imagen"
+                      aria-label="Enviar mensaje o imagen">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M3.4 11.2 19.7 4.4c.97-.4 1.92.56 1.51 1.52l-6.8 16.3c-.43 1.04-1.94.97-2.27-.11l-1.57-5.14-5.13-1.57c-1.09-.33-1.16-1.84-.11-2.28Zm3.35 1.42 4.96 1.52a1 1 0 0 1 .67.67l1.52 4.96 4.72-11.33-11.87 4.18Z" fill="currentColor"/>
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </div>
             </article>
@@ -109,9 +156,18 @@
               <div id="advisor-transcript" class="transcript"></div>
 
               <div class="composer">
-                <textarea id="advisor-text" placeholder="Escribe como asesor..."></textarea>
-                <div class="composer-actions">
-                  <button id="send-advisor-text" class="secondary" type="button">Enviar texto</button>
+                <div class="composer-field composer-field-solo">
+                  <textarea id="advisor-text" placeholder="Escribe como asesor..."></textarea>
+                  <button
+                    id="send-advisor"
+                    class="icon-button secondary composer-send"
+                    type="button"
+                    title="Enviar mensaje"
+                    aria-label="Enviar mensaje">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M3.4 11.2 19.7 4.4c.97-.4 1.92.56 1.51 1.52l-6.8 16.3c-.43 1.04-1.94.97-2.27-.11l-1.57-5.14-5.13-1.57c-1.09-.33-1.16-1.84-.11-2.28Zm3.35 1.42 4.96 1.52a1 1 0 0 1 .67.67l1.52 4.96 4.72-11.33-11.87 4.18Z" fill="currentColor"/>
+                    </svg>
+                  </button>
                 </div>
               </div>
             </article>
@@ -137,42 +193,6 @@
             <div id="db-tabs" class="db-tabs"></div>
             <div id="db-table-wrap" class="db-table-wrap"></div>
           </section>
-        </div>
-      </section>
-
-      <section class="panel workspace-header">
-        <div class="header-top">
-          <div class="header-copy">
-            <p class="eyebrow">Centro de control</p>
-            <h2>Sesiones, estado y revisión operativa sin perder el hilo.</h2>
-            <p class="muted">La vista principal se mantiene fija para laptop y los detalles largos se desplazan dentro de cada panel.</p>
-          </div>
-        </div>
-
-        <div class="header-panels">
-          <article class="summary-card summary-card-session">
-            <div class="summary-card-head">
-              <p class="eyebrow">Sesión activa</p>
-              <span id="workspace-mode-label" class="mode-pill">Vista chat</span>
-            </div>
-            <div id="session-summary" class="summary-grid"></div>
-          </article>
-
-          <article class="summary-card">
-            <div class="summary-card-head">
-              <p class="eyebrow">Estado persistido</p>
-              <span class="summary-hint">PostgreSQL</span>
-            </div>
-            <div id="state-grid" class="summary-grid"></div>
-          </article>
-
-          <article class="summary-card summary-card-timers">
-            <div class="summary-card-head">
-              <p class="eyebrow">Timers activos</p>
-              <span class="summary-hint">Auto refresh</span>
-            </div>
-            <div id="timer-list" class="timer-list"></div>
-          </article>
         </div>
       </section>
     </main>

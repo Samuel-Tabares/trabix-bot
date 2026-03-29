@@ -13,6 +13,9 @@ const state = {
     order_items: [],
   },
   dbGeneratedAt: null,
+  timersPopoverOpen: false,
+  sendingCustomer: false,
+  sendingAdvisor: false,
   refreshLocks: {},
 };
 
@@ -60,9 +63,6 @@ const bogotaFormatter = new Intl.DateTimeFormat('es-CO', {
 const sessionList = document.getElementById('session-list');
 const customerTranscript = document.getElementById('customer-transcript');
 const advisorTranscript = document.getElementById('advisor-transcript');
-const stateGrid = document.getElementById('state-grid');
-const sessionSummary = document.getElementById('session-summary');
-const timerList = document.getElementById('timer-list');
 const overrideGrid = document.getElementById('override-grid');
 const dbTabs = document.getElementById('db-tabs');
 const dbTableWrap = document.getElementById('db-table-wrap');
@@ -71,7 +71,17 @@ const showChatViewButton = document.getElementById('show-chat-view');
 const showDbViewButton = document.getElementById('show-db-view');
 const chatWorkspace = document.getElementById('chat-workspace');
 const dbWorkspace = document.getElementById('db-workspace');
-const workspaceModeLabel = document.getElementById('workspace-mode-label');
+const timersToggleButton = document.getElementById('toggle-timers-popover');
+const timersPopover = document.getElementById('timers-popover');
+const timersPopoverList = document.getElementById('timers-popover-list');
+const customerText = document.getElementById('customer-text');
+const advisorText = document.getElementById('advisor-text');
+const customerImageInput = document.getElementById('customer-image');
+const pickCustomerImageButton = document.getElementById('pick-customer-image');
+const sendCustomerButton = document.getElementById('send-customer');
+const sendAdvisorButton = document.getElementById('send-advisor');
+const customerImageStatus = document.getElementById('customer-image-status');
+const sidebarTools = document.querySelector('.sidebar-tools');
 
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
@@ -108,7 +118,13 @@ function renderWorkspaceView() {
   dbWorkspace.hidden = !isDb;
   showChatViewButton.classList.toggle('active', !isDb);
   showDbViewButton.classList.toggle('active', isDb);
-  workspaceModeLabel.textContent = isDb ? 'Vista DB' : 'Vista chat';
+}
+
+function setTimersPopoverOpen(open) {
+  state.timersPopoverOpen = Boolean(open);
+  timersPopover.hidden = !state.timersPopoverOpen;
+  timersToggleButton.classList.toggle('active', state.timersPopoverOpen);
+  timersToggleButton.setAttribute('aria-expanded', String(state.timersPopoverOpen));
 }
 
 async function refreshSessionsList() {
@@ -168,9 +184,9 @@ function renderEmptySessionState() {
   state.snapshotFetchedAt = null;
   customerTranscript.innerHTML = '<div class="empty-card empty-card-chat"><strong>Sin sesión activa</strong><span>Crea o selecciona una sesión para usar el panel del cliente.</span></div>';
   advisorTranscript.innerHTML = '<div class="empty-card empty-card-chat"><strong>Sin asesor asignado</strong><span>Selecciona una sesión para usar el panel del asesor.</span></div>';
-  timerList.innerHTML = '<div class="empty-card"><strong>Sin timers</strong><span>Selecciona una sesión para revisar las esperas activas.</span></div>';
-  renderSummaryGrid(sessionSummary, [], 'Crea o selecciona una sesión para ver su contexto.');
-  renderSummaryGrid(stateGrid, [], 'El estado persistido aparecerá aquí.');
+  renderTimersPopover();
+  syncCustomerComposer();
+  syncAdvisorComposer();
 }
 
 function renderSessions() {
@@ -200,48 +216,14 @@ function renderSessions() {
 }
 
 function renderState(snapshot) {
-  const conversation = snapshot.conversation || {};
-  const stateEntries = [
-    { label: 'estado', value: conversation.state || 'main_menu', accent: true },
-    { label: 'cliente', value: conversation.customer_name || '(vacío)' },
-    { label: 'teléfono', value: conversation.customer_phone || '(vacío)' },
-    { label: 'dirección', value: conversation.delivery_address || '(vacío)' },
-    { label: 'pedido actual', value: conversation.state_data?.current_order_id ?? '(vacío)' },
-    { label: 'asesor objetivo', value: conversation.state_data?.advisor_target_phone || '(vacío)' },
-    { label: 'receipt vencido', value: String(conversation.state_data?.receipt_timer_expired ?? false) },
-    { label: 'advisor vencido', value: String(conversation.state_data?.advisor_timer_expired ?? false) },
-  ];
-  const sessionEntries = [
-    { label: 'session_id', value: snapshot.session.id, accent: true },
-    { label: 'perfil', value: snapshot.session.profile_name || '(vacío)' },
-    { label: 'teléfono sesión', value: snapshot.session.customer_phone },
-    { label: 'creada', value: formatBogotaTimestamp(snapshot.session.created_at) },
-    { label: 'actualizada', value: formatBogotaTimestamp(snapshot.session.updated_at) },
-    { label: 'snapshot', value: formatBogotaTimestamp(snapshot.generated_at) },
-  ];
-
-  renderSummaryGrid(stateGrid, stateEntries, 'El estado persistido aparecerá aquí.');
-  renderSummaryGrid(sessionSummary, sessionEntries, 'Crea o selecciona una sesión para ver su contexto.');
-  renderTimerList(snapshot);
+  renderTimersPopover(snapshot);
+  syncCustomerComposer();
+  syncAdvisorComposer();
 }
 
-function renderSummaryGrid(container, entries, emptyMessage) {
-  if (!entries.length) {
-    container.innerHTML = `<div class="empty-card"><strong>Sin datos</strong><span>${escapeHtml(emptyMessage)}</span></div>`;
-    return;
-  }
-
-  container.innerHTML = entries.map((entry) => `
-    <div class="summary-item ${entry.accent ? 'accent' : ''}">
-      <span class="summary-label">${escapeHtml(entry.label)}</span>
-      <strong class="summary-value">${escapeHtml(String(entry.value))}</strong>
-    </div>
-  `).join('');
-}
-
-function renderTimerList(snapshot = state.selectedSnapshot) {
+function renderTimersPopover(snapshot = state.selectedSnapshot) {
   if (!snapshot || !Array.isArray(snapshot.timers) || !snapshot.timers.length) {
-    timerList.innerHTML = '<div class="empty-card"><strong>Sin timers</strong><span>No hay timers activos para esta sesión.</span></div>';
+    timersPopoverList.innerHTML = '<div class="empty-card"><strong>Sin timers</strong><span>No hay timers activos para esta sesión.</span></div>';
     return;
   }
 
@@ -249,7 +231,7 @@ function renderTimerList(snapshot = state.selectedSnapshot) {
     ? Math.max(0, Math.floor((Date.now() - state.snapshotFetchedAt) / 1000))
     : 0;
 
-  timerList.innerHTML = snapshot.timers.map((timer) => {
+  timersPopoverList.innerHTML = snapshot.timers.map((timer) => {
     const remaining = Math.max(0, (timer.remaining_seconds || 0) - elapsedClientSeconds);
     const expired = timer.expired || remaining <= 0;
     return `
@@ -411,7 +393,7 @@ async function persistTimerOverridesFromInputs() {
   state.timerRules = response.rules || [];
   renderTimerOverrides();
   if (state.selectedSnapshot) {
-    renderTimerList();
+    renderTimersPopover();
   }
 }
 
@@ -434,42 +416,147 @@ function bindInteractiveActions() {
   }
 }
 
-async function sendText(actor) {
-  if (!state.selectedSessionId) {
-    return;
-  }
-  const input = actor === 'customer'
-    ? document.getElementById('customer-text')
-    : document.getElementById('advisor-text');
-  const body = input.value.trim();
-  if (!body) {
-    return;
-  }
-  await fetch(`/simulator/api/sessions/${state.selectedSessionId}/${actor}/text`, {
+async function postText(actor, body) {
+  return fetchJson(`/simulator/api/sessions/${state.selectedSessionId}/${actor}/text`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ body }),
   });
-  input.value = '';
-  await hardRefresh(true);
 }
 
-async function sendCustomerImage() {
-  if (!state.selectedSessionId) {
-    return;
-  }
-  const fileInput = document.getElementById('customer-image');
-  if (!fileInput.files.length) {
-    return;
-  }
+async function postCustomerImage(file) {
   const formData = new FormData();
-  formData.append('file', fileInput.files[0]);
-  await fetch(`/simulator/api/sessions/${state.selectedSessionId}/customer/image`, {
+  formData.append('file', file);
+  const response = await fetch(`/simulator/api/sessions/${state.selectedSessionId}/customer/image`, {
     method: 'POST',
     body: formData,
   });
-  fileInput.value = '';
-  await hardRefresh(true);
+  if (!response.ok) {
+    throw new Error('customer_image_failed');
+  }
+}
+
+function setCustomerStatus(message, tone = 'neutral') {
+  customerImageStatus.textContent = message;
+  customerImageStatus.classList.toggle('ready', tone === 'ready');
+  customerImageStatus.classList.toggle('error', tone === 'error');
+}
+
+function syncCustomerComposer(preserveStatus = false) {
+  const hasText = customerText.value.trim().length > 0;
+  const hasImage = customerImageInput.files.length > 0;
+  sendCustomerButton.disabled = state.sendingCustomer || !state.selectedSessionId || (!hasText && !hasImage);
+  pickCustomerImageButton.disabled = state.sendingCustomer || !state.selectedSessionId;
+  pickCustomerImageButton.classList.toggle('active', hasImage);
+
+  if (preserveStatus) {
+    return;
+  }
+
+  if (!state.selectedSessionId) {
+    setCustomerStatus('Selecciona una sesión para escribir o adjuntar imágenes.');
+    return;
+  }
+
+  setCustomerStatus(
+    hasImage ? `Imagen lista: ${customerImageInput.files[0].name}` : 'Sin imagen seleccionada',
+    hasImage ? 'ready' : 'neutral',
+  );
+}
+
+function syncAdvisorComposer() {
+  const hasText = advisorText.value.trim().length > 0;
+  sendAdvisorButton.disabled = state.sendingAdvisor || !state.selectedSessionId || !hasText;
+}
+
+async function handleCustomerSend() {
+  if (state.sendingCustomer) {
+    return;
+  }
+  if (!state.selectedSessionId) {
+    setCustomerStatus('Selecciona una sesión antes de enviar.', 'error');
+    syncCustomerComposer(true);
+    return;
+  }
+
+  const text = customerText.value.trim();
+  const file = customerImageInput.files[0];
+  if (!text && !file) {
+    return;
+  }
+
+  state.sendingCustomer = true;
+  syncCustomerComposer(true);
+
+  let imageSent = false;
+  let textSent = false;
+
+  try {
+    if (file) {
+      setCustomerStatus(`Enviando imagen: ${file.name}`, 'ready');
+      await postCustomerImage(file);
+      imageSent = true;
+      customerImageInput.value = '';
+    }
+
+    if (text) {
+      setCustomerStatus(file ? 'Imagen enviada. Ahora va el mensaje...' : 'Enviando mensaje...');
+      await postText('customer', text);
+      textSent = true;
+      customerText.value = '';
+    }
+
+    setCustomerStatus(imageSent && !textSent ? 'Imagen enviada.' : 'Envío completado.', 'ready');
+    await hardRefresh(true);
+  } catch (error) {
+    if (!imageSent && file) {
+      setCustomerStatus('No se pudo enviar la imagen. Intenta otra vez.', 'error');
+    } else if (imageSent && text && !textSent) {
+      setCustomerStatus('La imagen salió, pero el texto no. Reintenta el mensaje.', 'error');
+    } else {
+      setCustomerStatus('No se pudo enviar el mensaje. Intenta otra vez.', 'error');
+    }
+  } finally {
+    state.sendingCustomer = false;
+    syncCustomerComposer(true);
+  }
+}
+
+async function handleAdvisorSend() {
+  if (state.sendingAdvisor) {
+    return;
+  }
+  if (!state.selectedSessionId) {
+    return;
+  }
+  const body = advisorText.value.trim();
+  if (!body) {
+    return;
+  }
+
+  state.sendingAdvisor = true;
+  syncAdvisorComposer();
+
+  try {
+    await postText('advisor', body);
+    advisorText.value = '';
+    await hardRefresh(true);
+  } finally {
+    state.sendingAdvisor = false;
+    syncAdvisorComposer();
+  }
+}
+
+function handleComposerKeydown(event, actor) {
+  if (event.key !== 'Enter' || event.shiftKey) {
+    return;
+  }
+  event.preventDefault();
+  if (actor === 'advisor') {
+    handleAdvisorSend().catch(() => {});
+    return;
+  }
+  handleCustomerSend().catch(() => {});
 }
 
 function shouldStickToBottom(container) {
@@ -553,13 +640,41 @@ document.getElementById('reset-overrides').addEventListener('click', async () =>
 
 showChatViewButton.addEventListener('click', () => setWorkspaceView('chat'));
 showDbViewButton.addEventListener('click', () => setWorkspaceView('db'));
-document.getElementById('send-customer-text').addEventListener('click', () => sendText('customer'));
-document.getElementById('send-advisor-text').addEventListener('click', () => sendText('advisor'));
-document.getElementById('send-customer-image').addEventListener('click', sendCustomerImage);
+
+timersToggleButton.addEventListener('click', () => {
+  setTimersPopoverOpen(!state.timersPopoverOpen);
+});
+
+document.addEventListener('click', (event) => {
+  if (!state.timersPopoverOpen) {
+    return;
+  }
+  if (sidebarTools.contains(event.target)) {
+    return;
+  }
+  setTimersPopoverOpen(false);
+});
+
+pickCustomerImageButton.addEventListener('click', () => customerImageInput.click());
+customerImageInput.addEventListener('change', () => syncCustomerComposer());
+customerImageInput.addEventListener('input', () => syncCustomerComposer());
+customerText.addEventListener('input', () => syncCustomerComposer());
+advisorText.addEventListener('input', () => syncAdvisorComposer());
+customerText.addEventListener('keydown', (event) => handleComposerKeydown(event, 'customer'));
+advisorText.addEventListener('keydown', (event) => handleComposerKeydown(event, 'advisor'));
+sendCustomerButton.addEventListener('click', () => {
+  handleCustomerSend().catch(() => {});
+});
+sendAdvisorButton.addEventListener('click', () => {
+  handleAdvisorSend().catch(() => {});
+});
 
 renderWorkspaceView();
+setTimersPopoverOpen(false);
+syncCustomerComposer();
+syncAdvisorComposer();
 
-setInterval(() => renderTimerList(), 1000);
+setInterval(() => renderTimersPopover(), 1000);
 setInterval(() => {
   withRefreshLock('selected_session', async () => {
     await refreshSelectedSession();
