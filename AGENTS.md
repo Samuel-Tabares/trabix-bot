@@ -113,6 +113,7 @@ Use these commands regularly:
 Operational notes:
 
 - Live tests rely on `.env`. They now load it via `dotenvy`, but still require valid credentials and reachable services.
+- Docker/Railway builds must copy both `assets/` and `config/` into the builder stage before `cargo build --release`, because simulator UI files and `config/messages.toml` are compiled in via `include_str!`.
 - `BOT_MODE=production` is still the default. Omit `BOT_MODE` in Railway unless you explicitly mean to run simulator mode.
 - `BOT_MODE=simulator` does not require WhatsApp credentials and should bind to `127.0.0.1` by default.
 - The simulator always uses the tracked file `assets/trabix-menu.png` for `Ver Menú`. Replace that tracked file if the shared simulator menu image changes in the future.
