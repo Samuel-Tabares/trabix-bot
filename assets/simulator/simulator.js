@@ -5,6 +5,7 @@ const state = {
   selectedSnapshot: null,
   snapshotFetchedAt: null,
   timerRules: [],
+  activeWorkspaceView: 'chat',
   activeDbTab: 'conversations',
   dbRows: {
     conversations: [],
@@ -29,13 +30,13 @@ const DB_TABLES = [
     key: 'conversations',
     label: 'conversations',
     endpoint: '/simulator/api/db/conversations',
-    columns: ['id', 'phone_number', 'state', 'state_data', 'customer_name', 'customer_phone', 'delivery_address', 'last_message_at', 'created_at'],
+    columns: ['id', 'phone_number', 'state', 'customer_name', 'customer_phone', 'delivery_address'],
   },
   {
     key: 'orders',
     label: 'orders',
     endpoint: '/simulator/api/db/orders',
-    columns: ['id', 'conversation_id', 'delivery_type', 'scheduled_date', 'scheduled_time', 'scheduled_date_text', 'scheduled_time_text', 'payment_method', 'receipt_media_id', 'delivery_cost', 'total_estimated', 'total_final', 'status', 'created_at'],
+    columns: ['id', 'conversation_id', 'delivery_type', 'scheduled_date_text', 'scheduled_time_text', 'payment_method', 'receipt_media_id', 'delivery_cost', 'total_estimated', 'total_final', 'status'],
   },
   {
     key: 'order_items',
@@ -66,6 +67,11 @@ const overrideGrid = document.getElementById('override-grid');
 const dbTabs = document.getElementById('db-tabs');
 const dbTableWrap = document.getElementById('db-table-wrap');
 const dbMeta = document.getElementById('db-meta');
+const showChatViewButton = document.getElementById('show-chat-view');
+const showDbViewButton = document.getElementById('show-db-view');
+const chatWorkspace = document.getElementById('chat-workspace');
+const dbWorkspace = document.getElementById('db-workspace');
+const workspaceModeLabel = document.getElementById('workspace-mode-label');
 
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
@@ -88,6 +94,21 @@ async function withRefreshLock(key, fn) {
   } finally {
     state.refreshLocks[key] = false;
   }
+}
+
+function setWorkspaceView(view) {
+  state.activeWorkspaceView = view === 'db' ? 'db' : 'chat';
+  renderWorkspaceView();
+}
+
+function renderWorkspaceView() {
+  const isDb = state.activeWorkspaceView === 'db';
+  document.body.dataset.workspaceView = state.activeWorkspaceView;
+  chatWorkspace.hidden = isDb;
+  dbWorkspace.hidden = !isDb;
+  showChatViewButton.classList.toggle('active', !isDb);
+  showDbViewButton.classList.toggle('active', isDb);
+  workspaceModeLabel.textContent = isDb ? 'Vista DB' : 'Vista chat';
 }
 
 async function refreshSessionsList() {
@@ -138,28 +159,30 @@ async function refreshDbTable(tabKey = state.activeDbTab) {
 async function hardRefresh(forceScroll = false) {
   await refreshSessionsList();
   await refreshSelectedSession(forceScroll);
-  await refreshDbTable();
+  await refreshDbTable(state.activeDbTab);
 }
 
 function renderEmptySessionState() {
   state.selectedMessages = [];
   state.selectedSnapshot = null;
   state.snapshotFetchedAt = null;
-  customerTranscript.innerHTML = '<div class="box muted">Crea o selecciona una sesión.</div>';
-  advisorTranscript.innerHTML = '<div class="box muted">Selecciona una sesión para usar el panel del asesor.</div>';
-  timerList.innerHTML = '<div class="box muted">Selecciona una sesión para ver timers.</div>';
-  stateGrid.innerHTML = '';
-  sessionSummary.innerHTML = '';
+  customerTranscript.innerHTML = '<div class="empty-card empty-card-chat"><strong>Sin sesión activa</strong><span>Crea o selecciona una sesión para usar el panel del cliente.</span></div>';
+  advisorTranscript.innerHTML = '<div class="empty-card empty-card-chat"><strong>Sin asesor asignado</strong><span>Selecciona una sesión para usar el panel del asesor.</span></div>';
+  timerList.innerHTML = '<div class="empty-card"><strong>Sin timers</strong><span>Selecciona una sesión para revisar las esperas activas.</span></div>';
+  renderSummaryGrid(sessionSummary, [], 'Crea o selecciona una sesión para ver su contexto.');
+  renderSummaryGrid(stateGrid, [], 'El estado persistido aparecerá aquí.');
 }
 
 function renderSessions() {
   sessionList.innerHTML = state.sessions.map((session) => `
     <div class="session-card ${session.id === state.selectedSessionId ? 'active' : ''}" data-session-id="${session.id}">
-      <div><strong>${escapeHtml(session.profile_name || 'Sin nombre')}</strong></div>
+      <div class="session-card-top">
+        <strong>${escapeHtml(session.profile_name || 'Sin nombre')}</strong>
+        <span class="session-state-pill">${escapeHtml(session.state)}</span>
+      </div>
       <div class="muted mono">${escapeHtml(session.customer_phone)}</div>
-      <div class="muted">Estado: ${escapeHtml(session.state)}</div>
-      <div class="muted">Dirección: ${escapeHtml(session.delivery_address || 'Pendiente')}</div>
-      <div class="stamp">${escapeHtml(formatBogotaTimestamp(session.updated_at))}</div>
+      <div class="session-address">${escapeHtml(session.delivery_address || 'Dirección pendiente')}</div>
+      <div class="stamp">Actualizado ${escapeHtml(formatBogotaTimestamp(session.updated_at))}</div>
     </div>
   `).join('');
 
@@ -178,39 +201,47 @@ function renderSessions() {
 
 function renderState(snapshot) {
   const conversation = snapshot.conversation || {};
-  const entries = {
-    state: conversation.state || 'main_menu',
-    customer_name: conversation.customer_name || '(vacío)',
-    customer_phone: conversation.customer_phone || '(vacío)',
-    delivery_address: conversation.delivery_address || '(vacío)',
-    current_order_id: conversation.state_data?.current_order_id ?? '(vacío)',
-    advisor_target_phone: conversation.state_data?.advisor_target_phone || '(vacío)',
-    receipt_timer_expired: String(conversation.state_data?.receipt_timer_expired ?? false),
-    advisor_timer_expired: String(conversation.state_data?.advisor_timer_expired ?? false),
-  };
-  const sessionEntries = {
-    session_id: snapshot.session.id,
-    profile_name: snapshot.session.profile_name || '(vacío)',
-    session_phone: snapshot.session.customer_phone,
-    created_at: formatBogotaTimestamp(snapshot.session.created_at),
-    updated_at: formatBogotaTimestamp(snapshot.session.updated_at),
-    generated_at: formatBogotaTimestamp(snapshot.generated_at),
-  };
+  const stateEntries = [
+    { label: 'estado', value: conversation.state || 'main_menu', accent: true },
+    { label: 'cliente', value: conversation.customer_name || '(vacío)' },
+    { label: 'teléfono', value: conversation.customer_phone || '(vacío)' },
+    { label: 'dirección', value: conversation.delivery_address || '(vacío)' },
+    { label: 'pedido actual', value: conversation.state_data?.current_order_id ?? '(vacío)' },
+    { label: 'asesor objetivo', value: conversation.state_data?.advisor_target_phone || '(vacío)' },
+    { label: 'receipt vencido', value: String(conversation.state_data?.receipt_timer_expired ?? false) },
+    { label: 'advisor vencido', value: String(conversation.state_data?.advisor_timer_expired ?? false) },
+  ];
+  const sessionEntries = [
+    { label: 'session_id', value: snapshot.session.id, accent: true },
+    { label: 'perfil', value: snapshot.session.profile_name || '(vacío)' },
+    { label: 'teléfono sesión', value: snapshot.session.customer_phone },
+    { label: 'creada', value: formatBogotaTimestamp(snapshot.session.created_at) },
+    { label: 'actualizada', value: formatBogotaTimestamp(snapshot.session.updated_at) },
+    { label: 'snapshot', value: formatBogotaTimestamp(snapshot.generated_at) },
+  ];
 
-  stateGrid.innerHTML = Object.entries(entries).map(([key, value]) => `
-    <div class="box"><strong>${escapeHtml(key)}</strong><div class="timer-note">${escapeHtml(String(value))}</div></div>
-  `).join('');
-
-  sessionSummary.innerHTML = Object.entries(sessionEntries).map(([key, value]) => `
-    <div class="box"><strong>${escapeHtml(key)}</strong><div class="timer-note">${escapeHtml(String(value))}</div></div>
-  `).join('');
-
+  renderSummaryGrid(stateGrid, stateEntries, 'El estado persistido aparecerá aquí.');
+  renderSummaryGrid(sessionSummary, sessionEntries, 'Crea o selecciona una sesión para ver su contexto.');
   renderTimerList(snapshot);
+}
+
+function renderSummaryGrid(container, entries, emptyMessage) {
+  if (!entries.length) {
+    container.innerHTML = `<div class="empty-card"><strong>Sin datos</strong><span>${escapeHtml(emptyMessage)}</span></div>`;
+    return;
+  }
+
+  container.innerHTML = entries.map((entry) => `
+    <div class="summary-item ${entry.accent ? 'accent' : ''}">
+      <span class="summary-label">${escapeHtml(entry.label)}</span>
+      <strong class="summary-value">${escapeHtml(String(entry.value))}</strong>
+    </div>
+  `).join('');
 }
 
 function renderTimerList(snapshot = state.selectedSnapshot) {
   if (!snapshot || !Array.isArray(snapshot.timers) || !snapshot.timers.length) {
-    timerList.innerHTML = '<div class="box muted">No hay timers activos para esta sesión.</div>';
+    timerList.innerHTML = '<div class="empty-card"><strong>Sin timers</strong><span>No hay timers activos para esta sesión.</span></div>';
     return;
   }
 
@@ -227,13 +258,11 @@ function renderTimerList(snapshot = state.selectedSnapshot) {
           <strong>${escapeHtml(timer.label)}</strong>
           <span class="countdown">${expired ? 'Vencido' : escapeHtml(formatCountdown(remaining))}</span>
         </div>
-        <div class="timer-grid">
-          <div class="box"><strong>rule</strong><div class="timer-note">${escapeHtml(timer.rule_key)}</div></div>
-          <div class="box"><strong>phase</strong><div class="timer-note">${escapeHtml(timer.phase)}</div></div>
-          <div class="box"><strong>state</strong><div class="timer-note">${escapeHtml(timer.state)}</div></div>
-          <div class="box"><strong>window</strong><div class="timer-note">${escapeHtml(String(timer.effective_seconds))} s</div></div>
-          <div class="box"><strong>started</strong><div class="timer-note">${escapeHtml(formatBogotaTimestamp(timer.started_at))}</div></div>
-          <div class="box"><strong>expires</strong><div class="timer-note">${escapeHtml(formatBogotaTimestamp(timer.expires_at))}</div></div>
+        <div class="timer-meta">
+          <span>${escapeHtml(timer.rule_key)} · ${escapeHtml(timer.phase)}</span>
+          <span>${escapeHtml(timer.state)}</span>
+          <span>ventana ${escapeHtml(String(timer.effective_seconds))} s</span>
+          <span>vence ${escapeHtml(formatBogotaTimestamp(timer.expires_at))}</span>
         </div>
       </div>
     `;
@@ -298,7 +327,7 @@ function renderMessage(message, pane) {
         <span>${escapeHtml(message.actor)} · ${escapeHtml(message.message_kind)}</span>
         <span class="stamp">${escapeHtml(formatBogotaTimestamp(message.created_at))}</span>
       </div>
-      <div>${escapeHtml(message.body || '')}</div>
+      <div class="message-body">${escapeHtml(message.body || '')}</div>
       ${extraImage}
       ${actions}
     </div>
@@ -345,7 +374,7 @@ function renderDbPanel() {
     : 'sin datos cargados';
 
   if (!rows.length) {
-    dbTableWrap.innerHTML = '<div class="db-empty">No hay filas todavía para esta tabla.</div>';
+    dbTableWrap.innerHTML = '<div class="empty-card"><strong>Sin filas</strong><span>No hay filas todavía para esta tabla.</span></div>';
     return;
   }
 
@@ -505,7 +534,7 @@ document.getElementById('refresh-sessions').addEventListener('click', async () =
 });
 
 document.getElementById('refresh-db').addEventListener('click', async () => {
-  await refreshDbTable();
+  await refreshDbTable(state.activeDbTab);
 });
 
 document.getElementById('reset-overrides').addEventListener('click', async () => {
@@ -522,9 +551,13 @@ document.getElementById('reset-overrides').addEventListener('click', async () =>
   renderTimerOverrides();
 });
 
+showChatViewButton.addEventListener('click', () => setWorkspaceView('chat'));
+showDbViewButton.addEventListener('click', () => setWorkspaceView('db'));
 document.getElementById('send-customer-text').addEventListener('click', () => sendText('customer'));
 document.getElementById('send-advisor-text').addEventListener('click', () => sendText('advisor'));
 document.getElementById('send-customer-image').addEventListener('click', sendCustomerImage);
+
+renderWorkspaceView();
 
 setInterval(() => renderTimerList(), 1000);
 setInterval(() => {
@@ -537,7 +570,7 @@ setInterval(() => {
     await refreshSessionsList();
   }).catch(() => {});
   withRefreshLock('db', async () => {
-    await refreshDbTable();
+    await refreshDbTable(state.activeDbTab);
   }).catch(() => {});
 }, 5000);
 

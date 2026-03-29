@@ -4,18 +4,48 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trabix Simulator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;500;600;700;800&family=Paytone+One&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="/simulator/assets/simulator.css">
 </head>
-<body>
+<body class="page-home">
+  <div class="ambient ambient-pink" aria-hidden="true"></div>
+  <div class="ambient ambient-blue" aria-hidden="true"></div>
+  <div class="ambient ambient-lime" aria-hidden="true"></div>
+
   <div class="shell">
     <aside class="panel sidebar">
-      <div class="brand">
+      <div class="brand-card">
         <p class="eyebrow">Local Transport</p>
         <h1>Trabix Simulator</h1>
-        <p class="muted">Misma lógica del bot, sin Meta.</p>
+        <p class="muted brand-copy">La misma lógica del bot, con sesiones persistidas, timers reales y revisión operativa sin tocar Meta.</p>
+        <div class="brand-badges">
+          <span class="pill">Modo local</span>
+          <span class="pill pill-accent">Bot brain compartido</span>
+        </div>
       </div>
 
-      <form id="create-session-form">
+      <section class="sidebar-card sidebar-actions-card">
+        <div class="box-head">
+          <div>
+            <p class="eyebrow">Vista principal</p>
+            <div class="muted">Cambia entre conversaciones y base de datos.</div>
+          </div>
+        </div>
+        <div class="sidebar-actions">
+          <button id="show-chat-view" class="view-toggle active" type="button">Conversaciones</button>
+          <button id="show-db-view" class="view-toggle" type="button">Base de datos</button>
+        </div>
+      </section>
+
+      <form id="create-session-form" class="sidebar-card">
+        <div class="section-heading">
+          <p class="eyebrow">Nueva sesión</p>
+          <span class="section-tag">Cliente</span>
+        </div>
         <label for="new-phone">Teléfono</label>
         <input id="new-phone" name="customer_phone" placeholder="573001112233" required>
         <label for="new-name" class="field-label">Nombre de perfil</label>
@@ -23,85 +53,127 @@
         <button class="full-width" type="submit">Crear sesión</button>
       </form>
 
-      <div class="box">
+      <section class="sidebar-card">
         <div class="box-head">
-          <strong>Sesiones</strong>
+          <div>
+            <p class="eyebrow">Sesiones</p>
+            <div class="muted">Cada tarjeta abre un caso persistido.</div>
+          </div>
           <button class="ghost" id="refresh-sessions" type="button">Refrescar</button>
         </div>
         <div id="session-list" class="session-list"></div>
-      </div>
+      </section>
 
-      <div class="box">
+      <section class="sidebar-card">
         <div class="box-head">
-          <strong>Ritmo local</strong>
+          <div>
+            <p class="eyebrow">Ritmo local</p>
+            <div class="muted">Solo aplica a timers nuevos del simulator.</div>
+          </div>
           <button class="ghost" id="reset-overrides" type="button">Restaurar</button>
         </div>
-        <p class="muted flush-top">Ajusta solo el simulador. Los cambios aplican a timers nuevos.</p>
         <div id="override-grid" class="override-grid"></div>
-      </div>
+      </section>
     </aside>
 
     <main class="layout">
-      <section class="panel header">
-        <div class="header-column">
-          <p class="eyebrow">Estado Persistido</p>
-          <div id="state-grid" class="header-grid"></div>
+      <section class="workspace">
+        <div id="chat-workspace" class="workspace-view workspace-view-chat">
+          <div class="chat-grid">
+            <article class="panel chat chat-customer">
+              <div class="chat-head">
+                <div>
+                  <p class="eyebrow">Cliente</p>
+                </div>
+              </div>
+
+              <div id="customer-transcript" class="transcript"></div>
+
+              <div class="composer">
+                <textarea id="customer-text" placeholder="Escribe como cliente..."></textarea>
+                <div class="composer-actions">
+                  <button id="send-customer-text" type="button">Enviar texto</button>
+                  <input id="customer-image" type="file" accept="image/*">
+                  <button id="send-customer-image" class="ghost" type="button">Enviar imagen</button>
+                </div>
+              </div>
+            </article>
+
+            <article class="panel chat chat-advisor">
+              <div class="chat-head">
+                <div>
+                  <p class="eyebrow">Asesor</p>
+                </div>
+              </div>
+
+              <div id="advisor-transcript" class="transcript"></div>
+
+              <div class="composer">
+                <textarea id="advisor-text" placeholder="Escribe como asesor..."></textarea>
+                <div class="composer-actions">
+                  <button id="send-advisor-text" class="secondary" type="button">Enviar texto</button>
+                </div>
+              </div>
+            </article>
+          </div>
         </div>
-        <div class="header-column">
-          <p class="eyebrow">Sesión Seleccionada</p>
-          <div id="session-summary" class="header-grid"></div>
-        </div>
-        <div class="header-column">
-          <p class="eyebrow">Timers Activos</p>
-          <div id="timer-list" class="timer-list"></div>
+
+        <div id="db-workspace" class="workspace-view workspace-view-db" hidden>
+          <section class="panel db-panel">
+            <div class="db-head">
+              <div>
+                <p class="eyebrow">Base de datos local</p>
+                <h3>Inspección específica de conversaciones, pedidos e items.</h3>
+                <div class="muted">Vista cruda de `conversations`, `orders` y `order_items` sin salir del simulator.</div>
+                <div class="db-note">Por comodidad visual, algunas columnas operativas se ocultan en esta vista.</div>
+              </div>
+
+              <div class="db-controls">
+                <div id="db-meta" class="db-meta"></div>
+                <button class="ghost" id="refresh-db" type="button">Refrescar DB</button>
+              </div>
+            </div>
+
+            <div id="db-tabs" class="db-tabs"></div>
+            <div id="db-table-wrap" class="db-table-wrap"></div>
+          </section>
         </div>
       </section>
 
-      <section class="stack">
-        <article class="panel chat">
-          <div class="chat-head">
-            <p class="eyebrow">Cliente</p>
-            <div class="muted">Mensajes del cliente y respuestas del bot.</div>
-          </div>
-          <div id="customer-transcript" class="transcript"></div>
-          <div class="composer">
-            <textarea id="customer-text" placeholder="Escribe como cliente..."></textarea>
-            <div class="composer-actions">
-              <button id="send-customer-text" type="button">Enviar texto</button>
-              <input id="customer-image" type="file" accept="image/*">
-              <button id="send-customer-image" class="ghost" type="button">Enviar imagen</button>
-            </div>
-          </div>
-        </article>
-
-        <article class="panel chat">
-          <div class="chat-head">
-            <p class="eyebrow">Asesor</p>
-            <div class="muted">Mensajes del asesor, respuestas del bot y timeouts de esta sesión.</div>
-          </div>
-          <div id="advisor-transcript" class="transcript"></div>
-          <div class="composer">
-            <textarea id="advisor-text" placeholder="Escribe como asesor..."></textarea>
-            <div class="composer-actions">
-              <button id="send-advisor-text" class="secondary" type="button">Enviar texto</button>
-            </div>
-          </div>
-        </article>
-      </section>
-
-      <section class="panel db-panel">
-        <div class="db-head">
-          <div>
-            <p class="eyebrow">Base de Datos Local</p>
-            <div class="muted">Vista cruda de `conversations`, `orders` y `order_items`.</div>
-          </div>
-          <div class="db-controls">
-            <div id="db-meta" class="db-meta"></div>
-            <button class="ghost" id="refresh-db" type="button">Refrescar DB</button>
+      <section class="panel workspace-header">
+        <div class="header-top">
+          <div class="header-copy">
+            <p class="eyebrow">Centro de control</p>
+            <h2>Sesiones, estado y revisión operativa sin perder el hilo.</h2>
+            <p class="muted">La vista principal se mantiene fija para laptop y los detalles largos se desplazan dentro de cada panel.</p>
           </div>
         </div>
-        <div id="db-tabs" class="db-tabs"></div>
-        <div id="db-table-wrap" class="db-table-wrap"></div>
+
+        <div class="header-panels">
+          <article class="summary-card summary-card-session">
+            <div class="summary-card-head">
+              <p class="eyebrow">Sesión activa</p>
+              <span id="workspace-mode-label" class="mode-pill">Vista chat</span>
+            </div>
+            <div id="session-summary" class="summary-grid"></div>
+          </article>
+
+          <article class="summary-card">
+            <div class="summary-card-head">
+              <p class="eyebrow">Estado persistido</p>
+              <span class="summary-hint">PostgreSQL</span>
+            </div>
+            <div id="state-grid" class="summary-grid"></div>
+          </article>
+
+          <article class="summary-card summary-card-timers">
+            <div class="summary-card-head">
+              <p class="eyebrow">Timers activos</p>
+              <span class="summary-hint">Auto refresh</span>
+            </div>
+            <div id="timer-list" class="timer-list"></div>
+          </article>
+        </div>
       </section>
     </main>
   </div>
