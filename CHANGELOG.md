@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-03-29
+
 - Rename the tracked Mermaid flow documents to `general_info/complex_diagram.mermaid` and `general_info/simple_diagram.mermaid`.
 - Update repository guidance and runtime reference docs so they point to the new diagram source-of-truth files.
 - Fix Docker/Railway builds by copying `assets/` and `config/` into the builder image so compile-time `include_str!` simulator UI and message-config assets exist during `cargo build --release`.
