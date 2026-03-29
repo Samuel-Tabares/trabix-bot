@@ -13,7 +13,6 @@ const state = {
     order_items: [],
   },
   dbGeneratedAt: null,
-  timersPopoverOpen: false,
   sendingCustomer: false,
   sendingAdvisor: false,
   refreshLocks: {},
@@ -71,8 +70,6 @@ const showChatViewButton = document.getElementById('show-chat-view');
 const showDbViewButton = document.getElementById('show-db-view');
 const chatWorkspace = document.getElementById('chat-workspace');
 const dbWorkspace = document.getElementById('db-workspace');
-const timersToggleButton = document.getElementById('toggle-timers-popover');
-const timersPopover = document.getElementById('timers-popover');
 const timersPopoverList = document.getElementById('timers-popover-list');
 const customerText = document.getElementById('customer-text');
 const advisorText = document.getElementById('advisor-text');
@@ -81,7 +78,6 @@ const pickCustomerImageButton = document.getElementById('pick-customer-image');
 const sendCustomerButton = document.getElementById('send-customer');
 const sendAdvisorButton = document.getElementById('send-advisor');
 const customerImageStatus = document.getElementById('customer-image-status');
-const sidebarTools = document.querySelector('.sidebar-tools');
 
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
@@ -118,13 +114,6 @@ function renderWorkspaceView() {
   dbWorkspace.hidden = !isDb;
   showChatViewButton.classList.toggle('active', !isDb);
   showDbViewButton.classList.toggle('active', isDb);
-}
-
-function setTimersPopoverOpen(open) {
-  state.timersPopoverOpen = Boolean(open);
-  timersPopover.hidden = !state.timersPopoverOpen;
-  timersToggleButton.classList.toggle('active', state.timersPopoverOpen);
-  timersToggleButton.setAttribute('aria-expanded', String(state.timersPopoverOpen));
 }
 
 async function refreshSessionsList() {
@@ -641,20 +630,6 @@ document.getElementById('reset-overrides').addEventListener('click', async () =>
 showChatViewButton.addEventListener('click', () => setWorkspaceView('chat'));
 showDbViewButton.addEventListener('click', () => setWorkspaceView('db'));
 
-timersToggleButton.addEventListener('click', () => {
-  setTimersPopoverOpen(!state.timersPopoverOpen);
-});
-
-document.addEventListener('click', (event) => {
-  if (!state.timersPopoverOpen) {
-    return;
-  }
-  if (sidebarTools.contains(event.target)) {
-    return;
-  }
-  setTimersPopoverOpen(false);
-});
-
 pickCustomerImageButton.addEventListener('click', () => customerImageInput.click());
 customerImageInput.addEventListener('change', () => syncCustomerComposer());
 customerImageInput.addEventListener('input', () => syncCustomerComposer());
@@ -670,7 +645,6 @@ sendAdvisorButton.addEventListener('click', () => {
 });
 
 renderWorkspaceView();
-setTimersPopoverOpen(false);
 syncCustomerComposer();
 syncAdvisorComposer();
 

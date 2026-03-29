@@ -711,52 +711,9 @@ button.ghost,
   gap: 10px;
 }
 
-.sidebar-tools {
-  position: relative;
-  margin-top: 12px;
-}
-
-.timers-trigger {
-  width: 100%;
-  justify-content: flex-start;
-  gap: 10px;
-  padding: 11px 14px;
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow:
-    0 16px 28px rgba(73, 145, 169, 0.16),
-    0 0 0 1px rgba(255, 255, 255, 0.18);
-}
-
-.timers-trigger svg {
-  width: 18px;
-  height: 18px;
-}
-
-.timers-trigger span {
-  font-size: 0.9rem;
-  text-transform: lowercase;
-}
-
-.timers-trigger.active {
-  background: linear-gradient(135deg, rgba(95, 224, 255, 0.92), rgba(255, 129, 184, 0.86));
-}
-
-.timers-popover {
-  position: absolute;
-  inset: calc(100% + 10px) 0 auto 0;
+.sidebar-timers-card {
   display: grid;
   gap: 12px;
-  padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  border-radius: 24px;
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.28), transparent 34%),
-    linear-gradient(135deg, rgba(72, 215, 255, 0.28), rgba(255, 244, 244, 0.82));
-  box-shadow:
-    0 28px 52px rgba(57, 129, 152, 0.24),
-    0 10px 24px rgba(255, 255, 255, 0.18) inset;
-  backdrop-filter: blur(18px);
-  z-index: 5;
 }
 
 .timers-popover-head {
@@ -764,6 +721,19 @@ button.ghost,
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.timers-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.timers-title svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  color: var(--aqua-deep);
 }
 
 .timers-popover-list {
@@ -927,9 +897,6 @@ button.ghost,
     height: 100%;
   }
 
-  .timers-popover {
-    inset: auto 0 calc(100% + 10px) 0;
-  }
 }
 
 @media (max-width: 720px) {

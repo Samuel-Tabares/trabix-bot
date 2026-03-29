@@ -28,6 +28,26 @@
         </div>
       </div>
 
+      <section class="sidebar-card sidebar-timers-card">
+        <div class="timers-popover-head">
+          <div class="timers-title">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 2.75a1 1 0 0 1 1-1h4a1 1 0 1 1 0 2h-4a1 1 0 0 1-1-1Z" fill="currentColor"/>
+              <path d="M17.55 5.03a1 1 0 0 1 1.41 0l1.3 1.3a1 1 0 0 1-1.42 1.42l-1.29-1.3a1 1 0 0 1 0-1.42Z" fill="currentColor"/>
+              <path d="M6.46 5.03a1 1 0 0 1 0 1.42L5.17 7.74a1 1 0 1 1-1.42-1.42l1.3-1.3a1 1 0 0 1 1.41 0Z" fill="currentColor"/>
+              <path d="M12 4.75a7.25 7.25 0 1 0 7.25 7.25A7.26 7.26 0 0 0 12 4.75Zm0 2a1 1 0 0 1 1 1v3.84l2.27 1.3a1 1 0 1 1-.99 1.73l-2.78-1.6a1 1 0 0 1-.5-.87V7.75a1 1 0 0 1 1-1Z" fill="currentColor"/>
+              <path d="M8 20.25a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H9a1 1 0 0 1-1-1Z" fill="currentColor"/>
+            </svg>
+            <div>
+              <p class="eyebrow">Timers</p>
+              <div class="muted">Esperas activas de la sesión seleccionada.</div>
+            </div>
+          </div>
+          <span class="summary-hint">Vista fija</span>
+        </div>
+        <div id="timers-popover-list" class="timers-popover-list"></div>
+      </section>
+
       <section class="sidebar-card sidebar-actions-card">
         <div class="box-head">
           <div>
@@ -38,31 +58,6 @@
         <div class="sidebar-actions">
           <button id="show-chat-view" class="view-toggle active" type="button">Conversaciones</button>
           <button id="show-db-view" class="view-toggle" type="button">Base de datos</button>
-        </div>
-        <div class="sidebar-tools">
-          <button
-            id="toggle-timers-popover"
-            class="timers-trigger"
-            type="button"
-            aria-expanded="false"
-            aria-controls="timers-popover">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M9 2.75a1 1 0 0 1 1-1h4a1 1 0 1 1 0 2h-4a1 1 0 0 1-1-1Z" fill="currentColor"/>
-              <path d="M17.55 5.03a1 1 0 0 1 1.41 0l1.3 1.3a1 1 0 0 1-1.42 1.42l-1.29-1.3a1 1 0 0 1 0-1.42Z" fill="currentColor"/>
-              <path d="M6.46 5.03a1 1 0 0 1 0 1.42L5.17 7.74a1 1 0 1 1-1.42-1.42l1.3-1.3a1 1 0 0 1 1.41 0Z" fill="currentColor"/>
-              <path d="M12 4.75a7.25 7.25 0 1 0 7.25 7.25A7.26 7.26 0 0 0 12 4.75Zm0 2a1 1 0 0 1 1 1v3.84l2.27 1.3a1 1 0 1 1-.99 1.73l-2.78-1.6a1 1 0 0 1-.5-.87V7.75a1 1 0 0 1 1-1Z" fill="currentColor"/>
-              <path d="M8 20.25a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H9a1 1 0 0 1-1-1Z" fill="currentColor"/>
-            </svg>
-            <span>timers</span>
-          </button>
-
-          <div id="timers-popover" class="timers-popover" hidden>
-            <div class="timers-popover-head">
-              <p class="eyebrow">Timers</p>
-              <span class="summary-hint">Vista rápida</span>
-            </div>
-            <div id="timers-popover-list" class="timers-popover-list"></div>
-          </div>
         </div>
       </section>
 
