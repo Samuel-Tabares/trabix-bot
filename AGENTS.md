@@ -174,6 +174,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.5.0`: simulator UI refresh with session-centric advisor chat, auto-refresh, and raw database inspector tabs
   - `v1.5.1`: simulator HTTP handlers moved under `src/simulator/` and frontend assets extracted into `assets/simulator/`
   - `v1.5.2`: repository diagram-source rename plus Docker/Railway build fix for compile-time simulator assets and message config
+  - `v1.6.0`: review-first checkout, advisor delivery-cost-first flow, final payment at the end, 5-minute auto-fallback for immediate orders, and one-time relay finalization buttons
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases
