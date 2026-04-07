@@ -87,6 +87,22 @@
       <section class="sidebar-card">
         <div class="box-head">
           <div>
+            <p class="eyebrow">Reloj Bogotá</p>
+            <div class="muted">Override local para validar horario inmediato y programación.</div>
+          </div>
+          <button class="ghost" id="reset-clock-override" type="button">Restaurar</button>
+        </div>
+        <div class="clock-override-card">
+          <label for="clock-override-input">Hora simulada</label>
+          <input id="clock-override-input" type="datetime-local">
+          <button class="full-width" id="apply-clock-override" type="button">Aplicar hora</button>
+          <div id="clock-override-meta" class="override-meta"></div>
+        </div>
+      </section>
+
+      <section class="sidebar-card">
+        <div class="box-head">
+          <div>
             <p class="eyebrow">Ritmo local</p>
             <div class="muted">Solo aplica a timers nuevos del simulator.</div>
           </div>

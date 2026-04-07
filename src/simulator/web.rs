@@ -18,6 +18,9 @@ use tokio::fs;
 use crate::{
     bot::{
         state_machine::UserInput,
+        states::scheduling::{
+            current_bogota_now, set_simulator_bogota_now_override, simulator_bogota_now_override,
+        },
         timers::{
             simulator_timer_rules, simulator_timer_snapshots, update_simulator_timer_overrides,
             SimulatorTimerOverrides, SimulatorTimerRuleInfo, SimulatorTimerSnapshot,
@@ -63,6 +66,10 @@ pub fn mount(router: Router<AppState>) -> Router<AppState> {
         .route(
             "/simulator/api/timer-overrides",
             get(api_get_timer_overrides).post(api_update_timer_overrides),
+        )
+        .route(
+            "/simulator/api/clock-override",
+            get(api_get_clock_override).post(api_update_clock_override),
         )
         .route("/simulator/api/menu-asset", get(api_menu_asset))
         .route("/simulator/api/media/:id", get(api_media))
@@ -155,6 +162,18 @@ struct ConversationSnapshot {
 #[derive(Debug, Serialize)]
 struct TimerOverridesResponse {
     rules: Vec<SimulatorTimerRuleInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClockOverrideRequest {
+    bogota_now: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ClockOverrideResponse {
+    effective_bogota_now: String,
+    override_bogota_now: Option<String>,
+    source: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -257,6 +276,18 @@ async fn api_update_timer_overrides(
     Ok(Json(TimerOverridesResponse {
         rules: update_simulator_timer_overrides(&state, request),
     }))
+}
+
+async fn api_get_clock_override() -> Result<Json<ClockOverrideResponse>, StatusCode> {
+    Ok(Json(clock_override_response()))
+}
+
+async fn api_update_clock_override(
+    Json(request): Json<ClockOverrideRequest>,
+) -> Result<Json<ClockOverrideResponse>, StatusCode> {
+    set_simulator_bogota_now_override(request.bogota_now.as_deref())
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    Ok(Json(clock_override_response()))
 }
 
 async fn api_session_state(
@@ -608,4 +639,21 @@ fn content_type_for_path(path: &Path) -> &'static str {
         Some("gif") => "image/gif",
         _ => "image/jpeg",
     }
+}
+
+fn clock_override_response() -> ClockOverrideResponse {
+    let override_bogota_now = simulator_bogota_now_override().map(format_clock_override_datetime);
+    ClockOverrideResponse {
+        effective_bogota_now: format_clock_override_datetime(current_bogota_now()),
+        override_bogota_now,
+        source: if simulator_bogota_now_override().is_some() {
+            "simulator_ui".to_string()
+        } else {
+            "runtime".to_string()
+        },
+    }
+}
+
+fn format_clock_override_datetime(datetime: chrono::DateTime<chrono::FixedOffset>) -> String {
+    datetime.format("%Y-%m-%dT%H:%M").to_string()
 }

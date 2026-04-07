@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 - Add a wholesale-only ambassador referral step before payment with `Tengo código` / `Seguir sin código`, lowercase code validation from `config/referrals.toml`, and retry/skip handling for invalid codes.
 - Apply referral discounts only to wholesale-priced buckets, persist `referral_code` plus discount/commission totals in `orders` and `state_data`, and update final customer totals without discounting delivery cost.
 - Show referral discount details in the customer payment-ready summary and include referral code plus ambassador accounting totals in advisor summaries once a valid code is used.
+- Add a simulator-only Bogotá clock override in the local UI so immediate-hours, out-of-hours, and scheduling flows can be validated without restarting the app or setting `FORCE_BOGOTA_NOW`.
 
 ## [1.6.1] - 2026-04-06
 

@@ -92,6 +92,7 @@ Cuando `BOT_MODE=simulator`:
 - el panel de asesor es por sesion; los mensajes del asesor y del bot para ese caso se ven dentro del chat de esa sesion
 - la UI expone timers activos con inicio, vencimiento, countdown y fase del timeout
 - la UI permite overrides locales de timers solo para nuevas esperas creadas en simulator
+- la UI permite override local de la hora efectiva de Bogota para validar horario inmediato y `out_of_hours` sin reiniciar el proceso
 - los timeouts del simulator registran avisos de sistema indicando si se dispararon por runtime, sweep o reconciliacion de arranque
 - la UI hace auto-refresh del transcript, el estado persistido y la vista de base de datos para que timers y mensajes aparezcan sin recargar manualmente
 - la UI expone un inspector read-only de base de datos para `conversations`, `orders` y `order_items`
@@ -624,6 +625,7 @@ Notas actuales:
 - `TRANSFER_PAYMENT_TEXT` queda como fallback legado si `config/messages.toml` no define el texto de transferencia
 - las sesiones PostgreSQL del bot usan `America/Bogota`
 - `FORCE_BOGOTA_NOW=YYYY-MM-DD HH:MM` es solo para pruebas locales de horario
+- en simulator tambien puede usarse un override visual de la hora de Bogota desde la UI local; afecta solo al proceso actual y solo al entorno local
 - `WHATSAPP_TEST_RECIPIENT` sirve para smoke tests live, no define el numero productivo escuchado por el bot
 - `BOT_MODE=simulator` no usa `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` ni `MENU_IMAGE_MEDIA_ID`
 - `assets/trabix-menu.png` es la imagen rastreada usada por `Ver Menú` en simulator

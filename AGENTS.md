@@ -74,6 +74,7 @@ Current implementation status:
   - per-message `America/Bogota` timestamps in the simulator transcript
   - active timer inspector with countdowns, deadlines, and timeout phase/state visibility
   - simulator-only timer overrides from the UI for faster local timeout validation
+  - simulator-only Bogota clock override from the UI for local validation of immediate-hours and out-of-hours scheduling behavior
   - simulator system notices when a timeout comes from runtime expiry, periodic sweep, or boot reconciliation
   - cross-platform simulator launch helpers for macOS/Linux and Windows, with optional Docker-based local Postgres bootstrap
 - The old phase-planning documents were removed because they no longer matched the live system. Use `general_info/current_runtime_reference.md` for the current runtime and validation reference.
@@ -124,6 +125,7 @@ Operational notes:
 - `TRANSFER_PAYMENT_TEXT` is now optional fallback-only in `.env` for backward compatibility if `config/messages.toml` leaves `checkout.transfer_payment_text` empty.
 - `MENU_IMAGE_MEDIA_ID` must contain a valid Meta `media_id`; the runtime no longer expects separate media IDs for liquor/non-liquor flavor flows.
 - `FORCE_BOGOTA_NOW=YYYY-MM-DD HH:MM` is available only for local testing of after-hours scheduling. Do not enable it in Railway or production.
+- The simulator UI can also override the effective Bogota clock at runtime for local validation. That override is local-only and should not be relied on in production.
 - PostgreSQL sessions opened by the app are set to `America/Bogota` (`UTC-5`) on connect so SQL `NOW()` usage and timestamp display stay aligned with the operating timezone used by the bot.
 - Keep `ADVISOR_PHONE` different from `WHATSAPP_TEST_RECIPIENT` during local WhatsApp validation, otherwise tester messages are routed as advisor messages.
 - In simulator mode, no local message or media should ever be sent to Meta. If simulator testing appears in WhatsApp, treat it as a configuration bug.
@@ -253,6 +255,7 @@ For manual simulator validation:
 - verify every transcript row shows a Bogota timestamp
 - verify the timer panel shows countdown, start time, expiration time, and timeout phase/state
 - use simulator timer overrides only for local validation of new waits
+- use the simulator Bogota clock override only for local validation of immediate-hours and scheduling behavior
 - confirm that no local testing event appears in WhatsApp or requires Meta credentials
 
 ## Commit & Pull Request Guidelines

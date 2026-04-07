@@ -16,6 +16,7 @@ const state = {
   sendingCustomer: false,
   sendingAdvisor: false,
   refreshLocks: {},
+  clockOverride: null,
 };
 
 const TIMER_FIELDS = [
@@ -67,6 +68,10 @@ const overrideGrid = document.getElementById('override-grid');
 const dbTabs = document.getElementById('db-tabs');
 const dbTableWrap = document.getElementById('db-table-wrap');
 const dbMeta = document.getElementById('db-meta');
+const clockOverrideInput = document.getElementById('clock-override-input');
+const clockOverrideMeta = document.getElementById('clock-override-meta');
+const applyClockOverrideButton = document.getElementById('apply-clock-override');
+const resetClockOverrideButton = document.getElementById('reset-clock-override');
 const showChatViewButton = document.getElementById('show-chat-view');
 const showDbViewButton = document.getElementById('show-db-view');
 const chatWorkspace = document.getElementById('chat-workspace');
@@ -151,6 +156,11 @@ async function loadTimerRules() {
   const response = await fetchJson('/simulator/api/timer-overrides');
   state.timerRules = response.rules || [];
   renderTimerOverrides();
+}
+
+async function loadClockOverride() {
+  state.clockOverride = await fetchJson('/simulator/api/clock-override');
+  renderClockOverride();
 }
 
 async function refreshDbTable(tabKey = state.activeDbTab) {
@@ -263,6 +273,22 @@ function renderTimerOverrides() {
   for (const input of overrideGrid.querySelectorAll('[data-override-field]')) {
     input.addEventListener('change', persistTimerOverridesFromInputs);
   }
+}
+
+function renderClockOverride() {
+  const info = state.clockOverride;
+  if (!info) {
+    clockOverrideInput.value = '';
+    clockOverrideMeta.textContent = 'Sin datos del reloj local.';
+    return;
+  }
+
+  clockOverrideInput.value = info.override_bogota_now || '';
+  const sourceLabel = info.source === 'simulator_ui' ? 'override activo' : 'hora runtime';
+  clockOverrideMeta.innerHTML = [
+    `efectiva: ${escapeHtml(info.effective_bogota_now.replace('T', ' '))}`,
+    `fuente: ${escapeHtml(sourceLabel)}`,
+  ].join('<br>');
 }
 
 function renderTranscripts(forceScroll = false) {
@@ -628,6 +654,24 @@ document.getElementById('reset-overrides').addEventListener('click', async () =>
   renderTimerOverrides();
 });
 
+applyClockOverrideButton.addEventListener('click', async () => {
+  state.clockOverride = await fetchJson('/simulator/api/clock-override', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bogota_now: clockOverrideInput.value || null }),
+  });
+  renderClockOverride();
+});
+
+resetClockOverrideButton.addEventListener('click', async () => {
+  state.clockOverride = await fetchJson('/simulator/api/clock-override', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bogota_now: null }),
+  });
+  renderClockOverride();
+});
+
 showChatViewButton.addEventListener('click', () => setWorkspaceView('chat'));
 showDbViewButton.addEventListener('click', () => setWorkspaceView('db'));
 
@@ -665,6 +709,7 @@ setInterval(() => {
 }, 5000);
 
 Promise.all([
+  loadClockOverride(),
   loadTimerRules(),
   refreshSessionsList(),
   refreshDbTable(),

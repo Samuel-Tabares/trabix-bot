@@ -1,4 +1,7 @@
-use std::env;
+use std::{
+    env,
+    sync::{OnceLock, RwLock},
+};
 
 use chrono::{DateTime, FixedOffset, NaiveDateTime, NaiveTime, TimeZone, Utc};
 
@@ -27,6 +30,11 @@ const TIME_MIN_LEN: usize = 1;
 const TIME_MAX_LEN: usize = 40;
 const BUSINESS_HOURS_START_HOUR: u32 = 8;
 const BUSINESS_HOURS_END_HOUR: u32 = 23;
+
+fn simulator_clock_override() -> &'static RwLock<Option<DateTime<FixedOffset>>> {
+    static OVERRIDE: OnceLock<RwLock<Option<DateTime<FixedOffset>>>> = OnceLock::new();
+    OVERRIDE.get_or_init(|| RwLock::new(None))
+}
 
 pub fn handle_when_delivery(
     input: &UserInput,
@@ -325,6 +333,9 @@ fn business_hours_end() -> NaiveTime {
 
 fn now_bogota() -> DateTime<FixedOffset> {
     let offset = FixedOffset::west_opt(5 * 3600).expect("valid offset");
+    if let Some(overridden) = simulator_bogota_now_override() {
+        return overridden;
+    }
     if let Some(forced) = parse_forced_bogota_now(offset) {
         return forced;
     }
@@ -332,17 +343,56 @@ fn now_bogota() -> DateTime<FixedOffset> {
     Utc::now().with_timezone(&offset)
 }
 
+pub fn current_bogota_now() -> DateTime<FixedOffset> {
+    now_bogota()
+}
+
+pub fn simulator_bogota_now_override() -> Option<DateTime<FixedOffset>> {
+    simulator_clock_override()
+        .read()
+        .expect("simulator clock override lock poisoned")
+        .to_owned()
+}
+
+pub fn set_simulator_bogota_now_override(
+    raw: Option<&str>,
+) -> Result<Option<DateTime<FixedOffset>>, String> {
+    let parsed = match raw.map(str::trim) {
+        Some("") | None => None,
+        Some(value) => Some(parse_bogota_datetime(value).ok_or_else(|| {
+            "Formato inválido. Usa YYYY-MM-DD HH:MM o YYYY-MM-DDTHH:MM.".to_string()
+        })?),
+    };
+
+    *simulator_clock_override()
+        .write()
+        .expect("simulator clock override lock poisoned") = parsed;
+
+    Ok(parsed)
+}
+
 fn parse_forced_bogota_now(offset: FixedOffset) -> Option<DateTime<FixedOffset>> {
     let raw = env::var("FORCE_BOGOTA_NOW").ok()?;
+    parse_bogota_datetime_with_offset(&raw, offset)
+}
 
-    if let Ok(datetime) = DateTime::parse_from_rfc3339(&raw) {
+fn parse_bogota_datetime(raw: &str) -> Option<DateTime<FixedOffset>> {
+    let offset = FixedOffset::west_opt(5 * 3600).expect("valid offset");
+    parse_bogota_datetime_with_offset(raw, offset)
+}
+
+fn parse_bogota_datetime_with_offset(
+    raw: &str,
+    offset: FixedOffset,
+) -> Option<DateTime<FixedOffset>> {
+    if let Ok(datetime) = DateTime::parse_from_rfc3339(raw) {
         return Some(datetime.with_timezone(&offset));
     }
 
     let formats = ["%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"];
     formats
         .iter()
-        .find_map(|format| NaiveDateTime::parse_from_str(&raw, format).ok())
+        .find_map(|format| NaiveDateTime::parse_from_str(raw, format).ok())
         .and_then(|datetime| offset.from_local_datetime(&datetime).single())
 }
 
@@ -386,6 +436,7 @@ mod tests {
     use super::{
         handle_check_schedule, handle_confirm_schedule, handle_out_of_hours, handle_select_date,
         handle_select_time, handle_when_delivery, is_within_business_hours, now_bogota,
+        set_simulator_bogota_now_override, simulator_bogota_now_override,
     };
 
     fn context() -> ConversationContext {
@@ -441,6 +492,20 @@ mod tests {
         std::env::remove_var("FORCE_BOGOTA_NOW");
 
         assert_eq!(now.time(), NaiveTime::from_hms_opt(23, 30, 0).unwrap());
+    }
+
+    #[test]
+    fn supports_simulator_clock_override() {
+        let _guard = env_lock().lock().expect("env lock");
+        std::env::remove_var("FORCE_BOGOTA_NOW");
+        set_simulator_bogota_now_override(Some("2026-04-07T22:45")).expect("set override");
+
+        let now = now_bogota();
+
+        set_simulator_bogota_now_override(None).expect("clear override");
+
+        assert_eq!(now.time(), NaiveTime::from_hms_opt(22, 45, 0).unwrap());
+        assert_eq!(simulator_bogota_now_override(), None);
     }
 
     #[test]

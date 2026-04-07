@@ -161,7 +161,14 @@ fn default_bind_ip(mode: BotMode) -> IpAddr {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, OnceLock};
+
     use super::{BotMode, Config, ConfigError};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn clear_env() {
         for key in [
@@ -184,6 +191,7 @@ mod tests {
 
     #[test]
     fn production_mode_requires_whatsapp_vars() {
+        let _guard = env_lock().lock().expect("env lock");
         clear_env();
         std::env::set_var("DATABASE_URL", "postgres://local");
         std::env::set_var("ADVISOR_PHONE", "573001234567");
@@ -194,6 +202,7 @@ mod tests {
 
     #[test]
     fn simulator_mode_skips_whatsapp_vars() {
+        let _guard = env_lock().lock().expect("env lock");
         clear_env();
         std::env::set_var("BOT_MODE", "simulator");
         std::env::set_var("DATABASE_URL", "postgres://local");
