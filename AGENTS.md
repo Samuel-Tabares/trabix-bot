@@ -42,24 +42,22 @@ Current implementation status:
   - single menu image sent only in `Ver Menú`
 - Phase 3 is implemented and validated as the checkout foundation:
   - real price calculation in `pricing.rs`, including liquor pair promo and wholesale tiers
-  - `ShowSummary` with estimated total excluding delivery cost
-  - payment choice: `Contra Entrega` or `Pago Ahora`, plus `Cancelar Pedido`
+  - combined `review_checkout` with estimated total excluding delivery cost plus customer-data review/editing
+  - final payment choice at the end of the advisor flow with buttons `Contra Entrega` or `Pago Ahora`
   - transfer instructions plus receipt image capture
   - 10-minute receipt timer with timeout options to change payment or cancel
-  - customer-data review/edit step before handoff, covering name, phone, and address
   - order draft/final persistence in `orders` and `order_items`
-  - conversation persistence of payment context, receipt state, and timer rehydration data
+  - conversation persistence of payment context, receipt state, delivery cost/total final, and timer rehydration data
   - handoff persistence into `pending_advisor`
 - Phase 4 is implemented and now working as the current production runtime:
   - real advisor routing in `webhook.rs`, including per-client advisor buttons and active advisor session binding
-  - advisor detail flow: confirmation, delivery-cost capture, total final update, and closure back to `MainMenu`
+  - advisor detail flow now starts with delivery-cost capture, then either final payment selection or hour negotiation depending on delivery type
   - advisor hour negotiation for detail and scheduled orders
-  - 2-minute advisor timeout with `Programar`, `Reintentar`, and `Menú`
+  - immediate orders now expose only advisor `Confirmar`; 5 minutes of silence auto-falls back to the same path as `No puedo`
   - 30-minute hard reset for advisor-managed `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, and `wait_advisor_confirm_hour`, with order status moved to `manual_followup`
   - generic client inactivity handling on customer-input states: one reminder at 2 minutes and reset to `MainMenu` after 35 minutes, excluding advisor/receipt/relay timed waits
-  - schedule resume path that keeps items, payment, and address while reusing `SelectDate` / `SelectTime`
-  - wholesale relay mode with 30-minute inactivity timeout and advisor-side finish button
-  - `Hablar con Asesor` path with advisor attend/unavailable flow plus leave-message fallback
+  - wholesale pricing still exists, but checkout no longer branches into a wholesale-specific relay path
+  - `Hablar con Asesor` now uses advisor `Atender` plus leave-message fallback on timeout, and relay `Finalizar` is delivered only on relay start
   - timer restoration after restart for advisor waits, stuck advisor-detail waits, `relay_mode`, and generic customer inactivity
   - periodic database-backed timer sweep so missed in-memory tasks still expire receipt, advisor, relay, and customer inactivity waits
   - production number receiving real public WhatsApp messages once the Meta app is in `Live` mode and subscribed to the WABA

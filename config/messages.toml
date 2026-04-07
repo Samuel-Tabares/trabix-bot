@@ -145,7 +145,7 @@ Items:
 
 Total estimado: {total_estimated}
 
-Nota: el domicilio no está incluido. Si el pedido es inmediato, un asesor te confirmará ese valor después de revisar tu solicitud."""
+Nota: el domicilio no está incluido. El asesor lo agregará antes de pasar al pago final."""
 summary_delivery_immediate = "Inmediata"
 summary_delivery_scheduled_template = """Programada
 Fecha: {date}
@@ -158,32 +158,15 @@ summary_item_kind_with_liquor = "con licor"
 summary_item_kind_without_liquor = "sin licor"
 summary_item_mode_wholesale = "mayor"
 summary_item_mode_detail = "detal"
-summary_list_body = "Tu pedido va muy bien ✨ Elige cómo quieres continuar."
-summary_list_button_text = "Ver opciones"
-summary_section_title = "Pago y pedido"
+review_buttons_body = "Revisa tu pedido completo. Puedes continuar o modificar tus datos personales."
+review_continue_button = "Continuar"
+review_change_button = "Modificar datos"
+payment_buttons_body = "✅ Tu pedido ya quedó listo. Elige cómo deseas pagar."
 cash_on_delivery_title = "Contra Entrega"
-cash_on_delivery_description = "Paga al recibir tu pedido"
 pay_now_title = "Pago Ahora"
-pay_now_description = "Transfiere y envía comprobante"
-cancel_order_title = "Cancelar Pedido"
-cancel_order_description = "Salir y volver al menú"
-confirm_customer_template = """📋 Antes de continuar, confirma tus datos:
-
-Nombre: {customer_name}
-Teléfono: {customer_phone}
-Dirección: {delivery_address}
-
-¿Quieres seguir con esta información?"""
-confirm_customer_continue_button = "Continuar"
-confirm_customer_change_button = "Cambiar"
 change_customer_field_body = "¿Qué dato deseas actualizar?"
 change_name_button = "Nombre"
 change_phone_button = "Teléfono"
-confirm_address_template = """📍 La dirección de entrega es:
-{address}
-
-¿Está correcta?"""
-confirm_address_button = "Sí, correcta"
 change_address_button = "Cambiar dirección"
 transfer_payment_text = """💳 Puedes realizar tu pago por cualquiera de estas opciones:
 
@@ -196,6 +179,7 @@ wait_receipt_prompt = "Quedo atent@ 😊 Envíame la foto del comprobante en los
 receipt_timeout_body = "Se venció el tiempo para recibir el comprobante ⏳ Puedes cambiar la forma de pago o cancelar el pedido."
 receipt_timeout_change_payment_button = "Cambiar pago"
 receipt_timeout_cancel_button = "Cancelar"
+final_order_success_text = "✅ Confirmación final del pedido. Tu pedido quedó registrado correctamente. Si necesitas algo más, aquí estaré."
 
 [advisor_customer]
 contact_name_prompt = "Para ponerte en contacto con un asesor, ¿me compartes tu nombre? 😊"
@@ -245,6 +229,15 @@ Total final: {total_final}
 
 Dirección: {address}
 Tiempo estimado de entrega: 20 a 40 minutos."""
+scheduled_payment_ready_template = """✅ Pedido programado confirmado
+
+Fecha de referencia: {date}
+Hora acordada: {time}
+Subtotal: {subtotal}
+Domicilio: {delivery_cost}
+Total final: {total_final}
+
+Ahora elige cómo deseas pagar tu pedido."""
 scheduled_confirmation_template = """✅ Tu pedido fue registrado.
 
 Fecha de referencia: {date}

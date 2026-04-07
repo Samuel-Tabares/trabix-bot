@@ -67,7 +67,8 @@ pub fn uses_customer_inactivity_timer(state: &ConversationState) -> bool {
             | ConversationState::EditCustomerName
             | ConversationState::EditCustomerPhone
             | ConversationState::EditCustomerAddress
-            | ConversationState::ShowSummary
+            | ConversationState::ReviewCheckout
+            | ConversationState::SelectPaymentMethod
             | ConversationState::OfferHourToClient { .. }
             | ConversationState::WaitClientHour
             | ConversationState::ContactAdvisorName
@@ -116,7 +117,10 @@ pub fn reminder_actions(
         ConversationState::EditCustomerAddress => {
             checkout::change_address_prompt_actions(&context.phone_number)
         }
-        ConversationState::ShowSummary => checkout::show_summary_actions(context),
+        ConversationState::ReviewCheckout => checkout::review_checkout_actions(context),
+        ConversationState::SelectPaymentMethod => {
+            checkout::select_payment_method_actions(&context.phone_number)
+        }
         ConversationState::OfferHourToClient { proposed_hour } => {
             advisor::offer_hour_to_client_actions(&context.phone_number, proposed_hour)
         }
@@ -184,6 +188,8 @@ mod tests {
             scheduled_time: None,
             customer_review_scope: None,
             payment_method: None,
+            delivery_cost: None,
+            total_final: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
             advisor_target_phone: None,

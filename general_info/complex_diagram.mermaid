@@ -92,40 +92,36 @@ graph TD
         SelectFlavor --> SelectQuantity["🔢 select_quantity<br/>Pregunta cantidad"]
         SelectQuantity --> AddMore["➕ add_more<br/>Resumen parcial + botones"]
         AddMore -->|Agregar más| SelectType
-        AddMore -->|Finalizar pedido| ShowSummary["📋 show_summary<br/>render_summary() + lista pago"]
+        AddMore -->|Finalizar pedido| ReviewCheckout["📋 review_checkout<br/>render_summary() + botones Continuar / Modificar datos"]
         AddMore -->|Reiniciar pedido| ConfirmRestart["⚠️ confirm_restart_order<br/>confirma borrado total de items"]
         ConfirmRestart -->|Sí, reiniciar| SelectType
         ConfirmRestart -->|No, volver| AddMore
 
-        ShowSummary --> SummaryChoice{"Lista de pago y pedido"}
-        SummaryChoice -->|Contra Entrega| ConfirmAddress["✅ confirm_address<br/>scope order_checkout<br/>muestra nombre + telefono + direccion"]
-        SummaryChoice -->|Pago Ahora| WaitReceipt["📸 wait_receipt<br/>- TRANSFER_PAYMENT_TEXT<br/>- pide comprobante<br/>- timer 10m"]
-        SummaryChoice -->|Cancelar Pedido| MainMenu
-
-        WaitReceipt -->|imagen recibida| ConfirmAddress
-        WaitReceipt -->|timer vencido| ReceiptTimeout["Opciones Cambiar pago / Cancelar"]
-        ReceiptTimeout --> ShowSummary
-
-        ConfirmAddress --> ReviewChoice{"📋 ¿Continuar o cambiar?"}
-        ReviewChoice -->|Continuar| AdvisorHandoff["📤 handoff_order_after_address_confirmation"]
-        ReviewChoice -->|Cambiar| SelectField["🛠️ select_customer_data_field<br/>Nombre / Teléfono / Dirección"]
+        ReviewCheckout -->|Continuar| AdvisorHandoff["📤 start_order_advisor_flow"]
+        ReviewCheckout -->|Modificar datos| SelectField["🛠️ select_customer_data_field<br/>Nombre / Teléfono / Dirección"]
         SelectField -->|Nombre| EditName["✏️ edit_customer_name"]
         SelectField -->|Teléfono| EditPhone["✏️ edit_customer_phone"]
         SelectField -->|Dirección| EditAddress["✏️ edit_customer_address"]
-        EditName --> ConfirmAddress
-        EditPhone --> ConfirmAddress
-        EditAddress --> ConfirmAddress
+        EditName --> ReviewCheckout
+        EditPhone --> ReviewCheckout
+        EditAddress --> ReviewCheckout
+
+        SelectPayment["💳 select_payment_method<br/>Botones Contra Entrega / Pago Ahora"] -->|Pago Ahora| WaitReceipt["📸 wait_receipt<br/>- TRANSFER_PAYMENT_TEXT<br/>- pide comprobante<br/>- timer 10m"]
+        SelectPayment -->|Contra Entrega| FinalOrder["✅ Confirmación final del pedido<br/>ResetConversation -> MainMenu"]
+        WaitReceipt -->|imagen recibida| FinalOrder
+        WaitReceipt -->|timer vencido| ReceiptTimeout["Opciones Cambiar pago / Cancelar"]
+        ReceiptTimeout --> SelectPayment
     end
 
     subgraph OrderPersistence["PERSISTENCIA DEL PEDIDO"]
         DraftUpsert["💾 UpsertDraftOrder / FinalizeCurrentOrder<br/>usa conversations + context para orders y order_items"]
-        ContextData["🧠 state_data relevante<br/>- items[]<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- receipt_media_id<br/>- current_order_id<br/>- advisor timers / relay timers"]
+        ContextData["🧠 state_data relevante<br/>- items[]<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- delivery_cost<br/>- total_final<br/>- receipt_media_id<br/>- current_order_id<br/>- advisor timers / relay timers"]
     end
 
     AdvisorHandoff --> DraftUpsert
-    ShowSummary --> ContextData
+    ReviewCheckout --> ContextData
+    SelectPayment --> ContextData
     WaitReceipt --> ContextData
-    ConfirmAddress --> ContextData
     DraftUpsert --> Orders
     DraftUpsert --> OrderItems
     LoadClient --> Conversations
@@ -137,24 +133,15 @@ graph TD
     Timers --> Conversations
 
     subgraph OrderAdvisorFlow["FLUJO REAL ASESOR PARA PEDIDOS"]
-        AdvisorHandoff --> AdvisorEntry{"👨‍💼 ¿delivery_type actual?"}
+        AdvisorHandoff --> AskDeliveryCost["ask_delivery_cost\n1. render_order_summary() al asesor\n2. asesor digita domicilio\n3. timer 30m"]
+        AskDeliveryCost --> DeliveryTypeAfterCost{"👨‍💼 ¿delivery_type actual?"}
 
-        AdvisorEntry -->|scheduled| SendScheduledToAdvisor["Envios al asesor:\n1. render_order_summary()\n2. imagen comprobante si existe\n3. boton unico Confirmar {ultimos4}\nAl cliente: pedido programado enviado al asesor"]
-        AdvisorEntry -->|immediate| SendImmediateToAdvisor["Envios al asesor:\n1. render_order_summary()\n2. imagen comprobante si existe\n3. botones Confirmar / No puedo {ultimos4}\nAl cliente: pedido enviado al asesor"]
-
-        SendScheduledToAdvisor --> WaitAdvisorResponse["⏳ wait_advisor_response + timer 2m"]
-        SendImmediateToAdvisor --> WaitAdvisorResponse
+        DeliveryTypeAfterCost -->|scheduled| ScheduledConfirmed["UpdateCurrentOrderDeliveryCost + status=draft_payment\nCliente: subtotal + domicilio + total final + fecha/hora\nLuego botones de pago"]
+        DeliveryTypeAfterCost -->|immediate| WaitAdvisorResponse["⏳ wait_advisor_response<br/>asesor recibe solo Confirmar<br/>timer 5m auto-No puedo"]
 
         WaitAdvisorResponse --> AdvisorDecision{"🔘 Acción del asesor"}
-
-        AdvisorDecision -->|Confirmar sobre scheduled| ScheduledConfirmed["FinalizeCurrentOrder status=confirmed\nCliente: pedido registrado + fecha ref + hora acordada\nResetConversation -> MainMenu"]
-
-        AdvisorDecision -->|Confirmar sobre immediate| AskDeliveryCost["ask_delivery_cost\nBot pregunta al asesor valor numerico del domicilio\n timer 30m"]
-        AskDeliveryCost --> DeliveryCostOk{"💰 ¿Valor válido?"}
-        DeliveryCostOk -->|Si| ImmediateConfirmed["UpdateCurrentOrderDeliveryCost + status=confirmed\nCliente: subtotal + domicilio + total final + 20-40 min\nResetConversation -> MainMenu"]
-        DeliveryCostOk -->|No| AskDeliveryCost
-
-        AdvisorDecision -->|No puedo sobre immediate| ConvertToScheduled["Mutaciones:\n- delivery_type = scheduled\n- scheduled_date = hoy Bogota\n- scheduled_time = None\n- limpia proposed/client hour\nLuego pregunta al asesor que hora puede"]
+        AdvisorDecision -->|Confirmar| ImmediateConfirmed["UpsertDraftOrder status=draft_payment\nCliente: subtotal + domicilio + total final + 20-40 min\nLuego botones de pago"]
+        AdvisorDecision -->|timeout| ConvertToScheduled["Mutaciones:\n- delivery_type = scheduled\n- scheduled_date = hoy Bogota\n- scheduled_time = None\n- limpia proposed/client hour\nLuego pregunta al asesor que hora puede"]
         ConvertToScheduled --> NegotiateHour["🕐 negotiate_hour<br/>timer 30m"]
         NegotiateHour --> AdvisorProposesHour["👨‍💼 Asesor envía texto hora"]
         AdvisorProposesHour --> OfferHourToClient["🎯 offer_hour_to_client<br/>Cliente recibe propuesta + Aceptar / Rechazar"]
@@ -177,7 +164,7 @@ graph TD
         ContactAdvisorName --> ContactNeeds
         ContactAdvisorPhone --> ContactNeeds
         ConfirmContact --> ContactReviewChoice{"📋 ¿Continuar o cambiar?"}
-        ContactReviewChoice -->|Continuar| WaitAdvisorContact["wait_advisor_contact\n- render_contact_request al asesor\n- botones Atender / No disp.\n- cliente queda esperando\n- timer 2m"]
+        ContactReviewChoice -->|Continuar| WaitAdvisorContact["wait_advisor_contact\n- render_contact_request al asesor\n- boton Atender\n- cliente queda esperando\n- timer 2m"]
         ContactReviewChoice -->|Cambiar| SelectContactField["🛠️ select_customer_data_field<br/>Nombre / Teléfono"]
         SelectContactField -->|Nombre| EditContactName["✏️ edit_customer_name"]
         SelectContactField -->|Teléfono| EditContactPhone["✏️ edit_customer_phone"]
@@ -185,8 +172,7 @@ graph TD
         EditContactPhone --> ConfirmContact
 
         WaitAdvisorContact --> ContactDecision{"Asesor responde?"}
-        ContactDecision -->|Atender| RelayMode["🔄 relay_mode<br/>- cliente -> asesor<br/>- asesor -> cliente<br/>- botón Finalizar<br/>- timer 30m"]
-        ContactDecision -->|No disponible| LeaveOrMenu["Cliente recibe botones Dejar mensaje / Menu"]
+        ContactDecision -->|Atender| RelayMode["🔄 relay_mode<br/>- cliente -> asesor<br/>- asesor -> cliente<br/>- botón Finalizar solo al iniciar relay<br/>- timer 30m"]
         ContactDecision -->|timeout 2m| LeaveOrMenu
 
         LeaveOrMenu -->|Dejar mensaje| LeaveMessage["leave_message\nCliente deja texto\nBot reenvia al asesor y resetea"]
@@ -224,7 +210,7 @@ graph TD
         Timers --> Sweep["⏲️ sweep_expired_timers()<br/>cada 60s"]
 
         Timers --> ReceiptExpire["expire_receipt_timer\nCliente: no llego comprobante\nBotones Cambiar pago / Cancelar"]
-        Timers --> AdvisorExpire["expire_advisor_timer\nCliente: Programar / Reintentar / Menu\nO Dejar mensaje / Menu en contact\nO hard reset 30m en advisor-detail waits"]
+        Timers --> AdvisorExpire["expire_advisor_timer\nPedido inmediato: auto-No puedo a los 5m\nContacto asesor: Dejar mensaje / Menu\nAdvisor-detail waits: hard reset 30m"]
         Timers --> RelayExpire["expire_relay_timer\nCliente: conversacion cerrada por inactividad"]
         Timers --> IdleReminder["conversation_abandon 2m\nReenvia el prompt actual una sola vez"]
         Timers --> IdleReset["conversation_abandon 35m\nNotifica reinicio y resetea a MainMenu"]

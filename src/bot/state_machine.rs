@@ -37,7 +37,8 @@ pub enum ConversationState {
     EditCustomerName,
     EditCustomerPhone,
     EditCustomerAddress,
-    ShowSummary,
+    ReviewCheckout,
+    SelectPaymentMethod,
     WaitReceipt,
     WaitAdvisorResponse,
     AskDeliveryCost,
@@ -80,7 +81,8 @@ impl ConversationState {
             Self::EditCustomerName => "edit_customer_name",
             Self::EditCustomerPhone => "edit_customer_phone",
             Self::EditCustomerAddress => "edit_customer_address",
-            Self::ShowSummary => "show_summary",
+            Self::ReviewCheckout => "review_checkout",
+            Self::SelectPaymentMethod => "select_payment_method",
             Self::WaitReceipt => "wait_receipt",
             Self::WaitAdvisorResponse => "wait_advisor_response",
             Self::AskDeliveryCost => "ask_delivery_cost",
@@ -144,7 +146,8 @@ impl ConversationState {
             "edit_customer_name" => Ok(Self::EditCustomerName),
             "edit_customer_phone" => Ok(Self::EditCustomerPhone),
             "edit_customer_address" => Ok(Self::EditCustomerAddress),
-            "show_summary" => Ok(Self::ShowSummary),
+            "review_checkout" | "show_summary" => Ok(Self::ReviewCheckout),
+            "select_payment_method" => Ok(Self::SelectPaymentMethod),
             "wait_receipt" => Ok(Self::WaitReceipt),
             "wait_advisor_response" => Ok(Self::WaitAdvisorResponse),
             "ask_delivery_cost" => Ok(Self::AskDeliveryCost),
@@ -216,7 +219,8 @@ impl<'de> Deserialize<'de> for ConversationState {
             "edit_customer_name" => Ok(Self::EditCustomerName),
             "edit_customer_phone" => Ok(Self::EditCustomerPhone),
             "edit_customer_address" => Ok(Self::EditCustomerAddress),
-            "show_summary" => Ok(Self::ShowSummary),
+            "review_checkout" | "show_summary" => Ok(Self::ReviewCheckout),
+            "select_payment_method" => Ok(Self::SelectPaymentMethod),
             "wait_receipt" => Ok(Self::WaitReceipt),
             "wait_advisor_response" => Ok(Self::WaitAdvisorResponse),
             "ask_delivery_cost" => Ok(Self::AskDeliveryCost),
@@ -360,6 +364,8 @@ pub struct ConversationContext {
     pub scheduled_time: Option<String>,
     pub customer_review_scope: Option<String>,
     pub payment_method: Option<String>,
+    pub delivery_cost: Option<i32>,
+    pub total_final: Option<i32>,
     pub receipt_media_id: Option<String>,
     pub receipt_timer_started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub advisor_target_phone: Option<String>,
@@ -400,6 +406,8 @@ impl ConversationContext {
             scheduled_time: state_data.scheduled_time.clone(),
             customer_review_scope: state_data.customer_review_scope.clone(),
             payment_method: state_data.payment_method.clone(),
+            delivery_cost: state_data.delivery_cost,
+            total_final: state_data.total_final,
             receipt_media_id: state_data.receipt_media_id.clone(),
             receipt_timer_started_at: state_data.receipt_timer_started_at,
             advisor_target_phone: state_data.advisor_target_phone.clone(),
@@ -428,6 +436,8 @@ impl ConversationContext {
             scheduled_time: self.scheduled_time.clone(),
             customer_review_scope: self.customer_review_scope.clone(),
             payment_method: self.payment_method.clone(),
+            delivery_cost: self.delivery_cost,
+            total_final: self.total_final,
             receipt_media_id: self.receipt_media_id.clone(),
             receipt_timer_started_at: self.receipt_timer_started_at,
             advisor_target_phone: self.advisor_target_phone.clone(),
@@ -517,7 +527,10 @@ pub fn transition(
         ConversationState::EditCustomerAddress => {
             customer_data::handle_edit_customer_address(input, context)
         }
-        ConversationState::ShowSummary => checkout::handle_show_summary(input, context),
+        ConversationState::ReviewCheckout => checkout::handle_review_checkout(input, context),
+        ConversationState::SelectPaymentMethod => {
+            checkout::handle_select_payment_method(input, context)
+        }
         ConversationState::WaitReceipt => checkout::handle_wait_receipt(input, context),
         ConversationState::WaitAdvisorResponse => {
             checkout::handle_wait_advisor_response(input, context)

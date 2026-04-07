@@ -191,6 +191,8 @@ mod tests {
             scheduled_time: None,
             customer_review_scope: None,
             payment_method: None,
+            delivery_cost: None,
+            total_final: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
             advisor_target_phone: None,

@@ -2,7 +2,7 @@ use crate::bot::{
     state_machine::{
         BotAction, ConversationContext, ConversationState, TransitionResult, UserInput,
     },
-    states::{customer_data, order},
+    states::customer_data,
 };
 use crate::messages::client_messages;
 
@@ -74,10 +74,7 @@ pub fn handle_collect_address(
         UserInput::TextMessage(text) => match validate_address(text) {
             Ok(address) => {
                 context.delivery_address = Some(address);
-                Ok((
-                    ConversationState::SelectType,
-                    order::select_type_actions(&context.phone_number),
-                ))
+                Ok(customer_data::next_order_data_state(context))
             }
             Err(message) => Ok((
                 ConversationState::CollectAddress,
@@ -187,6 +184,8 @@ mod tests {
             scheduled_time: None,
             customer_review_scope: None,
             payment_method: None,
+            delivery_cost: None,
+            total_final: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
             advisor_target_phone: None,
@@ -255,6 +254,8 @@ mod tests {
     #[test]
     fn collect_address_advances_to_select_type() {
         let mut context = context();
+        context.customer_name = Some("Ana Maria".to_string());
+        context.customer_phone = Some("3001234567".to_string());
         let (state, _) = handle_collect_address(
             &UserInput::TextMessage("Cra 15 #20-30 Armenia".to_string()),
             &mut context,

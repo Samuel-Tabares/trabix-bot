@@ -22,12 +22,13 @@ use crate::{
             CONVERSATION_RESET_TIMEOUT,
         },
         state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
+        states::advisor,
     },
     db::{
         models::ConversationStateData,
         queries::{
             get_conversation, list_active_timer_conversations, reset_conversation,
-            update_order_status, update_state,
+            update_last_message, update_order_status, update_state,
         },
     },
     engine::{
@@ -46,6 +47,7 @@ pub type TimerMap = Arc<Mutex<HashMap<TimerKey, ActiveTimer>>>;
 
 pub const RECEIPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+pub const ADVISOR_AUTO_CANNOT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub const ADVISOR_STUCK_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 pub const RELAY_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const TIMER_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
@@ -57,6 +59,7 @@ pub type TimerOverridesHandle = Arc<RwLock<SimulatorTimerOverrides>>;
 #[serde(rename_all = "snake_case")]
 pub enum TimerRule {
     AdvisorResponse,
+    AdvisorAutoCannot,
     ReceiptUpload,
     AdvisorStuck,
     RelayInactivity,
@@ -68,6 +71,7 @@ impl TimerRule {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::AdvisorResponse => "advisor_response",
+            Self::AdvisorAutoCannot => "advisor_auto_cannot",
             Self::ReceiptUpload => "receipt_upload",
             Self::AdvisorStuck => "advisor_stuck",
             Self::RelayInactivity => "relay_inactivity",
@@ -79,6 +83,7 @@ impl TimerRule {
     pub fn label(&self) -> &'static str {
         match self {
             Self::AdvisorResponse => "Asesor sin responder",
+            Self::AdvisorAutoCannot => "Pedido inmediato sin respuesta",
             Self::ReceiptUpload => "Espera de comprobante",
             Self::AdvisorStuck => "Asesor atascado",
             Self::RelayInactivity => "Relay inactivo",
@@ -90,6 +95,7 @@ impl TimerRule {
     pub fn default_duration(&self) -> Duration {
         match self {
             Self::AdvisorResponse => ADVISOR_RESPONSE_TIMEOUT,
+            Self::AdvisorAutoCannot => ADVISOR_AUTO_CANNOT_TIMEOUT,
             Self::ReceiptUpload => RECEIPT_TIMEOUT,
             Self::AdvisorStuck => ADVISOR_STUCK_TIMEOUT,
             Self::RelayInactivity => RELAY_INACTIVITY_TIMEOUT,
@@ -102,6 +108,7 @@ impl TimerRule {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimulatorTimerOverrides {
     pub advisor_response_seconds: Option<u64>,
+    pub advisor_auto_cannot_seconds: Option<u64>,
     pub receipt_upload_seconds: Option<u64>,
     pub advisor_stuck_seconds: Option<u64>,
     pub relay_inactivity_seconds: Option<u64>,
@@ -113,6 +120,7 @@ impl SimulatorTimerOverrides {
     pub fn seconds_for(&self, rule: TimerRule) -> Option<u64> {
         match rule {
             TimerRule::AdvisorResponse => self.advisor_response_seconds,
+            TimerRule::AdvisorAutoCannot => self.advisor_auto_cannot_seconds,
             TimerRule::ReceiptUpload => self.receipt_upload_seconds,
             TimerRule::AdvisorStuck => self.advisor_stuck_seconds,
             TimerRule::RelayInactivity => self.relay_inactivity_seconds,
@@ -188,6 +196,7 @@ pub fn simulator_timer_rules(state: &AppState) -> Vec<SimulatorTimerRuleInfo> {
 
     [
         TimerRule::AdvisorResponse,
+        TimerRule::AdvisorAutoCannot,
         TimerRule::ReceiptUpload,
         TimerRule::AdvisorStuck,
         TimerRule::RelayInactivity,
@@ -278,6 +287,9 @@ fn timer_rule_for_start_timer(
         TimerType::ConversationAbandon => Some(TimerRule::ConversationReminder),
         TimerType::AdvisorResponse if requested_duration == ADVISOR_STUCK_TIMEOUT => {
             Some(TimerRule::AdvisorStuck)
+        }
+        TimerType::AdvisorResponse if requested_duration == ADVISOR_AUTO_CANNOT_TIMEOUT => {
+            Some(TimerRule::AdvisorAutoCannot)
         }
         TimerType::AdvisorResponse if requested_duration == ADVISOR_RESPONSE_TIMEOUT => {
             Some(TimerRule::AdvisorResponse)
@@ -734,6 +746,9 @@ fn boot_expiration_action_with_overrides(
             }
 
             match advisor_timeout_kind(conversation.state.as_str()) {
+                Some(AdvisorTimeoutKind::AutoCannot) => {
+                    BootExpirationAction::UpdateAdvisorExpiredAndClearSession
+                }
                 Some(AdvisorTimeoutKind::FallbackButtons) => {
                     BootExpirationAction::UpdateAdvisorExpiredAndClearSession
                 }
@@ -917,6 +932,65 @@ async fn expire_advisor_timer_with_source(
     clear_bound_advisor_session(&state, &state.config.advisor_phone).await?;
 
     match timeout_kind {
+        AdvisorTimeoutKind::AutoCannot => {
+            state_data.advisor_timer_expired = true;
+            state_data.delivery_type = Some("scheduled".to_string());
+            state_data.scheduled_date = Some(today_bogota_iso_date());
+            state_data.scheduled_time = None;
+            state_data.advisor_proposed_hour = None;
+            state_data.client_counter_hour = None;
+            state_data.advisor_timer_started_at = Some(Utc::now());
+            state_data.advisor_timer_expired = false;
+
+            tracing::info!(
+                phone = %mask_phone(&phone_number),
+                timer_type = %TimerType::AdvisorResponse.as_str(),
+                timeout_kind = "auto_no_puedo",
+                state = %conversation.state,
+                source = %source.as_str(),
+                "advisor timer auto-transitioned immediate order"
+            );
+            record_simulator_timer_notice(
+                &state,
+                &phone_number,
+                TimerType::AdvisorResponse,
+                source,
+                &conversation.state,
+                "auto_no_puedo",
+                false,
+            )
+            .await;
+
+            bind_advisor_session_for_timer(
+                &state,
+                &state.config.advisor_phone,
+                &conversation.phone_number,
+            )
+            .await?;
+            update_state(&state.pool, &phone_number, "negotiate_hour", &state_data).await?;
+            update_last_message(&state.pool, &phone_number).await?;
+            dispatch_timer_actions(
+                &state,
+                &[
+                    BotAction::SendText {
+                        to: state.config.advisor_phone.clone(),
+                        body: format!(
+                            "Pedido {} quedó como programado para hoy. ¿Qué hora puede proponer?",
+                            advisor::phone_marker(&phone_number)
+                        ),
+                    },
+                    BotAction::SendText {
+                        to: phone_number.clone(),
+                        body: client_messages()
+                            .advisor_customer
+                            .wait_negotiate_hour_text
+                            .clone(),
+                    },
+                ],
+                Some(&phone_number),
+            )
+            .await?;
+        }
         AdvisorTimeoutKind::FallbackButtons => {
             state_data.advisor_timer_expired = true;
             state_data.advisor_timer_started_at = None;
@@ -1226,7 +1300,8 @@ fn timer_recovery_states() -> Vec<&'static str> {
         "edit_customer_name",
         "edit_customer_phone",
         "edit_customer_address",
-        "show_summary",
+        "review_checkout",
+        "select_payment_method",
         "offer_hour_to_client",
         "wait_client_hour",
         "contact_advisor_name",
@@ -1237,15 +1312,15 @@ fn timer_recovery_states() -> Vec<&'static str> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AdvisorTimeoutKind {
+    AutoCannot,
     FallbackButtons,
     HardReset,
 }
 
 fn advisor_timeout_kind(state: &str) -> Option<AdvisorTimeoutKind> {
     match state {
-        "wait_advisor_response" | "wait_advisor_mayor" | "wait_advisor_contact" => {
-            Some(AdvisorTimeoutKind::FallbackButtons)
-        }
+        "wait_advisor_response" => Some(AdvisorTimeoutKind::AutoCannot),
+        "wait_advisor_mayor" | "wait_advisor_contact" => Some(AdvisorTimeoutKind::FallbackButtons),
         "ask_delivery_cost"
         | "negotiate_hour"
         | "wait_advisor_hour_decision"
@@ -1260,6 +1335,11 @@ fn advisor_timeout_for_state_with_overrides(
     state: &str,
 ) -> Option<Duration> {
     match advisor_timeout_kind(state) {
+        Some(AdvisorTimeoutKind::AutoCannot) => Some(duration_from_overrides(
+            is_simulator,
+            overrides,
+            TimerRule::AdvisorAutoCannot,
+        )),
         Some(AdvisorTimeoutKind::FallbackButtons) => Some(duration_from_overrides(
             is_simulator,
             overrides,
@@ -1305,6 +1385,7 @@ fn derive_timer_snapshots(
     if !state_data.advisor_timer_expired {
         if let Some(kind) = advisor_timeout_kind(conversation_state) {
             let (rule, phase) = match kind {
+                AdvisorTimeoutKind::AutoCannot => (TimerRule::AdvisorAutoCannot, "auto_no_puedo"),
                 AdvisorTimeoutKind::FallbackButtons => {
                     (TimerRule::AdvisorResponse, "fallback_buttons")
                 }
@@ -1406,7 +1487,8 @@ fn customer_inactivity_state(state: &str) -> bool {
             | "edit_customer_name"
             | "edit_customer_phone"
             | "edit_customer_address"
-            | "show_summary"
+            | "review_checkout"
+            | "select_payment_method"
             | "offer_hour_to_client"
             | "wait_client_hour"
             | "contact_advisor_name"
@@ -1555,6 +1637,20 @@ fn contact_timeout_buttons() -> Vec<Button> {
     ]
 }
 
+async fn bind_advisor_session_for_timer(
+    state: &AppState,
+    advisor_phone: &str,
+    target_phone: &str,
+) -> Result<(), sqlx::Error> {
+    if let Some(conversation) = get_conversation(&state.pool, advisor_phone).await? {
+        let mut state_data = conversation.state_data.0;
+        state_data.advisor_target_phone = Some(target_phone.to_string());
+        update_state(&state.pool, advisor_phone, &conversation.state, &state_data).await?;
+    }
+
+    Ok(())
+}
+
 fn reply_button(id: &str, title: &str) -> Button {
     Button {
         kind: "reply".to_string(),
@@ -1574,6 +1670,15 @@ fn phone_marker(phone: &str) -> String {
     format!("[...{suffix}]")
 }
 
+fn today_bogota_iso_date() -> String {
+    let offset = chrono::FixedOffset::west_opt(5 * 3600).expect("valid Bogota offset");
+    Utc::now()
+        .with_timezone(&offset)
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Duration as ChronoDuration;
@@ -1581,7 +1686,7 @@ mod tests {
 
     use super::{
         boot_expiration_action_with_overrides, timer_recovery_with_overrides, BootExpirationAction,
-        SimulatorTimerOverrides, TimerRecovery, ADVISOR_STUCK_TIMEOUT,
+        SimulatorTimerOverrides, TimerRecovery, ADVISOR_AUTO_CANNOT_TIMEOUT, ADVISOR_STUCK_TIMEOUT,
     };
     use crate::{
         bot::state_machine::TimerType,
@@ -1644,7 +1749,11 @@ mod tests {
 
         assert_eq!(
             recovery,
-            Some(TimerRecovery::Expired(TimerType::AdvisorResponse))
+            Some(TimerRecovery::Active {
+                timer_type: TimerType::AdvisorResponse,
+                timeout: ADVISOR_AUTO_CANNOT_TIMEOUT,
+                started_at: now - ChronoDuration::minutes(3),
+            })
         );
     }
 

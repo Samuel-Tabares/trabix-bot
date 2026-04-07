@@ -4,7 +4,7 @@ use crate::{
             BotAction, ConversationContext, ConversationState, TimerType, TransitionResult,
             UserInput,
         },
-        states::checkout,
+        states::customer_data,
     },
     db::models::OrderItemData,
     messages::{client_messages, render_template},
@@ -155,8 +155,8 @@ pub fn handle_add_more(input: &UserInput, context: &mut ConversationContext) -> 
             confirm_restart_order_actions(&context.phone_number),
         )),
         Some(FINISH_ORDER) => Ok((
-            ConversationState::ShowSummary,
-            checkout::show_summary_actions(context),
+            ConversationState::ReviewCheckout,
+            customer_data::start_checkout_review(context).1,
         )),
         _ => Ok((
             ConversationState::AddMore,
@@ -380,6 +380,8 @@ fn restart_order_transition(
     context.items.clear();
     context.customer_review_scope = None;
     context.payment_method = None;
+    context.delivery_cost = None;
+    context.total_final = None;
     context.receipt_media_id = None;
     context.receipt_timer_started_at = None;
     context.current_order_id = None;
@@ -433,6 +435,8 @@ mod tests {
             scheduled_time: None,
             customer_review_scope: None,
             payment_method: None,
+            delivery_cost: None,
+            total_final: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
             advisor_target_phone: None,
@@ -537,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn add_more_finish_moves_to_summary() {
+    fn add_more_finish_moves_to_review() {
         let mut context = context();
         context.items.push(crate::db::models::OrderItemData {
             flavor: "Bonbonbum".to_string(),
@@ -551,7 +555,7 @@ mod tests {
         )
         .expect("transition");
 
-        assert_eq!(state, ConversationState::ShowSummary);
+        assert_eq!(state, ConversationState::ReviewCheckout);
     }
 
     #[test]

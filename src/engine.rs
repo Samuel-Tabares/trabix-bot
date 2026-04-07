@@ -794,7 +794,7 @@ async fn upsert_order_from_context(
     status: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let delivery_type = required_field(&context.delivery_type, "delivery_type")?;
-    let payment_method = required_field(&context.payment_method, "payment_method")?;
+    let payment_method = context.payment_method.as_deref().unwrap_or("pending");
     let schedule_values = schedule_values_for_persistence(context);
     let pedido = calcular_pedido(&context.items);
     let total_estimated = i32::try_from(pedido.total_estimado)

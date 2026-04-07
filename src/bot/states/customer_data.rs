@@ -6,9 +6,9 @@ use crate::{
     whatsapp::types::{Button, ButtonReplyPayload},
 };
 
-use super::{advisor, data_collect};
+use super::{advisor, checkout, data_collect, order};
 
-pub const REVIEW_SCOPE_ORDER: &str = "order_checkout";
+pub const REVIEW_SCOPE_CHECKOUT: &str = "checkout_review";
 pub const REVIEW_SCOPE_ADVISOR: &str = "advisor_contact";
 
 const CONTINUE_CUSTOMER_DATA: &str = "continue_customer_data";
@@ -20,7 +20,7 @@ const EDIT_CUSTOMER_ADDRESS: &str = "edit_customer_address";
 pub fn next_order_data_state(
     context: &mut ConversationContext,
 ) -> (ConversationState, Vec<BotAction>) {
-    context.customer_review_scope = Some(REVIEW_SCOPE_ORDER.to_string());
+    context.customer_review_scope = None;
 
     if context.customer_name.is_none() {
         return (
@@ -43,6 +43,16 @@ pub fn next_order_data_state(
         );
     }
 
+    (
+        ConversationState::SelectType,
+        order::select_type_actions(&context.phone_number),
+    )
+}
+
+pub fn start_checkout_review(
+    context: &mut ConversationContext,
+) -> (ConversationState, Vec<BotAction>) {
+    context.customer_review_scope = Some(REVIEW_SCOPE_CHECKOUT.to_string());
     enter_review_state(context)
 }
 
@@ -74,13 +84,9 @@ pub fn handle_confirm_customer_data(
 ) -> TransitionResult {
     match selection_id(input).as_deref() {
         Some(CONTINUE_CUSTOMER_DATA) => {
-            let scope = review_scope(context).to_string();
             context.customer_review_scope = None;
 
-            let (state, actions) = match scope.as_str() {
-                REVIEW_SCOPE_ADVISOR => advisor::start_waiting_for_contact_advisor(context),
-                _ => advisor::handoff_order_after_address_confirmation(context),
-            };
+            let (state, actions) = advisor::start_waiting_for_contact_advisor(context);
 
             Ok((state, actions))
         }
@@ -108,7 +114,7 @@ pub fn handle_select_customer_data_field(
             ConversationState::EditCustomerPhone,
             edit_customer_phone_actions(context),
         )),
-        Some(EDIT_CUSTOMER_ADDRESS) if review_scope(context) == REVIEW_SCOPE_ORDER => Ok((
+        Some(EDIT_CUSTOMER_ADDRESS) if review_scope(context) == REVIEW_SCOPE_CHECKOUT => Ok((
             ConversationState::EditCustomerAddress,
             edit_customer_address_actions(&context.phone_number),
         )),
@@ -211,56 +217,37 @@ pub fn handle_edit_customer_address(
 }
 
 pub fn confirm_customer_data_actions(context: &ConversationContext) -> Vec<BotAction> {
-    let (body, continue_label, change_label) = if review_scope(context) == REVIEW_SCOPE_ADVISOR {
-        let messages = &client_messages().advisor_customer;
-        (
-            render_template(
-                &messages.confirm_contact_template,
-                &[
-                    (
-                        "customer_name",
-                        context.customer_name.as_deref().unwrap_or("pendiente"),
-                    ),
-                    (
-                        "customer_phone",
-                        context.customer_phone.as_deref().unwrap_or("pendiente"),
-                    ),
-                ],
+    if review_scope(context) != REVIEW_SCOPE_ADVISOR {
+        return checkout::review_checkout_actions(context);
+    }
+
+    let messages = &client_messages().advisor_customer;
+    let body = render_template(
+        &messages.confirm_contact_template,
+        &[
+            (
+                "customer_name",
+                context.customer_name.as_deref().unwrap_or("pendiente"),
             ),
-            messages.confirm_contact_continue_button.clone(),
-            messages.confirm_contact_change_button.clone(),
-        )
-    } else {
-        let messages = &client_messages().checkout;
-        (
-            render_template(
-                &messages.confirm_customer_template,
-                &[
-                    (
-                        "customer_name",
-                        context.customer_name.as_deref().unwrap_or("pendiente"),
-                    ),
-                    (
-                        "customer_phone",
-                        context.customer_phone.as_deref().unwrap_or("pendiente"),
-                    ),
-                    (
-                        "delivery_address",
-                        context.delivery_address.as_deref().unwrap_or("pendiente"),
-                    ),
-                ],
+            (
+                "customer_phone",
+                context.customer_phone.as_deref().unwrap_or("pendiente"),
             ),
-            messages.confirm_customer_continue_button.clone(),
-            messages.confirm_customer_change_button.clone(),
-        )
-    };
+        ],
+    );
 
     vec![BotAction::SendButtons {
         to: context.phone_number.clone(),
         body,
         buttons: vec![
-            reply_button(CONTINUE_CUSTOMER_DATA, &continue_label),
-            reply_button(CHANGE_CUSTOMER_DATA, &change_label),
+            reply_button(
+                CONTINUE_CUSTOMER_DATA,
+                &messages.confirm_contact_continue_button,
+            ),
+            reply_button(
+                CHANGE_CUSTOMER_DATA,
+                &messages.confirm_contact_change_button,
+            ),
         ],
     }]
 }
@@ -313,17 +300,24 @@ pub fn edit_customer_address_actions(phone: &str) -> Vec<BotAction> {
 
 fn enter_review_state(context: &mut ConversationContext) -> (ConversationState, Vec<BotAction>) {
     context.editing_address = false;
-    (
-        ConversationState::ConfirmCustomerData,
-        confirm_customer_data_actions(context),
-    )
+    if review_scope(context) == REVIEW_SCOPE_ADVISOR {
+        (
+            ConversationState::ConfirmCustomerData,
+            confirm_customer_data_actions(context),
+        )
+    } else {
+        (
+            ConversationState::ReviewCheckout,
+            checkout::review_checkout_actions(context),
+        )
+    }
 }
 
 fn review_scope(context: &ConversationContext) -> &str {
     context
         .customer_review_scope
         .as_deref()
-        .unwrap_or(REVIEW_SCOPE_ORDER)
+        .unwrap_or(REVIEW_SCOPE_CHECKOUT)
 }
 
 fn name_prompt(context: &ConversationContext) -> &str {
@@ -395,7 +389,7 @@ mod tests {
     use super::{
         handle_confirm_customer_data, handle_edit_customer_address,
         handle_select_customer_data_field, next_contact_advisor_state, next_order_data_state,
-        REVIEW_SCOPE_ADVISOR, REVIEW_SCOPE_ORDER,
+        REVIEW_SCOPE_ADVISOR, REVIEW_SCOPE_CHECKOUT,
     };
 
     fn context() -> ConversationContext {
@@ -411,6 +405,8 @@ mod tests {
             scheduled_time: None,
             customer_review_scope: None,
             payment_method: Some("cash_on_delivery".to_string()),
+            delivery_cost: None,
+            total_final: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
             advisor_target_phone: None,
@@ -437,11 +433,8 @@ mod tests {
 
         let (state, _) = next_order_data_state(&mut context);
 
-        assert_eq!(state, ConversationState::ConfirmCustomerData);
-        assert_eq!(
-            context.customer_review_scope.as_deref(),
-            Some(REVIEW_SCOPE_ORDER)
-        );
+        assert_eq!(state, ConversationState::SelectType);
+        assert_eq!(context.customer_review_scope, None);
     }
 
     #[test]
@@ -461,7 +454,7 @@ mod tests {
     #[test]
     fn change_path_uses_field_selector() {
         let mut context = context();
-        context.customer_review_scope = Some(REVIEW_SCOPE_ORDER.to_string());
+        context.customer_review_scope = Some(REVIEW_SCOPE_CHECKOUT.to_string());
 
         let (state, _) = handle_confirm_customer_data(
             &UserInput::ButtonPress("change_customer_data".to_string()),
@@ -475,7 +468,7 @@ mod tests {
     #[test]
     fn selecting_address_enters_address_edit_state_for_orders() {
         let mut context = context();
-        context.customer_review_scope = Some(REVIEW_SCOPE_ORDER.to_string());
+        context.customer_review_scope = Some(REVIEW_SCOPE_CHECKOUT.to_string());
 
         let (state, _) = handle_select_customer_data_field(
             &UserInput::ButtonPress("edit_customer_address".to_string()),
@@ -489,7 +482,7 @@ mod tests {
     #[test]
     fn editing_address_returns_to_review() {
         let mut context = context();
-        context.customer_review_scope = Some(REVIEW_SCOPE_ORDER.to_string());
+        context.customer_review_scope = Some(REVIEW_SCOPE_CHECKOUT.to_string());
 
         let (state, _) = handle_edit_customer_address(
             &UserInput::TextMessage("Calle 1 #2-3".to_string()),
@@ -497,7 +490,7 @@ mod tests {
         )
         .expect("transition");
 
-        assert_eq!(state, ConversationState::ConfirmCustomerData);
+        assert_eq!(state, ConversationState::ReviewCheckout);
         assert_eq!(context.delivery_address.as_deref(), Some("Calle 1 #2-3"));
     }
 }

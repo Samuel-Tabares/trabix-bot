@@ -9,11 +9,9 @@ use crate::{
         states::advisor::{parse_advisor_button_id, AdvisorButtonAction},
     },
     messages::client_messages,
-    whatsapp::types::{Button, ButtonReplyPayload},
 };
 
 const RELAY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-const ADVISOR_FINISH_PREFIX: &str = "advisor_finish_";
 
 pub fn handle_relay_mode(input: &UserInput, context: &mut ConversationContext) -> TransitionResult {
     match input {
@@ -40,11 +38,6 @@ pub fn handle_relay_mode(input: &UserInput, context: &mut ConversationContext) -
                         timer_type: TimerType::RelayInactivity,
                         phone: context.phone_number.clone(),
                         duration: RELAY_TIMEOUT,
-                    },
-                    BotAction::SendButtons {
-                        to: context.advisor_phone.clone(),
-                        body: "Relay activo.".to_string(),
-                        buttons: vec![finish_button(&context.phone_number)],
                     },
                 ],
             ))
@@ -165,16 +158,6 @@ fn close_relay_actions(context: &ConversationContext, by_timeout: bool) -> Vec<B
     ]
 }
 
-fn finish_button(phone: &str) -> Button {
-    Button {
-        kind: "reply".to_string(),
-        reply: ButtonReplyPayload {
-            id: format!("{ADVISOR_FINISH_PREFIX}{phone}"),
-            title: format!("Finalizar {}", phone_marker(phone)),
-        },
-    }
-}
-
 fn phone_marker(phone: &str) -> String {
     let suffix = if phone.len() >= 4 {
         &phone[phone.len() - 4..]
@@ -203,6 +186,8 @@ mod tests {
             scheduled_time: Some("5:00 pm".to_string()),
             customer_review_scope: None,
             payment_method: Some("cash_on_delivery".to_string()),
+            delivery_cost: None,
+            total_final: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
             advisor_target_phone: Some("573001234567".to_string()),
@@ -235,6 +220,10 @@ mod tests {
 
         assert_eq!(state, ConversationState::RelayMode);
         assert!(actions.iter().any(|action| matches!(action, crate::bot::state_machine::BotAction::RelayMessage { to, body, .. } if to == "573009999999" && body.contains("[CLIENTE [...4567]]: Hola asesor"))));
+        assert!(!actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::SendButtons { .. }
+        )));
     }
 
     #[test]

@@ -9,15 +9,14 @@ use crate::{
             BotAction, ConversationContext, ConversationState, TimerType, TransitionResult,
             UserInput,
         },
-        states::{customer_data, data_collect, menu, scheduling},
-        timers::{ADVISOR_RESPONSE_TIMEOUT, ADVISOR_STUCK_TIMEOUT},
+        states::{checkout, customer_data, data_collect, menu, scheduling},
+        timers::{ADVISOR_AUTO_CANNOT_TIMEOUT, ADVISOR_RESPONSE_TIMEOUT, ADVISOR_STUCK_TIMEOUT},
     },
     messages::{client_messages, render_template},
     whatsapp::types::{Button, ButtonReplyPayload},
 };
 
 const ADVISOR_CONFIRM_PREFIX: &str = "advisor_confirm_";
-const ADVISOR_CANNOT_PREFIX: &str = "advisor_cannot_";
 const ADVISOR_YES_HOUR_PREFIX: &str = "advisor_yes_hour_";
 const ADVISOR_OTHER_HOUR_PREFIX: &str = "advisor_other_hour_";
 const ADVISOR_TAKE_PREFIX: &str = "advisor_take_";
@@ -44,7 +43,6 @@ const LEAVE_MESSAGE_MAX_LEN: usize = 500;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdvisorButtonAction {
     Confirm,
-    Cannot,
     YesHour,
     OtherHour,
     Take,
@@ -56,7 +54,6 @@ pub enum AdvisorButtonAction {
 pub fn parse_advisor_button_id(button_id: &str) -> Option<(AdvisorButtonAction, String)> {
     [
         (ADVISOR_CONFIRM_PREFIX, AdvisorButtonAction::Confirm),
-        (ADVISOR_CANNOT_PREFIX, AdvisorButtonAction::Cannot),
         (ADVISOR_YES_HOUR_PREFIX, AdvisorButtonAction::YesHour),
         (ADVISOR_OTHER_HOUR_PREFIX, AdvisorButtonAction::OtherHour),
         (ADVISOR_TAKE_PREFIX, AdvisorButtonAction::Take),
@@ -79,18 +76,23 @@ pub fn start_contact_advisor(
     customer_data::next_contact_advisor_state(context)
 }
 
-pub fn handoff_order_after_address_confirmation(
+pub fn start_order_advisor_flow(
     context: &mut ConversationContext,
 ) -> (ConversationState, Vec<BotAction>) {
     context.advisor_timer_started_at = Some(chrono::Utc::now());
     context.advisor_timer_expired = false;
     context.schedule_resume_target = None;
     context.relay_kind = None;
+    context.relay_timer_started_at = None;
+    context.payment_method = None;
+    context.receipt_media_id = None;
+    context.receipt_timer_started_at = None;
+    context.receipt_timer_expired = false;
 
     let pedido = calcular_pedido(&context.items);
     (
-        ConversationState::WaitAdvisorResponse,
-        wait_advisor_response_entry_actions(context, &pedido),
+        ConversationState::AskDeliveryCost,
+        ask_delivery_cost_entry_actions(context, &pedido),
     )
 }
 
@@ -115,8 +117,8 @@ pub fn resume_after_schedule_confirmation(
             wait_advisor_mayor_entry_actions(context, &pedido),
         ),
         _ => (
-            ConversationState::WaitAdvisorResponse,
-            wait_advisor_response_entry_actions(context, &pedido),
+            ConversationState::AskDeliveryCost,
+            ask_delivery_cost_entry_actions(context, &pedido),
         ),
     }
 }
@@ -349,9 +351,7 @@ pub fn handle_advisor_wait_advisor_response(
     input: &UserInput,
     context: &mut ConversationContext,
 ) -> TransitionResult {
-    let Some(AdvisorButtonAction::Confirm | AdvisorButtonAction::Cannot) =
-        advisor_button_action(input)
-    else {
+    let Some(AdvisorButtonAction::Confirm) = advisor_button_action(input) else {
         return Ok((
             ConversationState::WaitAdvisorResponse,
             vec![BotAction::SendText {
@@ -367,11 +367,7 @@ pub fn handle_advisor_wait_advisor_response(
     context.advisor_timer_started_at = None;
     context.advisor_timer_expired = false;
 
-    match advisor_button_action(input).expect("checked above") {
-        AdvisorButtonAction::Confirm => finalize_or_ask_delivery_cost(context),
-        AdvisorButtonAction::Cannot => transition_immediate_order_to_scheduled(context),
-        _ => unreachable!(),
-    }
+    transition_to_payment_selection(context)
 }
 
 pub fn handle_advisor_ask_delivery_cost(
@@ -386,10 +382,52 @@ pub fn handle_advisor_ask_delivery_cost(
                 let pedido = calcular_pedido(&context.items);
                 let total_final =
                     i32::try_from(pedido.total_estimado).unwrap_or(i32::MAX) + delivery_cost;
+                context.delivery_cost = Some(delivery_cost);
+                context.total_final = Some(total_final);
 
-                Ok((
-                    ConversationState::OrderComplete,
-                    vec![
+                if context.delivery_type.as_deref() == Some("immediate") {
+                    context.advisor_timer_started_at = Some(chrono::Utc::now());
+
+                    Ok((
+                        ConversationState::WaitAdvisorResponse,
+                        vec![
+                            BotAction::CancelTimer {
+                                timer_type: TimerType::AdvisorResponse,
+                                phone: context.phone_number.clone(),
+                            },
+                            BotAction::UpdateCurrentOrderDeliveryCost {
+                                delivery_cost,
+                                total_final,
+                                status: "pending_advisor".to_string(),
+                            },
+                            BotAction::SendText {
+                                to: context.advisor_phone.clone(),
+                                body: format!(
+                                    "Perfecto. Ahora confirma disponibilidad para {}.",
+                                    phone_marker(&context.phone_number)
+                                ),
+                            },
+                            BotAction::SendButtons {
+                                to: context.advisor_phone.clone(),
+                                body: "Selecciona cómo deseas responder a este pedido.".to_string(),
+                                buttons: advisor_order_buttons(context),
+                            },
+                            BotAction::SendText {
+                                to: context.phone_number.clone(),
+                                body: client_messages()
+                                    .advisor_customer
+                                    .availability_wait_text
+                                    .clone(),
+                            },
+                            BotAction::StartTimer {
+                                timer_type: TimerType::AdvisorResponse,
+                                phone: context.phone_number.clone(),
+                                duration: ADVISOR_AUTO_CANNOT_TIMEOUT,
+                            },
+                        ],
+                    ))
+                } else {
+                    let mut actions = vec![
                         BotAction::CancelTimer {
                             timer_type: TimerType::AdvisorResponse,
                             phone: context.phone_number.clone(),
@@ -397,7 +435,7 @@ pub fn handle_advisor_ask_delivery_cost(
                         BotAction::UpdateCurrentOrderDeliveryCost {
                             delivery_cost,
                             total_final,
-                            status: "confirmed".to_string(),
+                            status: "draft_payment".to_string(),
                         },
                         BotAction::ClearAdvisorSession {
                             advisor_phone: context.advisor_phone.clone(),
@@ -405,25 +443,21 @@ pub fn handle_advisor_ask_delivery_cost(
                         BotAction::SendText {
                             to: context.advisor_phone.clone(),
                             body: format!(
-                                "Pedido {} confirmado con domicilio {}.",
-                                phone_marker(&context.phone_number),
-                                format_currency(u32::try_from(delivery_cost).unwrap_or_default())
+                                "Pedido programado {} listo para que el cliente elija el pago.",
+                                phone_marker(&context.phone_number)
                             ),
                         },
                         BotAction::SendText {
                             to: context.phone_number.clone(),
-                            body: render_confirmed_order(
-                                context,
-                                &pedido,
-                                delivery_cost,
-                                total_final,
-                            ),
+                            body: checkout::render_payment_ready_confirmation(context),
                         },
-                        BotAction::ResetConversation {
-                            phone: context.phone_number.clone(),
-                        },
-                    ],
-                ))
+                    ];
+                    actions.extend(checkout::select_payment_method_actions(
+                        &context.phone_number,
+                    ));
+
+                    Ok((ConversationState::SelectPaymentMethod, actions))
+                }
             }
             Err(message) => Ok((
                 ConversationState::AskDeliveryCost,
@@ -524,7 +558,7 @@ pub fn handle_advisor_hour_decision(
     context: &mut ConversationContext,
 ) -> TransitionResult {
     match advisor_button_action(input) {
-        Some(AdvisorButtonAction::YesHour) => finalize_or_ask_delivery_cost(context),
+        Some(AdvisorButtonAction::YesHour) => transition_to_payment_selection(context),
         Some(AdvisorButtonAction::OtherHour) => {
             context.advisor_timer_started_at = Some(chrono::Utc::now());
             context.advisor_timer_expired = false;
@@ -573,7 +607,7 @@ pub fn handle_advisor_confirm_hour(
     context: &mut ConversationContext,
 ) -> TransitionResult {
     match advisor_button_action(input) {
-        Some(AdvisorButtonAction::Confirm) => finalize_or_ask_delivery_cost(context),
+        Some(AdvisorButtonAction::Confirm) => transition_to_payment_selection(context),
         _ => Ok((
             ConversationState::WaitAdvisorConfirmHour,
             vec![BotAction::SendText {
@@ -843,12 +877,9 @@ fn handle_client_wait_advisor_response(
     input: &UserInput,
     context: &mut ConversationContext,
 ) -> TransitionResult {
+    let _ = input;
     if context.advisor_timer_expired {
-        return handle_advisor_timeout_selection(
-            input,
-            context,
-            ConversationState::WaitAdvisorResponse,
-        );
+        return transition_immediate_order_to_scheduled(context);
     }
 
     Ok((
@@ -1085,16 +1116,10 @@ pub(crate) fn start_waiting_for_contact_advisor(
             BotAction::SendButtons {
                 to: context.advisor_phone.clone(),
                 body: "Selecciona cómo deseas responder.".to_string(),
-                buttons: vec![
-                    reply_button(
-                        &advisor_button_id(ADVISOR_ATTEND_PREFIX, &context.phone_number),
-                        &advisor_title("Atender", &context.phone_number),
-                    ),
-                    reply_button(
-                        &advisor_button_id(ADVISOR_UNAVAILABLE_PREFIX, &context.phone_number),
-                        &advisor_title("No disp.", &context.phone_number),
-                    ),
-                ],
+                buttons: vec![reply_button(
+                    &advisor_button_id(ADVISOR_ATTEND_PREFIX, &context.phone_number),
+                    &advisor_title("Atender", &context.phone_number),
+                )],
             },
             BotAction::SendText {
                 to: context.phone_number.clone(),
@@ -1112,61 +1137,77 @@ pub(crate) fn start_waiting_for_contact_advisor(
     )
 }
 
-fn wait_advisor_response_entry_actions(
+fn ask_delivery_cost_entry_actions(
     context: &ConversationContext,
     pedido: &PedidoCalculado,
 ) -> Vec<BotAction> {
-    let scheduled = is_scheduled_order(context);
-    let mut actions = vec![
+    vec![
         BotAction::FinalizeCurrentOrder {
             status: "pending_advisor".to_string(),
+        },
+        BotAction::BindAdvisorSession {
+            advisor_phone: context.advisor_phone.clone(),
+            target_phone: context.phone_number.clone(),
         },
         BotAction::SendText {
             to: context.advisor_phone.clone(),
             body: render_order_summary(context, pedido),
         },
-    ];
-
-    if let Some(receipt_media_id) = context.receipt_media_id.as_ref() {
-        actions.push(BotAction::SendImage {
+        BotAction::SendText {
             to: context.advisor_phone.clone(),
-            media_id: receipt_media_id.clone(),
-            caption: Some(format!(
-                "Comprobante {}",
-                phone_marker(&context.phone_number)
-            )),
-        });
-    }
-
-    actions.extend([
-        BotAction::SendButtons {
-            to: context.advisor_phone.clone(),
-            body: if scheduled {
-                "Confirma el pedido programado.".to_string()
-            } else {
-                "Selecciona cómo deseas responder a este pedido.".to_string()
-            },
-            buttons: advisor_order_buttons(context, scheduled),
+            body: format!(
+                "¿Cuánto cobra de domicilio para {}?",
+                context
+                    .delivery_address
+                    .as_deref()
+                    .unwrap_or("dirección pendiente")
+            ),
         },
         BotAction::SendText {
             to: context.phone_number.clone(),
-            body: if scheduled {
-                client_messages()
-                    .advisor_customer
-                    .scheduled_order_sent_text
-                    .clone()
-            } else {
-                client_messages().advisor_customer.order_sent_text.clone()
-            },
+            body: client_messages()
+                .advisor_customer
+                .wait_delivery_cost_text
+                .clone(),
         },
         BotAction::StartTimer {
             timer_type: TimerType::AdvisorResponse,
             phone: context.phone_number.clone(),
-            duration: ADVISOR_RESPONSE_TIMEOUT,
+            duration: ADVISOR_STUCK_TIMEOUT,
         },
-    ]);
+    ]
+}
 
-    actions
+fn wait_advisor_response_entry_actions(
+    context: &ConversationContext,
+    _pedido: &PedidoCalculado,
+) -> Vec<BotAction> {
+    vec![
+        BotAction::SendText {
+            to: context.advisor_phone.clone(),
+            body: format!(
+                "Perfecto. Ahora confirma disponibilidad para {}.",
+                phone_marker(&context.phone_number)
+            ),
+        },
+        BotAction::SendButtons {
+            to: context.advisor_phone.clone(),
+            body: "Selecciona cómo deseas responder a este pedido.".to_string(),
+            buttons: advisor_order_buttons(context),
+        },
+        BotAction::SendText {
+            to: context.phone_number.clone(),
+            body: client_messages()
+                .advisor_customer
+                .availability_wait_text
+                .clone(),
+        },
+        BotAction::StartTimer {
+            timer_type: TimerType::AdvisorResponse,
+            phone: context.phone_number.clone(),
+            duration: ADVISOR_AUTO_CANNOT_TIMEOUT,
+        },
+    ]
 }
 
 fn wait_advisor_mayor_entry_actions(
@@ -1273,68 +1314,38 @@ fn relay_entry_actions(
     actions
 }
 
-fn finalize_or_ask_delivery_cost(context: &mut ConversationContext) -> TransitionResult {
-    let immediate = context.delivery_type.as_deref() == Some("immediate");
-    if immediate {
-        context.advisor_timer_started_at = Some(chrono::Utc::now());
-        context.advisor_timer_expired = false;
+fn transition_to_payment_selection(context: &mut ConversationContext) -> TransitionResult {
+    context.advisor_timer_started_at = None;
+    context.advisor_timer_expired = false;
 
-        Ok((
-            ConversationState::AskDeliveryCost,
-            vec![
-                BotAction::BindAdvisorSession {
-                    advisor_phone: context.advisor_phone.clone(),
-                    target_phone: context.phone_number.clone(),
-                },
-                BotAction::SendText {
-                    to: context.advisor_phone.clone(),
-                    body: format!(
-                        "Pedido {} confirmado. ¿Cuánto cobra de domicilio para {}?",
-                        phone_marker(&context.phone_number),
-                        context
-                            .delivery_address
-                            .as_deref()
-                            .unwrap_or("dirección pendiente")
-                    ),
-                },
-                BotAction::StartTimer {
-                    timer_type: TimerType::AdvisorResponse,
-                    phone: context.phone_number.clone(),
-                    duration: ADVISOR_STUCK_TIMEOUT,
-                },
-            ],
-        ))
-    } else {
-        Ok((
-            ConversationState::OrderComplete,
-            vec![
-                BotAction::CancelTimer {
-                    timer_type: TimerType::AdvisorResponse,
-                    phone: context.phone_number.clone(),
-                },
-                BotAction::ClearAdvisorSession {
-                    advisor_phone: context.advisor_phone.clone(),
-                },
-                BotAction::FinalizeCurrentOrder {
-                    status: "confirmed".to_string(),
-                },
-                BotAction::SendText {
-                    to: context.advisor_phone.clone(),
-                    body: format!(
-                        "Pedido programado {} confirmado.",
-                        phone_marker(&context.phone_number)
-                    ),
-                },
-                BotAction::SendText {
-                    to: context.phone_number.clone(),
-                    body: render_scheduled_confirmation(context),
-                },
-                BotAction::ResetConversation {
-                    phone: context.phone_number.clone(),
-                },
-            ],
-        ))
-    }
+    let mut actions = vec![
+        BotAction::CancelTimer {
+            timer_type: TimerType::AdvisorResponse,
+            phone: context.phone_number.clone(),
+        },
+        BotAction::ClearAdvisorSession {
+            advisor_phone: context.advisor_phone.clone(),
+        },
+        BotAction::UpsertDraftOrder {
+            status: "draft_payment".to_string(),
+        },
+        BotAction::SendText {
+            to: context.advisor_phone.clone(),
+            body: format!(
+                "Pedido {} listo para que el cliente elija el pago.",
+                phone_marker(&context.phone_number)
+            ),
+        },
+        BotAction::SendText {
+            to: context.phone_number.clone(),
+            body: checkout::render_payment_ready_confirmation(context),
+        },
+    ];
+    actions.extend(checkout::select_payment_method_actions(
+        &context.phone_number,
+    ));
+
+    Ok((ConversationState::SelectPaymentMethod, actions))
 }
 
 fn render_order_summary(context: &ConversationContext, pedido: &PedidoCalculado) -> String {
@@ -1353,7 +1364,7 @@ fn render_order_summary(context: &ConversationContext, pedido: &PedidoCalculado)
         Some("cash_on_delivery") => "Contra entrega".to_string(),
         Some("transfer") => "Pago por transferencia".to_string(),
         Some(other) => other.to_string(),
-        None => "Pendiente".to_string(),
+        None => "Pendiente con cliente".to_string(),
     };
 
     format!(
@@ -1388,49 +1399,11 @@ fn render_left_message(context: &ConversationContext, message: &str) -> String {
     )
 }
 
-fn render_confirmed_order(
-    context: &ConversationContext,
-    pedido: &PedidoCalculado,
-    delivery_cost: i32,
-    total_final: i32,
-) -> String {
-    render_template(
-        &client_messages().advisor_customer.confirmed_order_template,
-        &[
-            ("subtotal", &format_currency(pedido.total_estimado)),
-            (
-                "delivery_cost",
-                &format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
-            ),
-            (
-                "total_final",
-                &format_currency(u32::try_from(total_final).unwrap_or_default()),
-            ),
-            (
-                "address",
-                context.delivery_address.as_deref().unwrap_or("pendiente"),
-            ),
-        ],
-    )
-}
-
-fn advisor_order_buttons(context: &ConversationContext, scheduled: bool) -> Vec<Button> {
-    let confirm = reply_button(
+fn advisor_order_buttons(context: &ConversationContext) -> Vec<Button> {
+    vec![reply_button(
         &advisor_button_id(ADVISOR_CONFIRM_PREFIX, &context.phone_number),
         &advisor_title("Confirmar", &context.phone_number),
-    );
-
-    if scheduled {
-        vec![confirm]
-    } else {
-        vec![
-            confirm,
-            reply_button(
-                &advisor_button_id(ADVISOR_CANNOT_PREFIX, &context.phone_number),
-                &advisor_title("No puedo", &context.phone_number),
-            ),
-        ]
-    }
+    )]
 }
 
 fn transition_immediate_order_to_scheduled(context: &mut ConversationContext) -> TransitionResult {
@@ -1445,6 +1418,10 @@ fn transition_immediate_order_to_scheduled(context: &mut ConversationContext) ->
     Ok((
         ConversationState::NegotiateHour,
         vec![
+            BotAction::CancelTimer {
+                timer_type: TimerType::AdvisorResponse,
+                phone: context.phone_number.clone(),
+            },
             BotAction::BindAdvisorSession {
                 advisor_phone: context.advisor_phone.clone(),
                 target_phone: context.phone_number.clone(),
@@ -1456,6 +1433,13 @@ fn transition_immediate_order_to_scheduled(context: &mut ConversationContext) ->
                     phone_marker(&context.phone_number)
                 ),
             },
+            BotAction::SendText {
+                to: context.phone_number.clone(),
+                body: client_messages()
+                    .advisor_customer
+                    .wait_negotiate_hour_text
+                    .clone(),
+            },
             BotAction::StartTimer {
                 timer_type: TimerType::AdvisorResponse,
                 phone: context.phone_number.clone(),
@@ -1463,25 +1447,6 @@ fn transition_immediate_order_to_scheduled(context: &mut ConversationContext) ->
             },
         ],
     ))
-}
-
-fn render_scheduled_confirmation(context: &ConversationContext) -> String {
-    let date = context.scheduled_date.as_deref().unwrap_or("hoy");
-    let time = context
-        .scheduled_time
-        .as_deref()
-        .unwrap_or("hora por confirmar");
-
-    render_template(
-        &client_messages()
-            .advisor_customer
-            .scheduled_confirmation_template,
-        &[("date", date), ("time", time)],
-    )
-}
-
-fn is_scheduled_order(context: &ConversationContext) -> bool {
-    context.delivery_type.as_deref() == Some("scheduled")
 }
 
 fn today_bogota_iso_date() -> String {
@@ -1596,7 +1561,7 @@ fn advisor_title(title: &str, phone: &str) -> String {
     format!("{title} {}", phone_button_suffix(phone))
 }
 
-fn phone_marker(phone: &str) -> String {
+pub(crate) fn phone_marker(phone: &str) -> String {
     let suffix = if phone.len() >= 4 {
         &phone[phone.len() - 4..]
     } else {
@@ -1701,6 +1666,8 @@ mod tests {
             scheduled_time: None,
             customer_review_scope: None,
             payment_method: Some("cash_on_delivery".to_string()),
+            delivery_cost: None,
+            total_final: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
             advisor_target_phone: None,
@@ -1732,8 +1699,10 @@ mod tests {
     }
 
     #[test]
-    fn advisor_confirm_for_immediate_order_moves_to_delivery_cost() {
+    fn advisor_confirm_for_immediate_order_moves_to_payment_selection() {
         let mut context = context();
+        context.delivery_cost = Some(5000);
+        context.total_final = Some(17000);
 
         let (state, actions) = handle_advisor_wait_advisor_response(
             &UserInput::ButtonPress("advisor_confirm_573001234567".to_string()),
@@ -1741,24 +1710,47 @@ mod tests {
         )
         .expect("transition");
 
-        assert_eq!(state, ConversationState::AskDeliveryCost);
+        assert_eq!(state, ConversationState::SelectPaymentMethod);
         assert!(actions.iter().any(|action| matches!(
             action,
-            crate::bot::state_machine::BotAction::BindAdvisorSession { .. }
+            crate::bot::state_machine::BotAction::UpsertDraftOrder { status }
+                if status == "draft_payment"
         )));
         assert!(actions.iter().any(|action| matches!(
             action,
-            crate::bot::state_machine::BotAction::StartTimer { timer_type: crate::bot::state_machine::TimerType::AdvisorResponse, duration, .. }
-                if *duration == crate::bot::timers::ADVISOR_STUCK_TIMEOUT
+            crate::bot::state_machine::BotAction::SendButtons { buttons, .. }
+                if buttons.iter().any(|button| button.reply.id == "cash_on_delivery")
         )));
     }
 
     #[test]
-    fn advisor_confirm_for_scheduled_order_resets_without_delivery_cost() {
+    fn stale_cannot_button_is_ignored_in_wait_advisor_response() {
+        let mut context = context();
+        context.delivery_cost = Some(5000);
+        context.total_final = Some(17000);
+
+        let (state, actions) = handle_advisor_wait_advisor_response(
+            &UserInput::ButtonPress("advisor_cannot_573001234567".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::WaitAdvisorResponse);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::SendText { body, .. }
+                if body.contains("Usa uno de los botones del caso")
+        )));
+    }
+
+    #[test]
+    fn advisor_confirm_for_scheduled_order_moves_to_payment_selection() {
         let mut context = context();
         context.delivery_type = Some("scheduled".to_string());
         context.scheduled_date = Some("2030-12-24".to_string());
         context.scheduled_time = Some("4:00 pm".to_string());
+        context.delivery_cost = Some(5000);
+        context.total_final = Some(17000);
 
         let (state, actions) = handle_advisor_confirm_hour(
             &UserInput::ButtonPress("advisor_confirm_573001234567".to_string()),
@@ -1766,11 +1758,11 @@ mod tests {
         )
         .expect("transition");
 
-        assert_eq!(state, ConversationState::OrderComplete);
-        assert!(actions.iter().any(|action| matches!(action, crate::bot::state_machine::BotAction::FinalizeCurrentOrder { status } if status == "confirmed")));
+        assert_eq!(state, ConversationState::SelectPaymentMethod);
         assert!(actions.iter().any(|action| matches!(
             action,
-            crate::bot::state_machine::BotAction::ResetConversation { .. }
+            crate::bot::state_machine::BotAction::UpsertDraftOrder { status }
+                if status == "draft_payment"
         )));
     }
 
@@ -1784,12 +1776,19 @@ mod tests {
         )
         .expect("transition");
 
-        assert_eq!(state, ConversationState::OrderComplete);
+        assert_eq!(state, ConversationState::WaitAdvisorResponse);
         assert!(actions.iter().any(|action| matches!(action, crate::bot::state_machine::BotAction::UpdateCurrentOrderDeliveryCost { delivery_cost, total_final, .. } if *delivery_cost == 5000 && *total_final == 17000)));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::SendButtons { buttons, .. }
+                if buttons.len() == 1 && buttons[0].reply.id == "advisor_confirm_573001234567"
+        )));
+        assert_eq!(context.delivery_cost, Some(5000));
+        assert_eq!(context.total_final, Some(17000));
     }
 
     #[test]
-    fn timed_out_wait_state_can_schedule_without_losing_context() {
+    fn timed_out_wait_state_auto_moves_to_negotiation() {
         let mut context = context();
         context.advisor_timer_expired = true;
 
@@ -1800,11 +1799,8 @@ mod tests {
         )
         .expect("transition");
 
-        assert_eq!(state, ConversationState::SelectDate);
-        assert_eq!(
-            context.schedule_resume_target.as_deref(),
-            Some("wait_advisor_response")
-        );
+        assert_eq!(state, ConversationState::NegotiateHour);
+        assert_eq!(context.delivery_type.as_deref(), Some("scheduled"));
         assert_eq!(context.payment_method.as_deref(), Some("cash_on_delivery"));
     }
 

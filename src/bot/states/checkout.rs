@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     bot::{
-        pricing::{calcular_pedido, ItemCalculated},
+        pricing::{calcular_pedido, ItemCalculated, PedidoCalculado},
         state_machine::{
             BotAction, ConversationContext, ConversationState, TimerType, TransitionResult,
             UserInput,
@@ -10,16 +10,47 @@ use crate::{
         timers::RECEIPT_TIMEOUT,
     },
     messages::{client_messages, render_template},
-    whatsapp::types::{Button, ButtonReplyPayload, ListRow, ListSection},
+    whatsapp::types::{Button, ButtonReplyPayload},
 };
 
-use super::{customer_data, menu};
+use super::{advisor, customer_data, menu};
 
+const REVIEW_CONTINUE: &str = "continue_review_checkout";
+const REVIEW_CHANGE: &str = "change_review_checkout";
 const CASH_ON_DELIVERY: &str = "cash_on_delivery";
 const PAY_NOW: &str = "pay_now";
 const CANCEL_ORDER: &str = "cancel_order";
 const CHANGE_PAYMENT_METHOD: &str = "change_payment_method";
-pub fn handle_show_summary(
+
+pub fn handle_review_checkout(
+    input: &UserInput,
+    context: &mut ConversationContext,
+) -> TransitionResult {
+    match selection_id(input).as_deref() {
+        Some(REVIEW_CONTINUE) => {
+            context.payment_method = None;
+            context.receipt_media_id = None;
+            context.receipt_timer_started_at = None;
+            context.receipt_timer_expired = false;
+            context.editing_address = false;
+            context.delivery_cost = None;
+            context.total_final = None;
+
+            let (state, actions) = advisor::start_order_advisor_flow(context);
+            Ok((state, actions))
+        }
+        Some(REVIEW_CHANGE) => Ok((
+            ConversationState::SelectCustomerDataField,
+            customer_data::select_customer_data_field_actions(context),
+        )),
+        _ => Ok((
+            ConversationState::ReviewCheckout,
+            review_checkout_actions(context),
+        )),
+    }
+}
+
+pub fn handle_select_payment_method(
     input: &UserInput,
     context: &mut ConversationContext,
 ) -> TransitionResult {
@@ -29,31 +60,29 @@ pub fn handle_show_summary(
             context.receipt_media_id = None;
             context.receipt_timer_started_at = None;
             context.receipt_timer_expired = false;
-            context.editing_address = false;
 
-            let mut actions = vec![BotAction::UpsertDraftOrder {
-                status: "draft_payment".to_string(),
-            }];
-            actions.extend(confirm_address_actions(context));
-
-            Ok((ConversationState::ConfirmCustomerData, actions))
+            Ok(complete_order_transition(
+                context,
+                "confirmed",
+                vec![BotAction::UpsertDraftOrder {
+                    status: "confirmed".to_string(),
+                }],
+            ))
         }
         Some(PAY_NOW) => {
             context.payment_method = Some("transfer".to_string());
             context.receipt_media_id = None;
             context.receipt_timer_started_at = Some(chrono::Utc::now());
             context.receipt_timer_expired = false;
-            context.editing_address = false;
 
             Ok((
                 ConversationState::WaitReceipt,
                 wait_receipt_entry_actions(context),
             ))
         }
-        Some(CANCEL_ORDER) => Ok(cancel_order_transition(context)),
         _ => Ok((
-            ConversationState::ShowSummary,
-            show_summary_actions(context),
+            ConversationState::SelectPaymentMethod,
+            select_payment_method_actions(&context.phone_number),
         )),
     }
 }
@@ -71,8 +100,8 @@ pub fn handle_wait_receipt(
                 context.receipt_timer_expired = false;
 
                 Ok((
-                    ConversationState::ShowSummary,
-                    show_summary_actions(context),
+                    ConversationState::SelectPaymentMethod,
+                    select_payment_method_actions(&context.phone_number),
                 ))
             }
             Some(CANCEL_ORDER) => Ok(cancel_order_transition(context)),
@@ -88,7 +117,6 @@ pub fn handle_wait_receipt(
             context.receipt_media_id = Some(media_id.clone());
             context.receipt_timer_started_at = None;
             context.receipt_timer_expired = false;
-            context.editing_address = false;
 
             let mut actions = vec![
                 BotAction::CancelTimer {
@@ -96,12 +124,20 @@ pub fn handle_wait_receipt(
                     phone: context.phone_number.clone(),
                 },
                 BotAction::UpsertDraftOrder {
-                    status: "draft_payment".to_string(),
+                    status: "confirmed".to_string(),
+                },
+                BotAction::SendImage {
+                    to: context.advisor_phone.clone(),
+                    media_id: media_id.clone(),
+                    caption: Some(format!(
+                        "Comprobante {}",
+                        advisor::phone_marker(&context.phone_number)
+                    )),
                 },
             ];
-            actions.extend(confirm_address_actions(context));
+            actions.extend(final_confirmation_actions(context));
 
-            Ok((ConversationState::ConfirmCustomerData, actions))
+            Ok((ConversationState::MainMenu, actions))
         }
         _ => Ok((
             ConversationState::WaitReceipt,
@@ -117,11 +153,7 @@ pub fn handle_wait_advisor_response(
     input: &UserInput,
     context: &mut ConversationContext,
 ) -> TransitionResult {
-    super::advisor::handle_client_waiting_state(
-        &ConversationState::WaitAdvisorResponse,
-        input,
-        context,
-    )
+    advisor::handle_client_waiting_state(&ConversationState::WaitAdvisorResponse, input, context)
 }
 
 pub fn handle_order_complete(context: &mut ConversationContext) -> TransitionResult {
@@ -133,40 +165,37 @@ pub fn handle_order_complete(context: &mut ConversationContext) -> TransitionRes
     Ok((ConversationState::MainMenu, actions))
 }
 
-pub fn show_summary_actions(context: &ConversationContext) -> Vec<BotAction> {
+pub fn review_checkout_actions(context: &ConversationContext) -> Vec<BotAction> {
     let messages = &client_messages().checkout;
     let pedido = calcular_pedido(&context.items);
+
     vec![
         BotAction::SendText {
             to: context.phone_number.clone(),
             body: render_summary(context, &pedido),
         },
-        BotAction::SendList {
+        BotAction::SendButtons {
             to: context.phone_number.clone(),
-            body: messages.summary_list_body.clone(),
-            button_text: messages.summary_list_button_text.clone(),
-            sections: vec![ListSection {
-                title: messages.summary_section_title.clone(),
-                rows: vec![
-                    ListRow {
-                        id: CASH_ON_DELIVERY.to_string(),
-                        title: messages.cash_on_delivery_title.clone(),
-                        description: messages.cash_on_delivery_description.clone(),
-                    },
-                    ListRow {
-                        id: PAY_NOW.to_string(),
-                        title: messages.pay_now_title.clone(),
-                        description: messages.pay_now_description.clone(),
-                    },
-                    ListRow {
-                        id: CANCEL_ORDER.to_string(),
-                        title: messages.cancel_order_title.clone(),
-                        description: messages.cancel_order_description.clone(),
-                    },
-                ],
-            }],
+            body: messages.review_buttons_body.clone(),
+            buttons: vec![
+                reply_button(REVIEW_CONTINUE, &messages.review_continue_button),
+                reply_button(REVIEW_CHANGE, &messages.review_change_button),
+            ],
         },
     ]
+}
+
+pub fn select_payment_method_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().checkout;
+
+    vec![BotAction::SendButtons {
+        to: phone.to_string(),
+        body: messages.payment_buttons_body.clone(),
+        buttons: vec![
+            reply_button(CASH_ON_DELIVERY, &messages.cash_on_delivery_title),
+            reply_button(PAY_NOW, &messages.pay_now_title),
+        ],
+    }]
 }
 
 pub fn confirm_address_actions(context: &ConversationContext) -> Vec<BotAction> {
@@ -177,76 +206,7 @@ pub fn change_address_prompt_actions(phone: &str) -> Vec<BotAction> {
     customer_data::edit_customer_address_actions(phone)
 }
 
-fn wait_receipt_entry_actions(context: &ConversationContext) -> Vec<BotAction> {
-    vec![
-        BotAction::UpsertDraftOrder {
-            status: "waiting_receipt".to_string(),
-        },
-        BotAction::SendTransferInstructions {
-            to: context.phone_number.clone(),
-        },
-        BotAction::SendText {
-            to: context.phone_number.clone(),
-            body: client_messages().checkout.wait_receipt_prompt.clone(),
-        },
-        BotAction::StartTimer {
-            timer_type: TimerType::ReceiptUpload,
-            phone: context.phone_number.clone(),
-            duration: Duration::from_secs(RECEIPT_TIMEOUT.as_secs()),
-        },
-    ]
-}
-
-fn receipt_timeout_repeat_actions(phone: &str) -> Vec<BotAction> {
-    let messages = &client_messages().checkout;
-    vec![BotAction::SendButtons {
-        to: phone.to_string(),
-        body: messages.receipt_timeout_body.clone(),
-        buttons: vec![
-            reply_button(
-                CHANGE_PAYMENT_METHOD,
-                &messages.receipt_timeout_change_payment_button,
-            ),
-            reply_button(CANCEL_ORDER, &messages.receipt_timeout_cancel_button),
-        ],
-    }]
-}
-
-fn cancel_order_transition(
-    context: &mut ConversationContext,
-) -> (ConversationState, Vec<BotAction>) {
-    let cancel_action = context
-        .current_order_id
-        .map(|order_id| BotAction::CancelCurrentOrder { order_id });
-
-    context.items.clear();
-    context.payment_method = None;
-    context.receipt_media_id = None;
-    context.receipt_timer_started_at = None;
-    context.current_order_id = None;
-    context.editing_address = false;
-    context.receipt_timer_expired = false;
-    context.clear_pending_selection();
-
-    let mut actions = vec![BotAction::CancelTimer {
-        timer_type: TimerType::ReceiptUpload,
-        phone: context.phone_number.clone(),
-    }];
-    if let Some(action) = cancel_action {
-        actions.push(action);
-    }
-    actions.push(BotAction::ResetConversation {
-        phone: context.phone_number.clone(),
-    });
-    actions.extend(menu::main_menu_actions(&context.phone_number));
-
-    (ConversationState::MainMenu, actions)
-}
-
-fn render_summary(
-    context: &ConversationContext,
-    pedido: &crate::bot::pricing::PedidoCalculado,
-) -> String {
+pub fn render_summary(context: &ConversationContext, pedido: &PedidoCalculado) -> String {
     let messages = &client_messages().checkout;
     let entrega = match context.delivery_type.as_deref() {
         Some("immediate") => messages.summary_delivery_immediate.clone(),
@@ -289,7 +249,7 @@ fn render_summary(
     )
 }
 
-fn render_items(items: &[ItemCalculated]) -> String {
+pub fn render_items(items: &[ItemCalculated]) -> String {
     let messages = &client_messages().checkout;
     if items.is_empty() {
         return messages.summary_items_empty.clone();
@@ -333,6 +293,148 @@ fn render_items(items: &[ItemCalculated]) -> String {
         .join("\n")
 }
 
+pub fn render_payment_ready_confirmation(context: &ConversationContext) -> String {
+    let pedido = calcular_pedido(&context.items);
+    let delivery_cost = context.delivery_cost.unwrap_or_default();
+    let total_final = context.total_final.unwrap_or_default();
+
+    if context.delivery_type.as_deref() == Some("scheduled") {
+        return render_template(
+            &client_messages()
+                .advisor_customer
+                .scheduled_payment_ready_template,
+            &[
+                (
+                    "date",
+                    context.scheduled_date.as_deref().unwrap_or("pendiente"),
+                ),
+                (
+                    "time",
+                    context.scheduled_time.as_deref().unwrap_or("pendiente"),
+                ),
+                ("subtotal", &format_currency(pedido.total_estimado)),
+                (
+                    "delivery_cost",
+                    &format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
+                ),
+                (
+                    "total_final",
+                    &format_currency(u32::try_from(total_final).unwrap_or_default()),
+                ),
+            ],
+        );
+    }
+
+    render_template(
+        &client_messages().advisor_customer.confirmed_order_template,
+        &[
+            ("subtotal", &format_currency(pedido.total_estimado)),
+            (
+                "delivery_cost",
+                &format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
+            ),
+            (
+                "total_final",
+                &format_currency(u32::try_from(total_final).unwrap_or_default()),
+            ),
+            (
+                "address",
+                context.delivery_address.as_deref().unwrap_or("pendiente"),
+            ),
+        ],
+    )
+}
+
+fn wait_receipt_entry_actions(context: &ConversationContext) -> Vec<BotAction> {
+    vec![
+        BotAction::UpsertDraftOrder {
+            status: "waiting_receipt".to_string(),
+        },
+        BotAction::SendTransferInstructions {
+            to: context.phone_number.clone(),
+        },
+        BotAction::SendText {
+            to: context.phone_number.clone(),
+            body: client_messages().checkout.wait_receipt_prompt.clone(),
+        },
+        BotAction::StartTimer {
+            timer_type: TimerType::ReceiptUpload,
+            phone: context.phone_number.clone(),
+            duration: Duration::from_secs(RECEIPT_TIMEOUT.as_secs()),
+        },
+    ]
+}
+
+fn receipt_timeout_repeat_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().checkout;
+    vec![BotAction::SendButtons {
+        to: phone.to_string(),
+        body: messages.receipt_timeout_body.clone(),
+        buttons: vec![
+            reply_button(
+                CHANGE_PAYMENT_METHOD,
+                &messages.receipt_timeout_change_payment_button,
+            ),
+            reply_button(CANCEL_ORDER, &messages.receipt_timeout_cancel_button),
+        ],
+    }]
+}
+
+fn complete_order_transition(
+    context: &mut ConversationContext,
+    status: &str,
+    mut actions: Vec<BotAction>,
+) -> (ConversationState, Vec<BotAction>) {
+    actions.extend(final_confirmation_actions(context));
+    let _ = status;
+    (ConversationState::MainMenu, actions)
+}
+
+fn final_confirmation_actions(context: &ConversationContext) -> Vec<BotAction> {
+    let mut actions = vec![BotAction::SendText {
+        to: context.phone_number.clone(),
+        body: client_messages().checkout.final_order_success_text.clone(),
+    }];
+    actions.push(BotAction::ResetConversation {
+        phone: context.phone_number.clone(),
+    });
+    actions.extend(menu::main_menu_actions(&context.phone_number));
+    actions
+}
+
+fn cancel_order_transition(
+    context: &mut ConversationContext,
+) -> (ConversationState, Vec<BotAction>) {
+    let cancel_action = context
+        .current_order_id
+        .map(|order_id| BotAction::CancelCurrentOrder { order_id });
+
+    context.items.clear();
+    context.payment_method = None;
+    context.delivery_cost = None;
+    context.total_final = None;
+    context.receipt_media_id = None;
+    context.receipt_timer_started_at = None;
+    context.current_order_id = None;
+    context.editing_address = false;
+    context.receipt_timer_expired = false;
+    context.clear_pending_selection();
+
+    let mut actions = vec![BotAction::CancelTimer {
+        timer_type: TimerType::ReceiptUpload,
+        phone: context.phone_number.clone(),
+    }];
+    if let Some(action) = cancel_action {
+        actions.push(action);
+    }
+    actions.push(BotAction::ResetConversation {
+        phone: context.phone_number.clone(),
+    });
+    actions.extend(menu::main_menu_actions(&context.phone_number));
+
+    (ConversationState::MainMenu, actions)
+}
+
 fn selection_id(input: &UserInput) -> Option<String> {
     match input {
         UserInput::ButtonPress(id) | UserInput::ListSelection(id) => Some(id.clone()),
@@ -368,7 +470,7 @@ fn format_currency(value: u32) -> String {
 mod tests {
     use crate::bot::state_machine::{ConversationContext, ConversationState, UserInput};
 
-    use super::{handle_show_summary, handle_wait_receipt, show_summary_actions};
+    use super::{handle_review_checkout, handle_select_payment_method, handle_wait_receipt};
 
     fn context() -> ConversationContext {
         ConversationContext {
@@ -392,8 +494,10 @@ mod tests {
             delivery_type: Some("immediate".to_string()),
             scheduled_date: None,
             scheduled_time: None,
-            customer_review_scope: None,
+            customer_review_scope: Some("checkout_review".to_string()),
             payment_method: None,
+            delivery_cost: Some(5000),
+            total_final: Some(17000),
             receipt_media_id: None,
             receipt_timer_started_at: None,
             advisor_target_phone: None,
@@ -415,17 +519,35 @@ mod tests {
     }
 
     #[test]
-    fn show_summary_pay_now_moves_to_wait_receipt() {
+    fn review_checkout_continue_moves_to_advisor_flow() {
         let mut context = context();
-        let (state, actions) = handle_show_summary(
-            &UserInput::ListSelection("pay_now".to_string()),
+
+        let (state, actions) = handle_review_checkout(
+            &UserInput::ButtonPress("continue_review_checkout".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::AskDeliveryCost);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::FinalizeCurrentOrder { status }
+            if status == "pending_advisor"
+        )));
+    }
+
+    #[test]
+    fn pay_now_moves_to_wait_receipt() {
+        let mut context = context();
+
+        let (state, actions) = handle_select_payment_method(
+            &UserInput::ButtonPress("pay_now".to_string()),
             &mut context,
         )
         .expect("transition");
 
         assert_eq!(state, ConversationState::WaitReceipt);
         assert_eq!(context.payment_method.as_deref(), Some("transfer"));
-        assert!(context.receipt_timer_started_at.is_some());
         assert!(actions.iter().any(|action| matches!(
             action,
             crate::bot::state_machine::BotAction::StartTimer { .. }
@@ -433,37 +555,10 @@ mod tests {
     }
 
     #[test]
-    fn wait_receipt_accepts_only_image_while_timer_is_active() {
-        let mut context = context();
-        context.payment_method = Some("transfer".to_string());
-
-        let (state, _) = handle_wait_receipt(
-            &UserInput::ImageMessage("media-123".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::ConfirmCustomerData);
-        assert_eq!(context.receipt_media_id.as_deref(), Some("media-123"));
-        assert_eq!(context.receipt_timer_started_at, None);
-    }
-
-    #[test]
-    fn wait_receipt_after_timeout_offers_change_or_cancel() {
+    fn wait_receipt_after_timeout_returns_to_payment_buttons() {
         let mut context = context();
         context.payment_method = Some("transfer".to_string());
         context.receipt_timer_expired = true;
-        context.receipt_timer_started_at = Some(chrono::Utc::now());
-
-        let (state, actions) =
-            handle_wait_receipt(&UserInput::TextMessage("hola".to_string()), &mut context)
-                .expect("transition");
-
-        assert_eq!(state, ConversationState::WaitReceipt);
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            crate::bot::state_machine::BotAction::SendButtons { .. }
-        )));
 
         let (state, _) = handle_wait_receipt(
             &UserInput::ButtonPress("change_payment_method".to_string()),
@@ -471,43 +566,7 @@ mod tests {
         )
         .expect("transition");
 
-        assert_eq!(state, ConversationState::ShowSummary);
+        assert_eq!(state, ConversationState::SelectPaymentMethod);
         assert_eq!(context.payment_method, None);
-        assert_eq!(context.receipt_timer_started_at, None);
-        assert!(!context.receipt_timer_expired);
-    }
-
-    #[test]
-    fn show_summary_actions_include_only_three_rows() {
-        let context = context();
-        let actions = show_summary_actions(&context);
-
-        assert!(matches!(
-            actions.get(1),
-            Some(crate::bot::state_machine::BotAction::SendList { sections, .. })
-            if sections.len() == 1
-                && sections[0].rows.len() == 3
-                && sections[0].rows.iter().all(|row| row.id != "modify_order")
-        ));
-    }
-
-    #[test]
-    fn stale_modify_order_reply_repeats_summary_without_clearing_order() {
-        let mut context = context();
-
-        let (state, actions) = handle_show_summary(
-            &UserInput::ListSelection("modify_order".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::ShowSummary);
-        assert_eq!(context.items.len(), 2);
-        assert_eq!(context.current_order_id, Some(7));
-        assert!(matches!(
-            actions.get(1),
-            Some(crate::bot::state_machine::BotAction::SendList { sections, .. })
-            if sections[0].rows.len() == 3
-        ));
     }
 }

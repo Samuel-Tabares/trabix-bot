@@ -187,29 +187,22 @@ pub struct CheckoutMessages {
     pub summary_item_kind_without_liquor: String,
     pub summary_item_mode_wholesale: String,
     pub summary_item_mode_detail: String,
-    pub summary_list_body: String,
-    pub summary_list_button_text: String,
-    pub summary_section_title: String,
+    pub review_buttons_body: String,
+    pub review_continue_button: String,
+    pub review_change_button: String,
+    pub payment_buttons_body: String,
     pub cash_on_delivery_title: String,
-    pub cash_on_delivery_description: String,
     pub pay_now_title: String,
-    pub pay_now_description: String,
-    pub cancel_order_title: String,
-    pub cancel_order_description: String,
-    pub confirm_customer_template: String,
-    pub confirm_customer_continue_button: String,
-    pub confirm_customer_change_button: String,
     pub change_customer_field_body: String,
     pub change_name_button: String,
     pub change_phone_button: String,
-    pub confirm_address_template: String,
-    pub confirm_address_button: String,
     pub change_address_button: String,
     pub transfer_payment_text: String,
     pub wait_receipt_prompt: String,
     pub receipt_timeout_body: String,
     pub receipt_timeout_change_payment_button: String,
     pub receipt_timeout_cancel_button: String,
+    pub final_order_success_text: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -249,6 +242,7 @@ pub struct AdvisorCustomerMessages {
     pub client_hour_retry_non_text: String,
     pub hour_length_error: String,
     pub confirmed_order_template: String,
+    pub scheduled_payment_ready_template: String,
     pub scheduled_confirmation_template: String,
 }
 
@@ -353,16 +347,6 @@ impl ClientMessages {
             "checkout.summary_item_promo_template",
         )?;
         validate_template(
-            &self.checkout.confirm_customer_template,
-            &["customer_name", "customer_phone", "delivery_address"],
-            "checkout.confirm_customer_template",
-        )?;
-        validate_template(
-            &self.checkout.confirm_address_template,
-            &["address"],
-            "checkout.confirm_address_template",
-        )?;
-        validate_template(
             &self.advisor_customer.confirm_contact_template,
             &["customer_name", "customer_phone"],
             "advisor_customer.confirm_contact_template",
@@ -381,6 +365,11 @@ impl ClientMessages {
             &self.advisor_customer.confirmed_order_template,
             &["subtotal", "delivery_cost", "total_final", "address"],
             "advisor_customer.confirmed_order_template",
+        )?;
+        validate_template(
+            &self.advisor_customer.scheduled_payment_ready_template,
+            &["date", "time", "subtotal", "delivery_cost", "total_final"],
+            "advisor_customer.scheduled_payment_ready_template",
         )?;
         validate_template(
             &self.advisor_customer.scheduled_confirmation_template,

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Replace the old `show_summary` checkout split with a combined `review_checkout` step plus a final button-based payment selection after advisor handling.
+- Move advisor delivery-cost capture before final payment, auto-accept scheduled orders after delivery cost, and remove the wholesale-specific checkout relay branch.
+- Change immediate-order advisor waiting so a 5-minute silence auto-falls back to the same branch as `No puedo`, while `Hablar con Asesor` now exposes only `Atender` on the advisor side.
+- Remove the manual advisor `No puedo` button from `wait_advisor_response` and keep the 5-minute timeout as the only fallback into hour negotiation.
+- Stop re-sending relay `Finalizar` on every forwarded client message; the advisor now receives that button only on the initial relay handoff.
+- Keep receipt upload at the end of the flow, forward uploaded receipts to the advisor, and update diagrams/runtime docs to match the new production flow.
+
 ## [1.5.2] - 2026-03-29
 
 - Rename the tracked Mermaid flow documents to `general_info/complex_diagram.mermaid` and `general_info/simple_diagram.mermaid`.

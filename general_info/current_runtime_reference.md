@@ -209,22 +209,43 @@ Los items finales se guardan en `state_data.items`.
 
 ## Checkout Y Pedido
 
-### Resumen Y Pago
+### Revision Final Antes Del Asesor
 
-`show_summary` calcula el pedido con `src/bot/pricing.rs` y presenta:
+`review_checkout` calcula el pedido con `src/bot/pricing.rs` y presenta:
 
 - datos del cliente
 - tipo de entrega
 - fecha/hora si el pedido es programado
 - items y subtotales
 - total estimado sin domicilio
-- nota de que el domicilio se define despues
+- nota de que el domicilio se define antes del pago final
 
 Opciones actuales:
 
+- `Continuar`
+- `Modificar datos`
+
+Si el cliente elige modificar:
+
+- entra a `select_customer_data_field`
+- puede editar `Nombre`, `Teléfono`, o `Dirección`
+- despues de editar, vuelve a `review_checkout`
+
+### Pago Final
+
+El pago ya no se elige antes del handoff.
+
+Despues de la gestion del asesor, el bot entra a `select_payment_method` y muestra botones:
+
 - `Contra Entrega`
 - `Pago Ahora`
-- `Cancelar Pedido`
+
+`Contra Entrega`:
+
+- actualiza `payment_method = cash_on_delivery`
+- confirma la orden
+- envia confirmacion final
+- resetea la conversacion a `main_menu`
 
 ### Pago Ahora
 
@@ -241,21 +262,11 @@ Comportamiento:
 - si vence el timer:
   - marca `receipt_timer_expired = true`
   - ofrece `Cambiar pago` o `Cancelar`
-
-### Revision De Datos Antes Del Handoff
-
-`confirm_address`:
-
-- muestra un resumen de:
-  - nombre
-  - telefono
-  - direccion
-- ofrece `Continuar` o `Cambiar`
-- si el cliente elige `Cambiar`, entra a un selector para editar:
-  - `Nombre`
-  - `Teléfono`
-  - `Dirección`
-- despues de editar un campo, vuelve al mismo resumen antes del handoff al asesor
+- si llega una imagen valida:
+  - persiste `receipt_media_id`
+  - reenvia el comprobante al asesor
+  - confirma la orden
+  - resetea la conversacion a `main_menu`
 
 ### Persistencia Del Pedido
 
@@ -285,6 +296,13 @@ Estados operativos relevantes de la orden:
 
 `current_order_id` en `state_data` permite retomar el pedido en pasos posteriores sin ambiguedad.
 
+`state_data` tambien persiste:
+
+- `delivery_cost`
+- `total_final`
+- contexto de pago y comprobante
+- timers del asesor y del comprobante
+
 ## Flujo Real Del Asesor
 
 ### Regla De Ruteo
@@ -295,38 +313,47 @@ Si el asesor escribe sin haber seleccionado antes un caso pendiente, el bot resp
 
 ### Pedido Normal Con Asesor
 
-Despues de confirmar direccion, el pedido pasa a handoff.
+Despues de `review_checkout`, el pedido pasa al asesor.
 
 Comportamiento actual:
 
 - se calcula el pedido
-- se crea o actualiza el borrador persistido
+- se crea o actualiza el borrador persistido con `payment_method = pending`
 - se envia resumen al asesor
-- si existe comprobante, tambien se envia la imagen al asesor
-- el cliente queda en espera
+- el asesor primero digita el costo del domicilio en `ask_delivery_cost`
 
-Ramas actuales:
-
-- pedido programado:
-  - el asesor recibe boton de confirmar
-- pedido inmediato:
-  - el asesor recibe botones de confirmar o indicar que no puede
-
-### Confirmacion De Pedido Inmediato
+### Pedido Programado
 
 Ruta real:
 
-- `wait_advisor_response`
 - `ask_delivery_cost`
-- cierre del pedido
+- `select_payment_method`
+- `wait_receipt` opcional
 
-El asesor digita el costo del domicilio y el bot:
+Despues de digitar el domicilio:
 
-- actualiza `delivery_cost`
-- calcula `total_final`
-- cambia la orden a `confirmed`
-- informa al cliente el total final y el tiempo estimado
-- resetea la conversacion a `main_menu`
+- se actualiza `delivery_cost`
+- se calcula `total_final`
+- la orden pasa a `draft_payment`
+- el cliente recibe confirmacion del pedido programado con subtotal, domicilio y total final
+- no se espera un boton extra de confirmacion del asesor
+
+### Pedido Inmediato
+
+Ruta real:
+
+- `ask_delivery_cost`
+- `wait_advisor_response`
+- `select_payment_method`
+- `wait_receipt` opcional
+
+Despues de digitar el domicilio:
+
+- se actualiza `delivery_cost`
+- se calcula `total_final`
+- el asesor recibe solo el boton `Confirmar`
+- si confirma, el cliente recibe subtotal, domicilio, total final y luego el selector de pago
+- si el asesor no responde durante `5 minutos`, el sistema entra automaticamente a la misma rama que `No puedo`
 
 ### Negociacion De Hora
 
@@ -345,9 +372,9 @@ Estados relevantes:
 
 Al confirmar la hora final:
 
-- el pedido queda `confirmed`
-- el cliente recibe confirmacion de pedido programado
-- la conversacion vuelve a `main_menu`
+- el pedido pasa a `draft_payment`
+- el cliente recibe confirmacion de pedido programado con subtotal, domicilio y total final
+- el bot muestra `select_payment_method`
 
 ### Hablar Con Asesor
 
@@ -369,7 +396,7 @@ Estados:
 Ramas:
 
 - si el asesor atiende, se entra a relay
-- si el asesor no esta disponible o vence el timer, el cliente puede:
+- si vence el timer, el cliente puede:
   - dejar mensaje
   - volver al menu
 
@@ -378,18 +405,16 @@ Ramas:
 El relay se usa para:
 
 - contacto directo con asesor
-- atencion de pedidos al por mayor
 
 Comportamiento actual:
 
 - cliente -> asesor: se reenvia con prefijo `[CLIENTE ...xxxx]:`
 - asesor -> cliente: se reenvia como texto libre
-- el asesor tiene boton `Finalizar`
+- el asesor recibe el boton `Finalizar` solo una vez, cuando inicia el relay
 - si el relay termina manualmente o por timeout, la conversacion del cliente se resetea a `main_menu`
 
 `relay_kind` identifica el contexto del relay:
 
-- `wholesale_order`
 - `contact_advisor`
 
 ## Timers Activos
@@ -397,7 +422,8 @@ Comportamiento actual:
 Timers de runtime:
 
 - comprobante: `10 minutos`
-- espera de asesor: `2 minutos`
+- espera de asesor para `Hablar con Asesor`: `2 minutos`
+- espera de asesor para confirmacion de pedido inmediato: `5 minutos`
 - estados detallados del asesor atascados: `30 minutos`
 - relay: `30 minutos`
 - inactividad generica del cliente:
@@ -414,7 +440,8 @@ La inactividad generica aplica solo a estados de entrada del cliente, por ejempl
 - `select_date`
 - `collect_name`
 - `select_type`
-- `show_summary`
+- `review_checkout`
+- `select_payment_method`
 - `confirm_address`
 - `select_customer_data_field`
 - `edit_customer_name`
@@ -452,7 +479,8 @@ Comportamiento actual tras deploy o reinicio:
 Catch-up silencioso actual:
 
 - `wait_receipt`: marca timeout pendiente sin enviar mensajes en boot
-- `wait_advisor_response`, `wait_advisor_mayor`, `wait_advisor_contact`: marca timeout del asesor sin fanout en boot
+- `wait_advisor_response`: marca el timeout del pedido inmediato sin fanout en boot
+- `wait_advisor_contact`: marca timeout del asesor sin fanout en boot
 - `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, `wait_advisor_confirm_hour`: puede resetear y mover orden a `manual_followup` sin enviar mensajes en boot
 - `relay_mode`: cierra silenciosamente si ya estaba vencido
 - inactividad generica:
@@ -592,7 +620,6 @@ Relay y contacto:
 
 - validar `Hablar con Asesor`
 - validar rama `Atender`
-- validar rama `No disponible`
 - validar `Dejar mensaje`
 - validar relay cliente -> asesor y asesor -> cliente
 - validar `Finalizar`
@@ -600,7 +627,8 @@ Relay y contacto:
 Timers y reinicio:
 
 - comprobar timeout de comprobante
-- comprobar timeout de asesor con `Programar`, `Reintentar` y `Menu`
+- comprobar que el pedido inmediato pase automaticamente a la rama de `No puedo` despues de `5 minutos`
+- comprobar timeout de `Hablar con Asesor`
 - comprobar hard reset de waits detallados del asesor
 - comprobar timeout de relay
 - comprobar recordatorio y reset de inactividad del cliente
