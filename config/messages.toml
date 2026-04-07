@@ -145,7 +145,7 @@ Items:
 
 Total estimado: {total_estimated}
 
-Nota: el domicilio no está incluido. El asesor lo agregará antes de pasar al pago final."""
+Nota: el domicilio no está incluido. El asesor lo agregará antes de pasar al pago final. Si tu pedido aplica al por mayor y tienes código de descuento, podrás usarlo justo antes de elegir el pago."""
 summary_delivery_immediate = "Inmediata"
 summary_delivery_scheduled_template = """Programada
 Fecha: {date}
@@ -161,6 +161,19 @@ summary_item_mode_detail = "detal"
 review_buttons_body = "Revisa tu pedido completo. Puedes continuar o modificar tus datos personales."
 review_continue_button = "Continuar"
 review_change_button = "Modificar datos"
+referral_prompt_body = "Si tienes código de descuento, este es el momento perfecto de usarlo."
+referral_has_code_button = "Tengo código"
+referral_skip_button = "Seguir sin código"
+referral_code_prompt = "Escríbeme tu código de descuento para validarlo."
+referral_code_non_text = "Necesito que escribas el código en texto para poder validarlo."
+referral_invalid_body = "Ese código no existe o no está activo. Puedes reintentarlo o seguir sin código."
+referral_retry_button = "Reintentar código"
+referral_applied_text_template = "✅ Tu código {code} fue aplicado. Descuento cliente: {discount}."
+payment_ready_referral_details_template = """
+
+Código aplicado: {code}
+Descuento referido: {discount}
+Subtotal con descuento: {discounted_subtotal}"""
 payment_buttons_body = "✅ Tu pedido ya quedó listo. Elige cómo deseas pagar."
 cash_on_delivery_title = "Contra Entrega"
 pay_now_title = "Pago Ahora"

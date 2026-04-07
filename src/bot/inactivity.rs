@@ -68,6 +68,8 @@ pub fn uses_customer_inactivity_timer(state: &ConversationState) -> bool {
             | ConversationState::EditCustomerPhone
             | ConversationState::EditCustomerAddress
             | ConversationState::ReviewCheckout
+            | ConversationState::SelectReferralOption
+            | ConversationState::WaitReferralCode
             | ConversationState::SelectPaymentMethod
             | ConversationState::OfferHourToClient { .. }
             | ConversationState::WaitClientHour
@@ -118,6 +120,12 @@ pub fn reminder_actions(
             checkout::change_address_prompt_actions(&context.phone_number)
         }
         ConversationState::ReviewCheckout => checkout::review_checkout_actions(context),
+        ConversationState::SelectReferralOption => {
+            checkout::select_referral_option_actions(&context.phone_number)
+        }
+        ConversationState::WaitReferralCode => {
+            checkout::referral_code_prompt_actions(&context.phone_number)
+        }
         ConversationState::SelectPaymentMethod => {
             checkout::select_payment_method_actions(&context.phone_number)
         }
@@ -188,6 +196,9 @@ mod tests {
             scheduled_time: None,
             customer_review_scope: None,
             payment_method: None,
+            referral_code: None,
+            referral_discount_total: None,
+            ambassador_commission_total: None,
             delivery_cost: None,
             total_final: None,
             receipt_media_id: None,

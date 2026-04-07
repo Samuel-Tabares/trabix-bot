@@ -4,7 +4,7 @@ use chrono::{FixedOffset, Utc};
 
 use crate::{
     bot::{
-        pricing::{calcular_pedido, ItemCalculated, PedidoCalculado},
+        pricing::{calcular_pedido, calcular_referido, ItemCalculated, PedidoCalculado},
         state_machine::{
             BotAction, ConversationContext, ConversationState, TimerType, TransitionResult,
             UserInput,
@@ -447,16 +447,12 @@ pub fn handle_advisor_ask_delivery_cost(
                                 phone_marker(&context.phone_number)
                             ),
                         },
-                        BotAction::SendText {
-                            to: context.phone_number.clone(),
-                            body: checkout::render_payment_ready_confirmation(context),
-                        },
                     ];
-                    actions.extend(checkout::select_payment_method_actions(
-                        &context.phone_number,
-                    ));
+                    let (next_state, mut next_actions) =
+                        checkout::payment_entry_state_and_actions(context);
+                    actions.append(&mut next_actions);
 
-                    Ok((ConversationState::SelectPaymentMethod, actions))
+                    Ok((next_state, actions))
                 }
             }
             Err(message) => Ok((
@@ -1362,20 +1358,15 @@ fn transition_to_payment_selection(context: &mut ConversationContext) -> Transit
         BotAction::SendText {
             to: context.advisor_phone.clone(),
             body: format!(
-                "Pedido {} listo para que el cliente elija el pago.",
+                "Pedido {} quedó listo para la etapa final con el cliente.",
                 phone_marker(&context.phone_number)
             ),
         },
-        BotAction::SendText {
-            to: context.phone_number.clone(),
-            body: checkout::render_payment_ready_confirmation(context),
-        },
     ];
-    actions.extend(checkout::select_payment_method_actions(
-        &context.phone_number,
-    ));
+    let (next_state, mut next_actions) = checkout::payment_entry_state_and_actions(context);
+    actions.append(&mut next_actions);
 
-    Ok((ConversationState::SelectPaymentMethod, actions))
+    Ok((next_state, actions))
 }
 
 fn render_order_summary(context: &ConversationContext, pedido: &PedidoCalculado) -> String {
@@ -1397,8 +1388,19 @@ fn render_order_summary(context: &ConversationContext, pedido: &PedidoCalculado)
         None => "Pendiente con cliente".to_string(),
     };
 
-    let totals = match (context.delivery_cost, context.total_final) {
-        (Some(delivery_cost), Some(total_final)) => format!(
+    let referral = referral_from_context(context, pedido);
+    let referral_details = render_referral_details(referral.as_ref());
+
+    let totals = match (context.delivery_cost, context.total_final, referral.as_ref()) {
+        (Some(delivery_cost), Some(total_final), Some(referral)) => format!(
+            "\n\nSubtotal base: {}\nDescuento referido: {}\nSubtotal con descuento: {}\nDomicilio: {}\nTotal final: {}",
+            format_currency(pedido.total_estimado),
+            format_currency(referral.total_client_discount),
+            format_currency(referral.subtotal_after_discount),
+            format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
+            format_currency(u32::try_from(total_final).unwrap_or_default()),
+        ),
+        (Some(delivery_cost), Some(total_final), None) => format!(
             "\n\nSubtotal: {}\nDomicilio: {}\nTotal final: {}",
             format_currency(pedido.total_estimado),
             format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
@@ -1411,7 +1413,7 @@ fn render_order_summary(context: &ConversationContext, pedido: &PedidoCalculado)
     };
 
     format!(
-        "Pedido {}\n\nCliente: {}\nTeléfono: {}\nDirección: {}\nEntrega: {}\nPago: {}\n\nItems:\n{}{}",
+        "Pedido {}\n\nCliente: {}\nTeléfono: {}\nDirección: {}\nEntrega: {}\nPago: {}\n\nItems:\n{}{}{}",
         phone_marker(&context.phone_number),
         context.customer_name.as_deref().unwrap_or("pendiente"),
         context.customer_phone.as_deref().unwrap_or("pendiente"),
@@ -1419,6 +1421,7 @@ fn render_order_summary(context: &ConversationContext, pedido: &PedidoCalculado)
         entrega,
         pago,
         render_items(&pedido.items_detalle),
+        referral_details,
         totals,
     )
 }
@@ -1545,6 +1548,52 @@ fn render_items(items: &[ItemCalculated]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn referral_from_context(
+    context: &ConversationContext,
+    pedido: &PedidoCalculado,
+) -> Option<crate::bot::pricing::ReferralApplied> {
+    context
+        .referral_code
+        .as_deref()
+        .and_then(|code| calcular_referido(pedido, code))
+}
+
+fn render_referral_details(referral: Option<&crate::bot::pricing::ReferralApplied>) -> String {
+    let Some(referral) = referral else {
+        return String::new();
+    };
+
+    let bucket_lines = referral
+        .buckets
+        .iter()
+        .map(|bucket| {
+            let kind = if bucket.has_liquor {
+                "Con licor"
+            } else {
+                "Sin licor"
+            };
+
+            format!(
+                "- {} {} und: desc {}% | comisión {}% | embajador {}",
+                kind,
+                bucket.quantity,
+                bucket.client_discount_percent,
+                bucket.ambassador_commission_percent,
+                format_currency(bucket.ambassador_commission_amount)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "\n\nReferido:\nCódigo: {}\nDescuento cliente: {}\nComisión embajador total: {}\n{}",
+        referral.code,
+        format_currency(referral.total_client_discount),
+        format_currency(referral.total_ambassador_commission),
+        bucket_lines,
+    )
 }
 
 fn advisor_button_action(input: &UserInput) -> Option<AdvisorButtonAction> {
@@ -1731,6 +1780,9 @@ mod tests {
             scheduled_time: None,
             customer_review_scope: None,
             payment_method: Some("cash_on_delivery".to_string()),
+            referral_code: None,
+            referral_discount_total: None,
+            ambassador_commission_total: None,
             delivery_cost: None,
             total_final: None,
             receipt_media_id: None,
@@ -1751,6 +1803,18 @@ mod tests {
             conversation_abandon_started_at: None,
             conversation_abandon_reminder_sent: false,
         }
+    }
+
+    fn wholesale_context() -> ConversationContext {
+        let mut context = context();
+        context.items = vec![crate::db::models::OrderItemData {
+            flavor: "Maracumango".to_string(),
+            has_liquor: false,
+            quantity: 20,
+        }];
+        context.delivery_cost = Some(5000);
+        context.total_final = Some(101000);
+        context
     }
 
     #[test]
@@ -1832,6 +1896,25 @@ mod tests {
     }
 
     #[test]
+    fn advisor_confirm_for_wholesale_order_moves_to_referral_step() {
+        let mut context = wholesale_context();
+
+        let (state, actions) = handle_advisor_wait_advisor_response(
+            &UserInput::ButtonPress("advisor_confirm_573001234567".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::SelectReferralOption);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::SendButtons { body, buttons, .. }
+                if body == &crate::messages::client_messages().checkout.referral_prompt_body
+                    && buttons.iter().any(|button| button.reply.id == "referral_has_code")
+        )));
+    }
+
+    #[test]
     fn advisor_delivery_cost_updates_total() {
         let mut context = context();
 
@@ -1850,6 +1933,28 @@ mod tests {
         )));
         assert_eq!(context.delivery_cost, Some(5000));
         assert_eq!(context.total_final, Some(17000));
+    }
+
+    #[test]
+    fn scheduled_wholesale_delivery_cost_moves_to_referral_step() {
+        let mut context = wholesale_context();
+        context.delivery_type = Some("scheduled".to_string());
+        context.scheduled_date = Some("2030-12-24".to_string());
+        context.scheduled_time = Some("4:00 pm".to_string());
+
+        let (state, actions) = handle_advisor_ask_delivery_cost(
+            &UserInput::TextMessage("5000".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::SelectReferralOption);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::SendButtons { body, buttons, .. }
+                if body == &crate::messages::client_messages().checkout.referral_prompt_body
+                    && buttons.iter().any(|button| button.reply.id == "referral_has_code")
+        )));
     }
 
     #[test]

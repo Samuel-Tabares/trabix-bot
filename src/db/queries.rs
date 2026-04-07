@@ -136,6 +136,9 @@ pub async fn create_order(
     scheduled_time_text: Option<&str>,
     payment_method: &str,
     receipt_media_id: Option<&str>,
+    referral_code: Option<&str>,
+    referral_discount_total: Option<i32>,
+    ambassador_commission_total: Option<i32>,
     total_estimated: i32,
 ) -> Result<Order, sqlx::Error> {
     sqlx::query_as::<_, Order>(
@@ -143,13 +146,15 @@ pub async fn create_order(
         INSERT INTO orders (
             conversation_id, delivery_type, scheduled_date, scheduled_time,
             scheduled_date_text, scheduled_time_text,
-            payment_method, receipt_media_id, total_estimated
+            payment_method, receipt_media_id, referral_code, referral_discount_total,
+            ambassador_commission_total, total_estimated
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING id, conversation_id, delivery_type, scheduled_date, scheduled_time,
                   scheduled_date_text, scheduled_time_text,
-                  payment_method, receipt_media_id, delivery_cost, total_estimated,
-                  total_final, status, created_at
+                  payment_method, receipt_media_id, referral_code, referral_discount_total,
+                  ambassador_commission_total, delivery_cost, total_estimated, total_final,
+                  status, created_at
         "#,
     )
     .bind(conversation_id)
@@ -160,6 +165,9 @@ pub async fn create_order(
     .bind(scheduled_time_text)
     .bind(payment_method)
     .bind(receipt_media_id)
+    .bind(referral_code)
+    .bind(referral_discount_total)
+    .bind(ambassador_commission_total)
     .bind(total_estimated)
     .fetch_one(pool)
     .await
@@ -175,6 +183,9 @@ pub async fn update_order(
     scheduled_time_text: Option<&str>,
     payment_method: &str,
     receipt_media_id: Option<&str>,
+    referral_code: Option<&str>,
+    referral_discount_total: Option<i32>,
+    ambassador_commission_total: Option<i32>,
     total_estimated: i32,
     status: &str,
 ) -> Result<Order, sqlx::Error> {
@@ -188,13 +199,17 @@ pub async fn update_order(
             scheduled_time_text = $6,
             payment_method = $7,
             receipt_media_id = $8,
-            total_estimated = $9,
-            status = $10
+            referral_code = $9,
+            referral_discount_total = $10,
+            ambassador_commission_total = $11,
+            total_estimated = $12,
+            status = $13
         WHERE id = $1
         RETURNING id, conversation_id, delivery_type, scheduled_date, scheduled_time,
                   scheduled_date_text, scheduled_time_text,
-                  payment_method, receipt_media_id, delivery_cost, total_estimated,
-                  total_final, status, created_at
+                  payment_method, receipt_media_id, referral_code, referral_discount_total,
+                  ambassador_commission_total, delivery_cost, total_estimated, total_final,
+                  status, created_at
         "#,
     )
     .bind(order_id)
@@ -205,6 +220,9 @@ pub async fn update_order(
     .bind(scheduled_time_text)
     .bind(payment_method)
     .bind(receipt_media_id)
+    .bind(referral_code)
+    .bind(referral_discount_total)
+    .bind(ambassador_commission_total)
     .bind(total_estimated)
     .bind(status)
     .fetch_one(pool)
@@ -338,8 +356,9 @@ pub async fn get_order(pool: &PgPool, order_id: i32) -> Result<Option<Order>, sq
         r#"
         SELECT id, conversation_id, delivery_type, scheduled_date, scheduled_time,
                scheduled_date_text, scheduled_time_text,
-               payment_method, receipt_media_id, delivery_cost, total_estimated,
-               total_final, status, created_at
+               payment_method, receipt_media_id, referral_code, referral_discount_total,
+               ambassador_commission_total, delivery_cost, total_estimated, total_final,
+               status, created_at
         FROM orders
         WHERE id = $1
         "#,
@@ -354,8 +373,9 @@ pub async fn list_orders(pool: &PgPool) -> Result<Vec<Order>, sqlx::Error> {
         r#"
         SELECT id, conversation_id, delivery_type, scheduled_date, scheduled_time,
                scheduled_date_text, scheduled_time_text,
-               payment_method, receipt_media_id, delivery_cost, total_estimated,
-               total_final, status, created_at
+               payment_method, receipt_media_id, referral_code, referral_discount_total,
+               ambassador_commission_total, delivery_cost, total_estimated, total_final,
+               status, created_at
         FROM orders
         ORDER BY created_at DESC, id DESC
         "#,
@@ -582,6 +602,9 @@ mod tests {
             None,
             "cash",
             None,
+            None,
+            None,
+            None,
             12000,
         )
         .await
@@ -595,6 +618,9 @@ mod tests {
             Some("mañana"),
             Some("7 pm"),
             "transfer",
+            None,
+            None,
+            None,
             None,
             18000,
         )

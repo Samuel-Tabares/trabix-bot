@@ -190,6 +190,15 @@ pub struct CheckoutMessages {
     pub review_buttons_body: String,
     pub review_continue_button: String,
     pub review_change_button: String,
+    pub referral_prompt_body: String,
+    pub referral_has_code_button: String,
+    pub referral_skip_button: String,
+    pub referral_code_prompt: String,
+    pub referral_code_non_text: String,
+    pub referral_invalid_body: String,
+    pub referral_retry_button: String,
+    pub referral_applied_text_template: String,
+    pub payment_ready_referral_details_template: String,
     pub payment_buttons_body: String,
     pub cash_on_delivery_title: String,
     pub pay_now_title: String,
@@ -345,6 +354,16 @@ impl ClientMessages {
             &self.checkout.summary_item_promo_template,
             &["promo_units"],
             "checkout.summary_item_promo_template",
+        )?;
+        validate_template(
+            &self.checkout.referral_applied_text_template,
+            &["code", "discount"],
+            "checkout.referral_applied_text_template",
+        )?;
+        validate_template(
+            &self.checkout.payment_ready_referral_details_template,
+            &["code", "discount", "discounted_subtotal"],
+            "checkout.payment_ready_referral_details_template",
         )?;
         validate_template(
             &self.advisor_customer.confirm_contact_template,

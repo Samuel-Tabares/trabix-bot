@@ -800,6 +800,9 @@ async fn upsert_order_from_context(
     let total_estimated = i32::try_from(pedido.total_estimado)
         .map_err(|_| IoError::new(ErrorKind::InvalidData, "total_estimated out of range"))?;
     let receipt_media_id = context.receipt_media_id.as_deref();
+    let referral_code = context.referral_code.as_deref();
+    let referral_discount_total = context.referral_discount_total;
+    let ambassador_commission_total = context.ambassador_commission_total;
 
     let order = match context.current_order_id {
         Some(order_id) => {
@@ -813,6 +816,9 @@ async fn upsert_order_from_context(
                 schedule_values.raw_time.as_deref(),
                 payment_method,
                 receipt_media_id,
+                referral_code,
+                referral_discount_total,
+                ambassador_commission_total,
                 total_estimated,
                 status,
             )
@@ -829,6 +835,9 @@ async fn upsert_order_from_context(
                 schedule_values.raw_time.as_deref(),
                 payment_method,
                 receipt_media_id,
+                referral_code,
+                referral_discount_total,
+                ambassador_commission_total,
                 total_estimated,
             )
             .await?;

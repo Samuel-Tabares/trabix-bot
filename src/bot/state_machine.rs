@@ -38,6 +38,8 @@ pub enum ConversationState {
     EditCustomerPhone,
     EditCustomerAddress,
     ReviewCheckout,
+    SelectReferralOption,
+    WaitReferralCode,
     SelectPaymentMethod,
     WaitReceipt,
     WaitAdvisorResponse,
@@ -82,6 +84,8 @@ impl ConversationState {
             Self::EditCustomerPhone => "edit_customer_phone",
             Self::EditCustomerAddress => "edit_customer_address",
             Self::ReviewCheckout => "review_checkout",
+            Self::SelectReferralOption => "select_referral_option",
+            Self::WaitReferralCode => "wait_referral_code",
             Self::SelectPaymentMethod => "select_payment_method",
             Self::WaitReceipt => "wait_receipt",
             Self::WaitAdvisorResponse => "wait_advisor_response",
@@ -147,6 +151,8 @@ impl ConversationState {
             "edit_customer_phone" => Ok(Self::EditCustomerPhone),
             "edit_customer_address" => Ok(Self::EditCustomerAddress),
             "review_checkout" | "show_summary" => Ok(Self::ReviewCheckout),
+            "select_referral_option" => Ok(Self::SelectReferralOption),
+            "wait_referral_code" => Ok(Self::WaitReferralCode),
             "select_payment_method" => Ok(Self::SelectPaymentMethod),
             "wait_receipt" => Ok(Self::WaitReceipt),
             "wait_advisor_response" => Ok(Self::WaitAdvisorResponse),
@@ -220,6 +226,8 @@ impl<'de> Deserialize<'de> for ConversationState {
             "edit_customer_phone" => Ok(Self::EditCustomerPhone),
             "edit_customer_address" => Ok(Self::EditCustomerAddress),
             "review_checkout" | "show_summary" => Ok(Self::ReviewCheckout),
+            "select_referral_option" => Ok(Self::SelectReferralOption),
+            "wait_referral_code" => Ok(Self::WaitReferralCode),
             "select_payment_method" => Ok(Self::SelectPaymentMethod),
             "wait_receipt" => Ok(Self::WaitReceipt),
             "wait_advisor_response" => Ok(Self::WaitAdvisorResponse),
@@ -364,6 +372,9 @@ pub struct ConversationContext {
     pub scheduled_time: Option<String>,
     pub customer_review_scope: Option<String>,
     pub payment_method: Option<String>,
+    pub referral_code: Option<String>,
+    pub referral_discount_total: Option<i32>,
+    pub ambassador_commission_total: Option<i32>,
     pub delivery_cost: Option<i32>,
     pub total_final: Option<i32>,
     pub receipt_media_id: Option<String>,
@@ -406,6 +417,9 @@ impl ConversationContext {
             scheduled_time: state_data.scheduled_time.clone(),
             customer_review_scope: state_data.customer_review_scope.clone(),
             payment_method: state_data.payment_method.clone(),
+            referral_code: state_data.referral_code.clone(),
+            referral_discount_total: state_data.referral_discount_total,
+            ambassador_commission_total: state_data.ambassador_commission_total,
             delivery_cost: state_data.delivery_cost,
             total_final: state_data.total_final,
             receipt_media_id: state_data.receipt_media_id.clone(),
@@ -436,6 +450,9 @@ impl ConversationContext {
             scheduled_time: self.scheduled_time.clone(),
             customer_review_scope: self.customer_review_scope.clone(),
             payment_method: self.payment_method.clone(),
+            referral_code: self.referral_code.clone(),
+            referral_discount_total: self.referral_discount_total,
+            ambassador_commission_total: self.ambassador_commission_total,
             delivery_cost: self.delivery_cost,
             total_final: self.total_final,
             receipt_media_id: self.receipt_media_id.clone(),
@@ -461,6 +478,12 @@ impl ConversationContext {
     pub fn clear_pending_selection(&mut self) {
         self.pending_has_liquor = None;
         self.pending_flavor = None;
+    }
+
+    pub fn clear_referral_data(&mut self) {
+        self.referral_code = None;
+        self.referral_discount_total = None;
+        self.ambassador_commission_total = None;
     }
 }
 
@@ -528,6 +551,10 @@ pub fn transition(
             customer_data::handle_edit_customer_address(input, context)
         }
         ConversationState::ReviewCheckout => checkout::handle_review_checkout(input, context),
+        ConversationState::SelectReferralOption => {
+            checkout::handle_select_referral_option(input, context)
+        }
+        ConversationState::WaitReferralCode => checkout::handle_wait_referral_code(input, context),
         ConversationState::SelectPaymentMethod => {
             checkout::handle_select_payment_method(input, context)
         }

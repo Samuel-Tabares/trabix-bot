@@ -28,11 +28,34 @@ pub struct ItemCalculated {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PedidoCalculado {
     pub items_detalle: Vec<ItemCalculated>,
+    pub cantidad_con_licor: u32,
+    pub cantidad_sin_licor: u32,
     pub total_con_licor: u32,
     pub total_sin_licor: u32,
     pub es_mayor_con_licor: bool,
     pub es_mayor_sin_licor: bool,
     pub total_estimado: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferralBucketCalculated {
+    pub has_liquor: bool,
+    pub quantity: u32,
+    pub subtotal_before_discount: u32,
+    pub client_discount_percent: u8,
+    pub client_discount_amount: u32,
+    pub subtotal_after_discount: u32,
+    pub ambassador_commission_percent: u8,
+    pub ambassador_commission_amount: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferralApplied {
+    pub code: String,
+    pub buckets: Vec<ReferralBucketCalculated>,
+    pub total_client_discount: u32,
+    pub subtotal_after_discount: u32,
+    pub total_ambassador_commission: u32,
 }
 
 pub fn calcular_precio_licor_detal(cantidad: u32) -> u32 {
@@ -94,6 +117,8 @@ pub fn calcular_pedido(items: &[OrderItemData]) -> PedidoCalculado {
 
     PedidoCalculado {
         items_detalle,
+        cantidad_con_licor: total_con_licor_qty,
+        cantidad_sin_licor: total_sin_licor_qty,
         total_con_licor,
         total_sin_licor,
         es_mayor_con_licor,
@@ -102,12 +127,113 @@ pub fn calcular_pedido(items: &[OrderItemData]) -> PedidoCalculado {
     }
 }
 
+pub fn has_wholesale_bucket(pedido: &PedidoCalculado) -> bool {
+    pedido.es_mayor_con_licor || pedido.es_mayor_sin_licor
+}
+
+pub fn calcular_referido(pedido: &PedidoCalculado, code: &str) -> Option<ReferralApplied> {
+    let mut buckets = Vec::new();
+
+    if pedido.es_mayor_con_licor {
+        buckets.push(calcular_bucket_referido(
+            true,
+            pedido.cantidad_con_licor,
+            pedido.total_con_licor,
+        ));
+    }
+    if pedido.es_mayor_sin_licor {
+        buckets.push(calcular_bucket_referido(
+            false,
+            pedido.cantidad_sin_licor,
+            pedido.total_sin_licor,
+        ));
+    }
+
+    if buckets.is_empty() {
+        return None;
+    }
+
+    let total_client_discount = buckets
+        .iter()
+        .map(|bucket| bucket.client_discount_amount)
+        .sum();
+    let subtotal_after_discount = buckets
+        .iter()
+        .map(|bucket| bucket.subtotal_after_discount)
+        .sum::<u32>()
+        + detalle_subtotal(pedido);
+    let total_ambassador_commission = buckets
+        .iter()
+        .map(|bucket| bucket.ambassador_commission_amount)
+        .sum();
+
+    Some(ReferralApplied {
+        code: code.to_string(),
+        buckets,
+        total_client_discount,
+        subtotal_after_discount,
+        total_ambassador_commission,
+    })
+}
+
 fn total_quantity(items: &[OrderItemData], has_liquor: bool) -> u32 {
     items
         .iter()
         .filter(|item| item.has_liquor == has_liquor)
         .map(|item| item.quantity)
         .sum()
+}
+
+fn detalle_subtotal(pedido: &PedidoCalculado) -> u32 {
+    let liquor_detail = if pedido.es_mayor_con_licor {
+        0
+    } else {
+        pedido.total_con_licor
+    };
+    let non_liquor_detail = if pedido.es_mayor_sin_licor {
+        0
+    } else {
+        pedido.total_sin_licor
+    };
+
+    liquor_detail + non_liquor_detail
+}
+
+fn calcular_bucket_referido(
+    has_liquor: bool,
+    quantity: u32,
+    subtotal_before_discount: u32,
+) -> ReferralBucketCalculated {
+    let (client_discount_percent, ambassador_commission_percent) = porcentaje_referido(quantity);
+    let client_discount_amount =
+        aplicar_porcentaje(subtotal_before_discount, client_discount_percent);
+    let subtotal_after_discount = subtotal_before_discount - client_discount_amount;
+    let ambassador_commission_amount =
+        aplicar_porcentaje(subtotal_after_discount, ambassador_commission_percent);
+
+    ReferralBucketCalculated {
+        has_liquor,
+        quantity,
+        subtotal_before_discount,
+        client_discount_percent,
+        client_discount_amount,
+        subtotal_after_discount,
+        ambassador_commission_percent,
+        ambassador_commission_amount,
+    }
+}
+
+fn porcentaje_referido(quantity: u32) -> (u8, u8) {
+    match quantity {
+        20..=49 => (10, 15),
+        50..=99 => (12, 18),
+        100.. => (15, 20),
+        _ => unreachable!("solo se llama con buckets al por mayor"),
+    }
+}
+
+fn aplicar_porcentaje(value: u32, percent: u8) -> u32 {
+    (((u64::from(value) * u64::from(percent)) + 50) / 100) as u32
 }
 
 fn calcular_item_mayor(item: &OrderItemData, unit_price: u32) -> ItemCalculated {
@@ -197,5 +323,93 @@ fn calcular_item_licor_detal(item: &OrderItemData, start_position: u32) -> ItemC
         promo_units,
         unit_price_reference: None,
         persistence_lines,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db::models::OrderItemData;
+
+    use super::{calcular_pedido, calcular_referido, has_wholesale_bucket};
+
+    #[test]
+    fn detail_orders_are_not_referral_eligible() {
+        let pedido = calcular_pedido(&[OrderItemData {
+            flavor: "Maracumango".to_string(),
+            has_liquor: false,
+            quantity: 12,
+        }]);
+
+        assert!(!has_wholesale_bucket(&pedido));
+        assert!(calcular_referido(&pedido, "codigo").is_none());
+    }
+
+    #[test]
+    fn applies_first_referral_tier_for_20_units() {
+        let pedido = calcular_pedido(&[OrderItemData {
+            flavor: "Maracumango".to_string(),
+            has_liquor: false,
+            quantity: 20,
+        }]);
+
+        let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
+        assert_eq!(referido.total_client_discount, 9_600);
+        assert_eq!(referido.subtotal_after_discount, 86_400);
+        assert_eq!(referido.total_ambassador_commission, 12_960);
+    }
+
+    #[test]
+    fn applies_second_referral_tier_for_50_units() {
+        let pedido = calcular_pedido(&[OrderItemData {
+            flavor: "Blueberry".to_string(),
+            has_liquor: true,
+            quantity: 50,
+        }]);
+
+        let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
+        assert_eq!(referido.total_client_discount, 28_200);
+        assert_eq!(referido.subtotal_after_discount, 206_800);
+        assert_eq!(referido.total_ambassador_commission, 37_224);
+    }
+
+    #[test]
+    fn applies_third_referral_tier_for_100_units() {
+        let pedido = calcular_pedido(&[OrderItemData {
+            flavor: "Blueberry".to_string(),
+            has_liquor: false,
+            quantity: 100,
+        }]);
+
+        let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
+        assert_eq!(referido.total_client_discount, 63_000);
+        assert_eq!(referido.subtotal_after_discount, 357_000);
+        assert_eq!(referido.total_ambassador_commission, 71_400);
+    }
+
+    #[test]
+    fn mixed_wholesale_order_combines_bucket_specific_tiers() {
+        let pedido = calcular_pedido(&[
+            OrderItemData {
+                flavor: "Maracumango".to_string(),
+                has_liquor: false,
+                quantity: 20,
+            },
+            OrderItemData {
+                flavor: "Blueberry".to_string(),
+                has_liquor: true,
+                quantity: 50,
+            },
+            OrderItemData {
+                flavor: "Bonbonbum".to_string(),
+                has_liquor: false,
+                quantity: 2,
+            },
+        ]);
+
+        let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
+        assert_eq!(referido.buckets.len(), 2);
+        assert_eq!(referido.total_client_discount, 38_760);
+        assert_eq!(referido.subtotal_after_discount, 301_840);
+        assert_eq!(referido.total_ambassador_commission, 51_480);
     }
 }

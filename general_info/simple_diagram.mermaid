@@ -85,8 +85,16 @@ graph TD
 
     FLUJO_PROG --> CONF_PROG_AUTO["✅ Pedido programado confirmado<br/>─────────────────<br/>Pedido autoaceptado<br/>Costo domicilio + total final<br/>Entrega en fecha y hora acordadas"]
 
-    CONF_INM --> PAGO{"💳 ¿Cómo deseas pagar?"}
-    CONF_PROG_AUTO --> PAGO
+    CONF_INM --> REFERIDO{"🎟️ ¿Aplica referido?<br/>Solo si el pedido tiene bucket al por mayor"}
+    CONF_PROG_AUTO --> REFERIDO
+
+    REFERIDO -->|✅ Sí, tiene bucket mayor| CODIGO["🎟️ select_referral_option<br/>─────────────────<br/>Botones:<br/>Tengo código / Seguir sin código"]
+    REFERIDO -->|❌ No aplica mayor| PAGO{"💳 ¿Cómo deseas pagar?"}
+
+    CODIGO -->|Tengo código| VALIDAR["⌨️ wait_referral_code<br/>─────────────────<br/>Cliente escribe código<br/>trim + lowercase<br/>si es válido recalcula descuento y total"]
+    CODIGO -->|Seguir sin código| PAGO
+    VALIDAR -->|✅ Código válido| PAGO
+    VALIDAR -->|❌ Código inválido| CODIGO
 
     PAGO -->|💵 Contra Entrega| FINAL["✅ Confirmación final del pedido<br/>─────────────────<br/>Pedido registrado correctamente<br/>y vuelta al menú principal"]
     PAGO -->|📲 Pago Ahora| COMPRO["📸 wait_receipt<br/>─────────────────<br/>Instrucciones de transferencia<br/>Espera imagen de comprobante<br/>⏱️ Timer: 10 min"]

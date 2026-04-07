@@ -41,7 +41,7 @@ graph TD
 
     subgraph Persistence["POSTGRESQL + RUNTIME STATE"]
         Conversations["🗂️ conversations<br/>- phone_number<br/>- state<br/>- state_data JSONB<br/>- customer_name<br/>- customer_phone<br/>- delivery_address<br/>- last_message_at<br/>- SQL session TZ America/Bogota"]
-        Orders["🧾 orders<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- receipt_media_id<br/>- delivery_cost<br/>- total_estimated<br/>- total_final<br/>- status"]
+        Orders["🧾 orders<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- receipt_media_id<br/>- referral_code<br/>- referral_discount_total<br/>- ambassador_commission_total<br/>- delivery_cost<br/>- total_estimated<br/>- total_final<br/>- status"]
         OrderItems["🧊 order_items<br/>- flavor<br/>- has_liquor<br/>- quantity<br/>- unit_price<br/>- subtotal"]
         SimSessions["🧪 simulator_sessions<br/>- customer_phone<br/>- profile_name"]
         SimMessages["💬 simulator_messages<br/>- actor<br/>- audience<br/>- message_kind<br/>- body<br/>- payload JSONB<br/>- created_at timestamp"]
@@ -106,7 +106,11 @@ graph TD
         EditPhone --> ReviewCheckout
         EditAddress --> ReviewCheckout
 
-        SelectPayment["💳 select_payment_method<br/>Botones Contra Entrega / Pago Ahora"] -->|Pago Ahora| WaitReceipt["📸 wait_receipt<br/>- TRANSFER_PAYMENT_TEXT<br/>- pide comprobante<br/>- timer 10m"]
+        SelectReferral["🎟️ select_referral_option<br/>Mayor: Tengo código / Seguir sin código"] -->|Tengo código| WaitReferralCode["⌨️ wait_referral_code<br/>texto libre -> trim lowercase<br/>valida config/referrals.toml<br/>inválido -> Reintentar / Seguir sin código"]
+        SelectReferral -->|Seguir sin código| SelectPayment["💳 select_payment_method<br/>Botones Contra Entrega / Pago Ahora"]
+        WaitReferralCode -->|válido| SelectPayment
+        WaitReferralCode -->|inválido| SelectReferral
+        SelectPayment -->|Pago Ahora| WaitReceipt["📸 wait_receipt<br/>- TRANSFER_PAYMENT_TEXT<br/>- pide comprobante<br/>- timer 10m"]
         SelectPayment -->|Contra Entrega| FinalOrder["✅ Confirmación final del pedido<br/>Asesor recibe resumen final + estado<br/>ResetConversation -> MainMenu"]
         WaitReceipt -->|imagen recibida| FinalOrder["✅ Confirmación final del pedido<br/>Asesor recibe resumen final + estado + comprobante<br/>ResetConversation -> MainMenu"]
         WaitReceipt -->|timer vencido| ReceiptTimeout["Opciones Cambiar pago / Cancelar"]
@@ -115,7 +119,7 @@ graph TD
 
     subgraph OrderPersistence["PERSISTENCIA DEL PEDIDO"]
         DraftUpsert["💾 UpsertDraftOrder / FinalizeCurrentOrder<br/>usa conversations + context para orders y order_items"]
-        ContextData["🧠 state_data relevante<br/>- items[]<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- delivery_cost<br/>- total_final<br/>- receipt_media_id<br/>- current_order_id<br/>- advisor timers / relay timers"]
+        ContextData["🧠 state_data relevante<br/>- items[]<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- referral_code<br/>- referral_discount_total<br/>- ambassador_commission_total<br/>- delivery_cost<br/>- total_final<br/>- receipt_media_id<br/>- current_order_id<br/>- advisor timers / relay timers"]
     end
 
     AdvisorHandoff --> DraftUpsert
@@ -136,11 +140,15 @@ graph TD
         AdvisorHandoff --> AskDeliveryCost["ask_delivery_cost\n1. render_order_summary() al asesor\n2. asesor digita domicilio\n3. timer 30m"]
         AskDeliveryCost --> DeliveryTypeAfterCost{"👨‍💼 ¿delivery_type actual?"}
 
-        DeliveryTypeAfterCost -->|scheduled| ScheduledConfirmed["UpdateCurrentOrderDeliveryCost + status=draft_payment\nCliente: subtotal + domicilio + total final + fecha/hora\nLuego botones de pago"]
+        DeliveryTypeAfterCost -->|scheduled| ScheduledConfirmed["UpdateCurrentOrderDeliveryCost + status=draft_payment\nCliente: subtotal + domicilio + total final + fecha/hora"]
         DeliveryTypeAfterCost -->|immediate| WaitAdvisorResponse["⏳ wait_advisor_response<br/>asesor recibe solo Confirmar<br/>timer 5m auto-No puedo"]
 
         WaitAdvisorResponse --> AdvisorDecision{"🔘 Acción del asesor"}
-        AdvisorDecision -->|Confirmar| ImmediateConfirmed["UpsertDraftOrder status=draft_payment\nCliente: subtotal + domicilio + total final + 20-40 min\nLuego botones de pago"]
+        AdvisorDecision -->|Confirmar| ImmediateConfirmed["UpsertDraftOrder status=draft_payment\nCliente: subtotal + domicilio + total final + 20-40 min"]
+        ScheduledConfirmed --> ReferralGate{"🧾 ¿Hay bucket mayor?"}
+        ImmediateConfirmed --> ReferralGate
+        ReferralGate -->|Sí| SelectReferral
+        ReferralGate -->|No| SelectPayment
         AdvisorDecision -->|timeout| ConvertToScheduled["Mutaciones:\n- delivery_type = scheduled\n- scheduled_date = hoy Bogota\n- scheduled_time = None\n- limpia proposed/client hour\nLuego pregunta al asesor que hora puede"]
         ConvertToScheduled --> NegotiateHour["🕐 negotiate_hour<br/>timer 30m"]
         NegotiateHour --> AdvisorProposesHour["👨‍💼 Asesor envía texto hora"]

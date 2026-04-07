@@ -380,6 +380,7 @@ fn restart_order_transition(
     context.items.clear();
     context.customer_review_scope = None;
     context.payment_method = None;
+    context.clear_referral_data();
     context.delivery_cost = None;
     context.total_final = None;
     context.receipt_media_id = None;
@@ -435,6 +436,9 @@ mod tests {
             scheduled_time: None,
             customer_review_scope: None,
             payment_method: None,
+            referral_code: None,
+            referral_discount_total: None,
+            ambassador_commission_total: None,
             delivery_cost: None,
             total_final: None,
             receipt_media_id: None,

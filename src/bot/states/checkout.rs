@@ -2,7 +2,10 @@ use std::time::Duration;
 
 use crate::{
     bot::{
-        pricing::{calcular_pedido, ItemCalculated, PedidoCalculado},
+        pricing::{
+            calcular_pedido, calcular_referido, has_wholesale_bucket, ItemCalculated,
+            PedidoCalculado, ReferralApplied,
+        },
         state_machine::{
             BotAction, ConversationContext, ConversationState, TimerType, TransitionResult,
             UserInput,
@@ -10,6 +13,7 @@ use crate::{
         timers::RECEIPT_TIMEOUT,
     },
     messages::{client_messages, render_template},
+    referrals::{normalize_referral_code, referral_registry},
     whatsapp::types::{Button, ButtonReplyPayload},
 };
 
@@ -17,6 +21,9 @@ use super::{advisor, customer_data, menu};
 
 const REVIEW_CONTINUE: &str = "continue_review_checkout";
 const REVIEW_CHANGE: &str = "change_review_checkout";
+const REFERRAL_HAS_CODE: &str = "referral_has_code";
+const REFERRAL_SKIP: &str = "referral_skip";
+const REFERRAL_RETRY: &str = "referral_retry";
 const CASH_ON_DELIVERY: &str = "cash_on_delivery";
 const PAY_NOW: &str = "pay_now";
 const CANCEL_ORDER: &str = "cancel_order";
@@ -33,6 +40,7 @@ pub fn handle_review_checkout(
             context.receipt_timer_started_at = None;
             context.receipt_timer_expired = false;
             context.editing_address = false;
+            context.clear_referral_data();
             context.delivery_cost = None;
             context.total_final = None;
 
@@ -46,6 +54,108 @@ pub fn handle_review_checkout(
         _ => Ok((
             ConversationState::ReviewCheckout,
             review_checkout_actions(context),
+        )),
+    }
+}
+
+pub fn handle_select_referral_option(
+    input: &UserInput,
+    context: &mut ConversationContext,
+) -> TransitionResult {
+    match selection_id(input).as_deref() {
+        Some(REFERRAL_HAS_CODE) => {
+            context.clear_referral_data();
+            Ok((
+                ConversationState::WaitReferralCode,
+                referral_code_prompt_actions(&context.phone_number),
+            ))
+        }
+        Some(REFERRAL_SKIP) => {
+            clear_referral_and_restore_total(context);
+            Ok((
+                ConversationState::SelectPaymentMethod,
+                select_payment_method_actions(&context.phone_number),
+            ))
+        }
+        _ => Ok((
+            ConversationState::SelectReferralOption,
+            select_referral_option_actions(&context.phone_number),
+        )),
+    }
+}
+
+pub fn handle_wait_referral_code(
+    input: &UserInput,
+    context: &mut ConversationContext,
+) -> TransitionResult {
+    match selection_id(input).as_deref() {
+        Some(REFERRAL_RETRY) => {
+            return Ok((
+                ConversationState::WaitReferralCode,
+                referral_code_prompt_actions(&context.phone_number),
+            ));
+        }
+        Some(REFERRAL_SKIP) => {
+            clear_referral_and_restore_total(context);
+            return Ok((
+                ConversationState::SelectPaymentMethod,
+                select_payment_method_actions(&context.phone_number),
+            ));
+        }
+        _ => {}
+    }
+
+    match input {
+        UserInput::TextMessage(text) => {
+            let normalized = normalize_referral_code(text);
+            if normalized.is_empty() || !referral_registry().contains(&normalized) {
+                return Ok((
+                    ConversationState::WaitReferralCode,
+                    invalid_referral_code_actions(&context.phone_number),
+                ));
+            }
+
+            let pedido = calcular_pedido(&context.items);
+            let Some(referral) = calcular_referido(&pedido, &normalized) else {
+                clear_referral_and_restore_total(context);
+                return Ok((
+                    ConversationState::SelectPaymentMethod,
+                    select_payment_method_actions(&context.phone_number),
+                ));
+            };
+
+            apply_referral_to_context(context, &referral);
+
+            let mut actions = vec![
+                BotAction::UpsertDraftOrder {
+                    status: "draft_payment".to_string(),
+                },
+                BotAction::SendText {
+                    to: context.phone_number.clone(),
+                    body: render_template(
+                        &client_messages().checkout.referral_applied_text_template,
+                        &[
+                            ("code", &referral.code),
+                            ("discount", &format_currency(referral.total_client_discount)),
+                        ],
+                    ),
+                },
+                BotAction::SendText {
+                    to: context.phone_number.clone(),
+                    body: render_payment_ready_confirmation(context),
+                },
+            ];
+            actions.extend(select_payment_method_actions(&context.phone_number));
+
+            Ok((ConversationState::SelectPaymentMethod, actions))
+        }
+        _ => Ok((
+            ConversationState::WaitReferralCode,
+            retry_actions(
+                &context.phone_number,
+                &client_messages().checkout.referral_code_non_text,
+                referral_code_prompt_actions(&context.phone_number),
+            ),
         )),
     }
 }
@@ -177,6 +287,44 @@ pub fn review_checkout_actions(context: &ConversationContext) -> Vec<BotAction> 
     ]
 }
 
+pub fn payment_entry_state_and_actions(
+    context: &ConversationContext,
+) -> (ConversationState, Vec<BotAction>) {
+    let pedido = calcular_pedido(&context.items);
+    let mut actions = vec![BotAction::SendText {
+        to: context.phone_number.clone(),
+        body: render_payment_ready_confirmation(context),
+    }];
+
+    if context.referral_code.is_none() && has_wholesale_bucket(&pedido) {
+        actions.extend(select_referral_option_actions(&context.phone_number));
+        return (ConversationState::SelectReferralOption, actions);
+    }
+
+    actions.extend(select_payment_method_actions(&context.phone_number));
+    (ConversationState::SelectPaymentMethod, actions)
+}
+
+pub fn select_referral_option_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().checkout;
+
+    vec![BotAction::SendButtons {
+        to: phone.to_string(),
+        body: messages.referral_prompt_body.clone(),
+        buttons: vec![
+            reply_button(REFERRAL_HAS_CODE, &messages.referral_has_code_button),
+            reply_button(REFERRAL_SKIP, &messages.referral_skip_button),
+        ],
+    }]
+}
+
+pub fn referral_code_prompt_actions(phone: &str) -> Vec<BotAction> {
+    vec![BotAction::SendText {
+        to: phone.to_string(),
+        body: client_messages().checkout.referral_code_prompt.clone(),
+    }]
+}
+
 pub fn select_payment_method_actions(phone: &str) -> Vec<BotAction> {
     let messages = &client_messages().checkout;
 
@@ -289,21 +437,44 @@ pub fn render_payment_ready_confirmation(context: &ConversationContext) -> Strin
     let pedido = calcular_pedido(&context.items);
     let delivery_cost = context.delivery_cost.unwrap_or_default();
     let total_final = context.total_final.unwrap_or_default();
+    let referral_details = render_payment_ready_referral_details(context, &pedido);
 
     if context.delivery_type.as_deref() == Some("scheduled") {
-        return render_template(
-            &client_messages()
-                .advisor_customer
-                .scheduled_payment_ready_template,
+        return format!(
+            "{}{}",
+            render_template(
+                &client_messages()
+                    .advisor_customer
+                    .scheduled_payment_ready_template,
+                &[
+                    (
+                        "date",
+                        context.scheduled_date.as_deref().unwrap_or("pendiente"),
+                    ),
+                    (
+                        "time",
+                        context.scheduled_time.as_deref().unwrap_or("pendiente"),
+                    ),
+                    ("subtotal", &format_currency(pedido.total_estimado)),
+                    (
+                        "delivery_cost",
+                        &format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
+                    ),
+                    (
+                        "total_final",
+                        &format_currency(u32::try_from(total_final).unwrap_or_default()),
+                    ),
+                ],
+            ),
+            referral_details
+        );
+    }
+
+    format!(
+        "{}{}",
+        render_template(
+            &client_messages().advisor_customer.confirmed_order_template,
             &[
-                (
-                    "date",
-                    context.scheduled_date.as_deref().unwrap_or("pendiente"),
-                ),
-                (
-                    "time",
-                    context.scheduled_time.as_deref().unwrap_or("pendiente"),
-                ),
                 ("subtotal", &format_currency(pedido.total_estimado)),
                 (
                     "delivery_cost",
@@ -313,27 +484,13 @@ pub fn render_payment_ready_confirmation(context: &ConversationContext) -> Strin
                     "total_final",
                     &format_currency(u32::try_from(total_final).unwrap_or_default()),
                 ),
+                (
+                    "address",
+                    context.delivery_address.as_deref().unwrap_or("pendiente"),
+                ),
             ],
-        );
-    }
-
-    render_template(
-        &client_messages().advisor_customer.confirmed_order_template,
-        &[
-            ("subtotal", &format_currency(pedido.total_estimado)),
-            (
-                "delivery_cost",
-                &format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
-            ),
-            (
-                "total_final",
-                &format_currency(u32::try_from(total_final).unwrap_or_default()),
-            ),
-            (
-                "address",
-                context.delivery_address.as_deref().unwrap_or("pendiente"),
-            ),
-        ],
+        ),
+        referral_details
     )
 }
 
@@ -403,6 +560,7 @@ fn cancel_order_transition(
 
     context.items.clear();
     context.payment_method = None;
+    context.clear_referral_data();
     context.delivery_cost = None;
     context.total_final = None;
     context.receipt_media_id = None;
@@ -434,6 +592,72 @@ fn selection_id(input: &UserInput) -> Option<String> {
     }
 }
 
+fn render_payment_ready_referral_details(
+    context: &ConversationContext,
+    pedido: &PedidoCalculado,
+) -> String {
+    let Some(referral) = referral_from_context(context, pedido) else {
+        return String::new();
+    };
+
+    render_template(
+        &client_messages()
+            .checkout
+            .payment_ready_referral_details_template,
+        &[
+            ("code", &referral.code),
+            ("discount", &format_currency(referral.total_client_discount)),
+            (
+                "discounted_subtotal",
+                &format_currency(referral.subtotal_after_discount),
+            ),
+        ],
+    )
+}
+
+fn invalid_referral_code_actions(phone: &str) -> Vec<BotAction> {
+    let messages = &client_messages().checkout;
+    vec![BotAction::SendButtons {
+        to: phone.to_string(),
+        body: messages.referral_invalid_body.clone(),
+        buttons: vec![
+            reply_button(REFERRAL_RETRY, &messages.referral_retry_button),
+            reply_button(REFERRAL_SKIP, &messages.referral_skip_button),
+        ],
+    }]
+}
+
+fn apply_referral_to_context(context: &mut ConversationContext, referral: &ReferralApplied) {
+    context.referral_code = Some(referral.code.clone());
+    context.referral_discount_total =
+        Some(i32::try_from(referral.total_client_discount).unwrap_or(i32::MAX));
+    context.ambassador_commission_total =
+        Some(i32::try_from(referral.total_ambassador_commission).unwrap_or(i32::MAX));
+
+    let delivery_cost = context.delivery_cost.unwrap_or_default();
+    let subtotal_after_discount =
+        i32::try_from(referral.subtotal_after_discount).unwrap_or(i32::MAX);
+    context.total_final = Some(subtotal_after_discount.saturating_add(delivery_cost));
+}
+
+fn clear_referral_and_restore_total(context: &mut ConversationContext) {
+    let pedido = calcular_pedido(&context.items);
+    context.clear_referral_data();
+    let delivery_cost = context.delivery_cost.unwrap_or_default();
+    let subtotal = i32::try_from(pedido.total_estimado).unwrap_or(i32::MAX);
+    context.total_final = Some(subtotal.saturating_add(delivery_cost));
+}
+
+fn referral_from_context(
+    context: &ConversationContext,
+    pedido: &PedidoCalculado,
+) -> Option<ReferralApplied> {
+    context
+        .referral_code
+        .as_deref()
+        .and_then(|code| calcular_referido(pedido, code))
+}
+
 fn reply_button(id: &str, title: &str) -> Button {
     Button {
         kind: "reply".to_string(),
@@ -442,6 +666,15 @@ fn reply_button(id: &str, title: &str) -> Button {
             title: title.to_string(),
         },
     }
+}
+
+fn retry_actions(phone: &str, message: &str, mut actions: Vec<BotAction>) -> Vec<BotAction> {
+    let mut all = vec![BotAction::SendText {
+        to: phone.to_string(),
+        body: message.to_string(),
+    }];
+    all.append(&mut actions);
+    all
 }
 
 fn format_currency(value: u32) -> String {
@@ -462,7 +695,11 @@ fn format_currency(value: u32) -> String {
 mod tests {
     use crate::bot::state_machine::{BotAction, ConversationContext, ConversationState, UserInput};
 
-    use super::{handle_review_checkout, handle_select_payment_method, handle_wait_receipt};
+    use super::{
+        handle_review_checkout, handle_select_payment_method, handle_select_referral_option,
+        handle_wait_receipt, handle_wait_referral_code, payment_entry_state_and_actions,
+        render_payment_ready_confirmation,
+    };
 
     fn context() -> ConversationContext {
         ConversationContext {
@@ -488,6 +725,9 @@ mod tests {
             scheduled_time: None,
             customer_review_scope: Some("checkout_review".to_string()),
             payment_method: None,
+            referral_code: None,
+            referral_discount_total: None,
+            ambassador_commission_total: None,
             delivery_cost: Some(5000),
             total_final: Some(17000),
             receipt_media_id: None,
@@ -508,6 +748,18 @@ mod tests {
             conversation_abandon_started_at: None,
             conversation_abandon_reminder_sent: false,
         }
+    }
+
+    fn wholesale_context() -> ConversationContext {
+        let mut context = context();
+        context.items = vec![crate::db::models::OrderItemData {
+            flavor: "maracuya".to_string(),
+            has_liquor: false,
+            quantity: 20,
+        }];
+        context.delivery_cost = Some(5000);
+        context.total_final = Some(101000);
+        context
     }
 
     #[test]
@@ -544,6 +796,101 @@ mod tests {
             action,
             crate::bot::state_machine::BotAction::StartTimer { .. }
         )));
+    }
+
+    #[test]
+    fn payment_entry_sends_wholesale_orders_to_referral_step_first() {
+        let context = wholesale_context();
+
+        let (state, actions) = payment_entry_state_and_actions(&context);
+
+        assert_eq!(state, ConversationState::SelectReferralOption);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::SendButtons { body, .. }
+                if body == &crate::messages::client_messages().checkout.referral_prompt_body
+        )));
+    }
+
+    #[test]
+    fn referral_skip_moves_directly_to_payment_buttons() {
+        let mut context = wholesale_context();
+
+        let (state, actions) = handle_select_referral_option(
+            &UserInput::ButtonPress("referral_skip".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::SelectPaymentMethod);
+        assert_eq!(context.referral_code, None);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::SendButtons { buttons, .. }
+                if buttons.iter().any(|button| button.reply.id == "pay_now")
+        )));
+    }
+
+    #[test]
+    fn valid_referral_code_is_normalized_and_updates_totals() {
+        let mut context = wholesale_context();
+
+        let (state, actions) = handle_wait_referral_code(
+            &UserInput::TextMessage("  TRABIX-EMBAJADOR ".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::SelectPaymentMethod);
+        assert_eq!(context.referral_code.as_deref(), Some("trabix-embajador"));
+        assert_eq!(context.referral_discount_total, Some(9600));
+        assert_eq!(context.ambassador_commission_total, Some(12960));
+        assert_eq!(context.total_final, Some(91400));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::UpsertDraftOrder { status } if status == "draft_payment"
+        )));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::SendText { body, .. }
+                if body.contains("trabix-embajador") && body.contains("$9.600")
+        )));
+    }
+
+    #[test]
+    fn invalid_referral_code_keeps_customer_in_retry_state() {
+        let mut context = wholesale_context();
+
+        let (state, actions) = handle_wait_referral_code(
+            &UserInput::TextMessage("desconocido".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::WaitReferralCode);
+        assert_eq!(context.referral_code, None);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::SendButtons { body, buttons, .. }
+                if body == &crate::messages::client_messages().checkout.referral_invalid_body
+                    && buttons.iter().any(|button| button.reply.id == "referral_retry")
+                    && buttons.iter().any(|button| button.reply.id == "referral_skip")
+        )));
+    }
+
+    #[test]
+    fn payment_ready_confirmation_renders_referral_details_when_present() {
+        let mut context = wholesale_context();
+        context.referral_code = Some("trabix-embajador".to_string());
+        context.referral_discount_total = Some(9600);
+        context.ambassador_commission_total = Some(12960);
+        context.total_final = Some(91400);
+
+        let rendered = render_payment_ready_confirmation(&context);
+
+        assert!(rendered.contains("Código aplicado: trabix-embajador"));
+        assert!(rendered.contains("Descuento referido: $9.600"));
+        assert!(rendered.contains("Subtotal con descuento: $86.400"));
     }
 
     #[test]

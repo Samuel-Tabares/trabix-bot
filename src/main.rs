@@ -8,6 +8,7 @@ use granizado_bot::{
     config::{BotMode, Config},
     db::init_pool,
     messages::{set_client_messages, ClientMessages},
+    referrals::{set_referral_registry, ReferralRegistry},
     routes,
     transport::OutboundTransport,
     whatsapp::client::WhatsAppClient,
@@ -27,7 +28,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Config::from_env()?;
     let messages = ClientMessages::load_default()?;
+    let referral_registry = ReferralRegistry::load_default()?;
     set_client_messages(messages)?;
+    set_referral_registry(referral_registry)?;
     let pool = init_pool(&config.database_url).await?;
     sqlx::migrate!().run(&pool).await?;
 

@@ -4,6 +4,7 @@ pub mod db;
 pub mod engine;
 pub mod logging;
 pub mod messages;
+pub mod referrals;
 pub mod routes;
 pub mod simulator;
 pub mod transport;

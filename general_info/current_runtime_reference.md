@@ -235,7 +235,56 @@ Si el cliente elige modificar:
 
 El pago ya no se elige antes del handoff.
 
-Despues de la gestion del asesor, el bot entra a `select_payment_method` y muestra botones:
+Despues de la gestion del asesor:
+
+- si el pedido no tiene ningun bucket al por mayor, el bot entra directamente a `select_payment_method`
+- si el pedido si tiene al menos un bucket al por mayor, el bot entra primero a `select_referral_option`
+
+### Referral Antes Del Pago
+
+`select_referral_option` solo aparece para pedidos con pricing al por mayor.
+
+El cliente ve:
+
+- mensaje indicando que ese es el momento para usar codigo de descuento
+- botones `Tengo código` y `Seguir sin código`
+
+Si elige `Tengo código`:
+
+- entra a `wait_referral_code`
+- el bot espera texto libre
+- normaliza el input con `trim().to_lowercase()`
+- valida el codigo contra `config/referrals.toml`
+
+Si el codigo es invalido:
+
+- el bot sigue en `wait_referral_code`
+- muestra botones `Reintentar código` y `Seguir sin código`
+
+Si el codigo es valido:
+
+- el descuento se aplica solo sobre los buckets ya calculados como `mayor`
+- cada bucket elegible calcula su tier de forma independiente:
+  - `20-49`: cliente `10%`, embajador `15%`
+  - `50-99`: cliente `12%`, embajador `18%`
+  - `100+`: cliente `15%`, embajador `20%`
+- el domicilio no participa en el descuento ni en la comision
+- el bot recalcula:
+  - `referral_discount_total`
+  - `ambassador_commission_total`
+  - `total_final = subtotal_con_descuento + delivery_cost`
+- el cliente recibe confirmacion del codigo aplicado
+- el cliente vuelve a ver el resumen listo para pago con codigo, descuento, subtotal con descuento, domicilio y total final
+- luego entra a `select_payment_method`
+
+Si elige `Seguir sin código`:
+
+- conserva los totales originales
+- entra directo a `select_payment_method`
+
+### Seleccion De Pago
+
+`select_payment_method` muestra botones:
 
 - `Contra Entrega`
 - `Pago Ahora`
@@ -283,6 +332,9 @@ Campos importantes de `orders`:
 - `scheduled_time_text`
 - `payment_method`
 - `receipt_media_id`
+- `referral_code`
+- `referral_discount_total`
+- `ambassador_commission_total`
 - `delivery_cost`
 - `total_estimated`
 - `total_final`
@@ -300,6 +352,9 @@ Estados operativos relevantes de la orden:
 
 `state_data` tambien persiste:
 
+- `referral_code`
+- `referral_discount_total`
+- `ambassador_commission_total`
 - `delivery_cost`
 - `total_final`
 - contexto de pago y comprobante
@@ -330,6 +385,7 @@ Comportamiento actual:
 Ruta real:
 
 - `ask_delivery_cost`
+- `select_referral_option` opcional solo si hay bucket al por mayor
 - `select_payment_method`
 - `wait_receipt` opcional
 
@@ -339,6 +395,7 @@ Despues de digitar el domicilio:
 - se calcula `total_final`
 - la orden pasa a `draft_payment`
 - el cliente recibe confirmacion del pedido programado con subtotal, domicilio y total final
+- si el pedido aplica al por mayor, el cliente entra antes por la validacion opcional de referral
 - no se espera un boton extra de confirmacion del asesor
 
 ### Pedido Inmediato
@@ -347,6 +404,7 @@ Ruta real:
 
 - `ask_delivery_cost`
 - `wait_advisor_response`
+- `select_referral_option` opcional solo si hay bucket al por mayor
 - `select_payment_method`
 - `wait_receipt` opcional
 
@@ -355,7 +413,7 @@ Despues de digitar el domicilio:
 - se actualiza `delivery_cost`
 - se calcula `total_final`
 - el asesor recibe solo el boton `Confirmar`
-- si confirma, el cliente recibe subtotal, domicilio, total final y luego el selector de pago
+- si confirma, el cliente recibe subtotal, domicilio, total final y luego el paso opcional de referral antes del selector de pago cuando aplica al por mayor
 - si el asesor no responde durante `5 minutos`, el sistema entra automaticamente a la misma rama que `No puedo`
 
 ### Negociacion De Hora
@@ -377,7 +435,8 @@ Al confirmar la hora final:
 
 - el pedido pasa a `draft_payment`
 - el cliente recibe confirmacion de pedido programado con subtotal, domicilio y total final
-- el bot muestra `select_payment_method`
+- si el pedido aplica al por mayor, el bot muestra primero `select_referral_option`
+- luego el bot muestra `select_payment_method`
 
 ### Hablar Con Asesor
 
