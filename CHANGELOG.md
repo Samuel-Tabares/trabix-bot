@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - Apply referral discounts only to wholesale-priced buckets, persist `referral_code` plus discount/commission totals in `orders` and `state_data`, and update final customer totals without discounting delivery cost.
 - Show referral discount details in the customer payment-ready summary and include referral code plus ambassador accounting totals in advisor summaries once a valid code is used.
 - Round the client referral discount up to the next `$100` so values like `$4.510` become `$4.600`, then recompute the paid subtotal and ambassador commission from that rounded discount.
+- Restrict tracked referral codes to trimmed lowercase strings without spaces and with a maximum length of 15 characters.
 - Add a simulator-only Bogotá clock override in the local UI so immediate-hours, out-of-hours, and scheduling flows can be validated without restarting the app or setting `FORCE_BOGOTA_NOW`.
 
 ## [1.6.1] - 2026-04-06

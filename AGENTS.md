@@ -55,7 +55,7 @@ Current implementation status:
   - advisor detail flow now starts with delivery-cost capture, then either final payment selection or hour negotiation depending on delivery type
   - advisor hour negotiation for detail and scheduled orders
   - immediate orders now expose only advisor `Confirmar`; 5 minutes of silence auto-falls back to the same path as `No puedo`
-  - wholesale orders now expose an optional referral-code step right before payment; valid lowercase-tracked codes from `config/referrals.toml` apply discount only to wholesale-priced buckets, round the client discount up to the next `$100`, and also calculate ambassador commission/accounting totals
+  - wholesale orders now expose an optional referral-code step right before payment; valid lowercase-tracked codes from `config/referrals.toml` apply discount only to wholesale-priced buckets, round the client discount up to the next `$100`, require lowercase/no spaces/max 15 chars in the registry, and also calculate ambassador commission/accounting totals
   - when the customer completes payment, the advisor receives a final confirmed-order packet with customer data, order details, and final totals; `Pago Ahora` also forwards the receipt image
   - 30-minute hard reset for advisor-managed `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, and `wait_advisor_confirm_hour`, with order status moved to `manual_followup`
   - generic client inactivity handling on customer-input states: one reminder at 2 minutes and reset to `MainMenu` after 35 minutes, excluding advisor/receipt/relay timed waits
@@ -121,7 +121,7 @@ Operational notes:
 - The simulator always uses the tracked file `assets/trabix-menu.png` for `Ver Menú`. Replace that tracked file if the shared simulator menu image changes in the future.
 - `SIMULATOR_UPLOAD_DIR` stores local receipt/image uploads for simulator conversations and should stay outside production deploy flows.
 - Customer-facing bot copy now lives in `config/messages.toml` and is loaded at startup; restart the service after editing that file.
-- Ambassador referral codes now live in `config/referrals.toml` and are loaded at startup; keep them trimmed lowercase and restart the service after editing that file.
+- Ambassador referral codes now live in `config/referrals.toml` and are loaded at startup; keep them trimmed lowercase, without spaces, at 15 characters max, and restart the service after editing that file.
 - Referral client discounts round up to the next `$100` before the final subtotal and ambassador commission are calculated.
 - `TRANSFER_PAYMENT_TEXT` is now optional fallback-only in `.env` for backward compatibility if `config/messages.toml` leaves `checkout.transfer_payment_text` empty.
 - `MENU_IMAGE_MEDIA_ID` must contain a valid Meta `media_id`; the runtime no longer expects separate media IDs for liquor/non-liquor flavor flows.

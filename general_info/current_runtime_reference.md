@@ -256,6 +256,10 @@ Si elige `Tengo código`:
 - el bot espera texto libre
 - normaliza el input con `trim().to_lowercase()`
 - valida el codigo contra `config/referrals.toml`
+- los codigos guardados deben cumplir estas reglas:
+  - solo minusculas
+  - sin espacios
+  - maximo `15` caracteres
 
 Si el codigo es invalido:
 

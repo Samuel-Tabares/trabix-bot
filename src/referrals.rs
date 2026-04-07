@@ -3,6 +3,7 @@ use std::{collections::BTreeSet, error::Error, fmt, fs, path::Path, sync::OnceLo
 use serde::Deserialize;
 
 pub const DEFAULT_REFERRALS_PATH: &str = "config/referrals.toml";
+pub const MAX_REFERRAL_CODE_LEN: usize = 15;
 
 static REFERRAL_REGISTRY: OnceLock<ReferralRegistry> = OnceLock::new();
 
@@ -90,6 +91,11 @@ impl ReferralRegistry {
                     "code `{code}` cannot contain whitespace"
                 )));
             }
+            if normalized.len() > MAX_REFERRAL_CODE_LEN {
+                return Err(ReferralRegistryError::Validation(format!(
+                    "code `{code}` cannot be longer than {MAX_REFERRAL_CODE_LEN} characters"
+                )));
+            }
             if !codes.insert(normalized.clone()) {
                 return Err(ReferralRegistryError::Validation(format!(
                     "duplicate code `{normalized}`"
@@ -133,7 +139,9 @@ pub fn referral_registry() -> &'static ReferralRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_referral_code, ReferralRegistry, ReferralRegistryError};
+    use super::{
+        normalize_referral_code, ReferralRegistry, ReferralRegistryError, MAX_REFERRAL_CODE_LEN,
+    };
 
     #[test]
     fn normalizes_input_to_trimmed_lowercase() {
@@ -165,6 +173,18 @@ codes = [" Codigo-1 "]
 
         assert!(
             matches!(error, ReferralRegistryError::Validation(message) if message.contains("trimmed lowercase"))
+        );
+    }
+
+    #[test]
+    fn rejects_codes_longer_than_max_length() {
+        let too_long = "a".repeat(MAX_REFERRAL_CODE_LEN + 1);
+        let raw = format!("codes = [\"{too_long}\"]\n");
+
+        let error = ReferralRegistry::from_toml_str(&raw).expect_err("overlong code should fail");
+
+        assert!(
+            matches!(error, ReferralRegistryError::Validation(message) if message.contains("longer than"))
         );
     }
 }

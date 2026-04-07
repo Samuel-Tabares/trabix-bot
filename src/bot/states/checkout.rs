@@ -821,13 +821,13 @@ mod tests {
         let mut context = wholesale_context();
 
         let (state, actions) = handle_wait_referral_code(
-            &UserInput::TextMessage("  TRABIX-EMBAJADOR ".to_string()),
+            &UserInput::TextMessage("  TRABIX-AMB15 ".to_string()),
             &mut context,
         )
         .expect("transition");
 
         assert_eq!(state, ConversationState::SelectPaymentMethod);
-        assert_eq!(context.referral_code.as_deref(), Some("trabix-embajador"));
+        assert_eq!(context.referral_code.as_deref(), Some("trabix-amb15"));
         assert_eq!(context.referral_discount_total, Some(9600));
         assert_eq!(context.ambassador_commission_total, Some(12960));
         assert_eq!(context.total_final, Some(91400));
@@ -838,7 +838,7 @@ mod tests {
         assert!(actions.iter().any(|action| matches!(
             action,
             BotAction::SendText { body, .. }
-                if body.contains("trabix-embajador") && body.contains("$9.600")
+                if body.contains("trabix-amb15") && body.contains("$9.600")
         )));
     }
 
@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn payment_ready_confirmation_renders_referral_discount_in_totals_when_present() {
         let mut context = wholesale_context();
-        context.referral_code = Some("trabix-embajador".to_string());
+        context.referral_code = Some("trabix-amb15".to_string());
         context.referral_discount_total = Some(9600);
         context.ambassador_commission_total = Some(12960);
         context.total_final = Some(91400);
@@ -887,7 +887,7 @@ mod tests {
         context.delivery_type = Some("scheduled".to_string());
         context.scheduled_date = Some("2030-12-24".to_string());
         context.scheduled_time = Some("4:00 pm".to_string());
-        context.referral_code = Some("trabix-embajador".to_string());
+        context.referral_code = Some("trabix-amb15".to_string());
         context.referral_discount_total = Some(9600);
         context.ambassador_commission_total = Some(12960);
         context.total_final = Some(91400);
