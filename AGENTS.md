@@ -54,6 +54,7 @@ Current implementation status:
   - advisor detail flow now starts with delivery-cost capture, then either final payment selection or hour negotiation depending on delivery type
   - advisor hour negotiation for detail and scheduled orders
   - immediate orders now expose only advisor `Confirmar`; 5 minutes of silence auto-falls back to the same path as `No puedo`
+  - when the customer completes payment, the advisor receives a final confirmed-order packet with customer data, order details, and final totals; `Pago Ahora` also forwards the receipt image
   - 30-minute hard reset for advisor-managed `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, and `wait_advisor_confirm_hour`, with order status moved to `manual_followup`
   - generic client inactivity handling on customer-input states: one reminder at 2 minutes and reset to `MainMenu` after 35 minutes, excluding advisor/receipt/relay timed waits
   - wholesale pricing still exists, but checkout no longer branches into a wholesale-specific relay path

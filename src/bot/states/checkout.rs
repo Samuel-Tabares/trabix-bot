@@ -61,13 +61,12 @@ pub fn handle_select_payment_method(
             context.receipt_timer_started_at = None;
             context.receipt_timer_expired = false;
 
-            Ok(complete_order_transition(
-                context,
-                "confirmed",
-                vec![BotAction::UpsertDraftOrder {
-                    status: "confirmed".to_string(),
-                }],
-            ))
+            let mut actions = vec![BotAction::UpsertDraftOrder {
+                status: "confirmed".to_string(),
+            }];
+            actions.extend(advisor::final_order_packet_actions(context, None));
+
+            Ok(complete_order_transition(context, "confirmed", actions))
         }
         Some(PAY_NOW) => {
             context.payment_method = Some("transfer".to_string());
@@ -126,15 +125,8 @@ pub fn handle_wait_receipt(
                 BotAction::UpsertDraftOrder {
                     status: "confirmed".to_string(),
                 },
-                BotAction::SendImage {
-                    to: context.advisor_phone.clone(),
-                    media_id: media_id.clone(),
-                    caption: Some(format!(
-                        "Comprobante {}",
-                        advisor::phone_marker(&context.phone_number)
-                    )),
-                },
             ];
+            actions.extend(advisor::final_order_packet_actions(context, Some(media_id)));
             actions.extend(final_confirmation_actions(context));
 
             Ok((ConversationState::MainMenu, actions))
@@ -468,7 +460,7 @@ fn format_currency(value: u32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::bot::state_machine::{ConversationContext, ConversationState, UserInput};
+    use crate::bot::state_machine::{BotAction, ConversationContext, ConversationState, UserInput};
 
     use super::{handle_review_checkout, handle_select_payment_method, handle_wait_receipt};
 
@@ -551,6 +543,79 @@ mod tests {
         assert!(actions.iter().any(|action| matches!(
             action,
             crate::bot::state_machine::BotAction::StartTimer { .. }
+        )));
+    }
+
+    #[test]
+    fn cash_on_delivery_sends_final_advisor_packet() {
+        let mut context = context();
+        context.delivery_type = Some("scheduled".to_string());
+        context.scheduled_date = Some("2030-12-24".to_string());
+        context.scheduled_time = Some("4:00 pm".to_string());
+
+        let (state, actions) = handle_select_payment_method(
+            &UserInput::ButtonPress("cash_on_delivery".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::MainMenu);
+        assert_eq!(context.payment_method.as_deref(), Some("cash_on_delivery"));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::SendText { to, body }
+                if to == "573009999999"
+                    && body.contains("Cliente: Ana")
+                    && body.contains("Teléfono: 3001234567")
+                    && body.contains("Dirección: Cra 15 #20-30 Armenia")
+                    && body.contains("Pago: Contra entrega")
+                    && body.contains("Domicilio: $5.000")
+                    && body.contains("Total final: $17.000")
+        )));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::SendText { to, body }
+                if to == "573009999999"
+                    && body.contains("Pedido [...4567] confirmado. Método de pago final: contra entrega.")
+        )));
+    }
+
+    #[test]
+    fn wait_receipt_image_sends_final_advisor_packet_and_receipt() {
+        let mut context = context();
+        context.delivery_type = Some("scheduled".to_string());
+        context.scheduled_date = Some("2030-12-24".to_string());
+        context.scheduled_time = Some("4:00 pm".to_string());
+        context.payment_method = Some("transfer".to_string());
+
+        let (state, actions) = handle_wait_receipt(
+            &UserInput::ImageMessage("media-1".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert_eq!(state, ConversationState::MainMenu);
+        assert_eq!(context.receipt_media_id.as_deref(), Some("media-1"));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::SendText { to, body }
+                if to == "573009999999"
+                    && body.contains("Cliente: Ana")
+                    && body.contains("Entrega: Programada")
+                    && body.contains("Pago: Pago por transferencia")
+                    && body.contains("Domicilio: $5.000")
+                    && body.contains("Total final: $17.000")
+        )));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::SendText { to, body }
+                if to == "573009999999"
+                    && body.contains("Pago registrado por transferencia")
+        )));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::SendImage { to, media_id, .. }
+                if to == "573009999999" && media_id == "media-1"
         )));
     }
 

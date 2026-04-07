@@ -107,8 +107,8 @@ graph TD
         EditAddress --> ReviewCheckout
 
         SelectPayment["💳 select_payment_method<br/>Botones Contra Entrega / Pago Ahora"] -->|Pago Ahora| WaitReceipt["📸 wait_receipt<br/>- TRANSFER_PAYMENT_TEXT<br/>- pide comprobante<br/>- timer 10m"]
-        SelectPayment -->|Contra Entrega| FinalOrder["✅ Confirmación final del pedido<br/>ResetConversation -> MainMenu"]
-        WaitReceipt -->|imagen recibida| FinalOrder
+        SelectPayment -->|Contra Entrega| FinalOrder["✅ Confirmación final del pedido<br/>Asesor recibe resumen final + estado<br/>ResetConversation -> MainMenu"]
+        WaitReceipt -->|imagen recibida| FinalOrder["✅ Confirmación final del pedido<br/>Asesor recibe resumen final + estado + comprobante<br/>ResetConversation -> MainMenu"]
         WaitReceipt -->|timer vencido| ReceiptTimeout["Opciones Cambiar pago / Cancelar"]
         ReceiptTimeout --> SelectPayment
     end

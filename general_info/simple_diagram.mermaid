@@ -72,7 +72,7 @@ graph TD
     ASESOR_INM --> WAIT_ASE["⏳ Cliente queda esperando<br/>⏱️ Auto-No puedo: 5 min"]
 
     WAIT_ASE -->|✅ Confirmar pedido inmediato| CONF_INM["✅ Pedido inmediato confirmado<br/>─────────────────<br/>Subtotal + domicilio + total final<br/>Tiempo estimado de entrega"]
-    WAIT_ASE -->|⏱️ 5 min sin respuesta| NEGOC
+    WAIT_ASE -->|⏱️ 5 min sin respuesta| NEGOC["🕐 negotiate_hour<br/>─────────────────<br/>El pedido inmediato pasa a programado<br/>⏱️ Hard reset: 30 min si queda atascado"]
 
     NEGOC --> HORA_ASE["👨‍💼 Asesor propone hora"]
     HORA_ASE --> OFERTA["🎯 Cliente recibe hora propuesta<br/>Aceptar / Rechazar"]

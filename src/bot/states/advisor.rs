@@ -1137,6 +1137,36 @@ pub(crate) fn start_waiting_for_contact_advisor(
     )
 }
 
+pub(crate) fn final_order_packet_actions(
+    context: &ConversationContext,
+    receipt_media_id: Option<&str>,
+) -> Vec<BotAction> {
+    let pedido = calcular_pedido(&context.items);
+    let mut actions = vec![
+        BotAction::SendText {
+            to: context.advisor_phone.clone(),
+            body: render_order_summary(context, &pedido),
+        },
+        BotAction::SendText {
+            to: context.advisor_phone.clone(),
+            body: render_final_order_status(context, receipt_media_id.is_some()),
+        },
+    ];
+
+    if let Some(media_id) = receipt_media_id {
+        actions.push(BotAction::SendImage {
+            to: context.advisor_phone.clone(),
+            media_id: media_id.to_string(),
+            caption: Some(format!(
+                "Comprobante {}",
+                phone_marker(&context.phone_number)
+            )),
+        });
+    }
+
+    actions
+}
+
 fn ask_delivery_cost_entry_actions(
     context: &ConversationContext,
     pedido: &PedidoCalculado,
@@ -1367,8 +1397,21 @@ fn render_order_summary(context: &ConversationContext, pedido: &PedidoCalculado)
         None => "Pendiente con cliente".to_string(),
     };
 
+    let totals = match (context.delivery_cost, context.total_final) {
+        (Some(delivery_cost), Some(total_final)) => format!(
+            "\n\nSubtotal: {}\nDomicilio: {}\nTotal final: {}",
+            format_currency(pedido.total_estimado),
+            format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
+            format_currency(u32::try_from(total_final).unwrap_or_default()),
+        ),
+        _ => format!(
+            "\n\nTotal estimado: {}",
+            format_currency(pedido.total_estimado)
+        ),
+    };
+
     format!(
-        "Pedido {}\n\nCliente: {}\nTeléfono: {}\nDirección: {}\nEntrega: {}\nPago: {}\n\nItems:\n{}\n\nTotal estimado: {}",
+        "Pedido {}\n\nCliente: {}\nTeléfono: {}\nDirección: {}\nEntrega: {}\nPago: {}\n\nItems:\n{}{}",
         phone_marker(&context.phone_number),
         context.customer_name.as_deref().unwrap_or("pendiente"),
         context.customer_phone.as_deref().unwrap_or("pendiente"),
@@ -1376,7 +1419,29 @@ fn render_order_summary(context: &ConversationContext, pedido: &PedidoCalculado)
         entrega,
         pago,
         render_items(&pedido.items_detalle),
-        format_currency(pedido.total_estimado),
+        totals,
+    )
+}
+
+fn render_final_order_status(context: &ConversationContext, receipt_attached: bool) -> String {
+    let pago = match context.payment_method.as_deref() {
+        Some("cash_on_delivery") => "contra entrega",
+        Some("transfer") => "pago ahora",
+        Some(other) => other,
+        None => "pendiente",
+    };
+
+    if receipt_attached {
+        return format!(
+            "Pedido {} confirmado. Pago registrado por transferencia; revisa el comprobante adjunto.",
+            phone_marker(&context.phone_number)
+        );
+    }
+
+    format!(
+        "Pedido {} confirmado. Método de pago final: {}.",
+        phone_marker(&context.phone_number),
+        pago
     )
 }
 

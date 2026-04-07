@@ -244,6 +244,7 @@ Despues de la gestion del asesor, el bot entra a `select_payment_method` y muest
 
 - actualiza `payment_method = cash_on_delivery`
 - confirma la orden
+- envia al asesor el paquete final con resumen completo del pedido, datos del cliente y totales finales
 - envia confirmacion final
 - resetea la conversacion a `main_menu`
 
@@ -264,6 +265,7 @@ Comportamiento:
   - ofrece `Cambiar pago` o `Cancelar`
 - si llega una imagen valida:
   - persiste `receipt_media_id`
+  - envia al asesor el paquete final con resumen completo del pedido, datos del cliente y totales finales
   - reenvia el comprobante al asesor
   - confirma la orden
   - resetea la conversacion a `main_menu`
@@ -321,6 +323,7 @@ Comportamiento actual:
 - se crea o actualiza el borrador persistido con `payment_method = pending`
 - se envia resumen al asesor
 - el asesor primero digita el costo del domicilio en `ask_delivery_cost`
+- al finalizar el pago, el asesor recibe un paquete final con el pedido ya confirmado y los totales definitivos
 
 ### Pedido Programado
 
