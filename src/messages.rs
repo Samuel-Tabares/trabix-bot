@@ -198,7 +198,6 @@ pub struct CheckoutMessages {
     pub referral_invalid_body: String,
     pub referral_retry_button: String,
     pub referral_applied_text_template: String,
-    pub payment_ready_referral_details_template: String,
     pub payment_buttons_body: String,
     pub cash_on_delivery_title: String,
     pub pay_now_title: String,
@@ -361,11 +360,6 @@ impl ClientMessages {
             "checkout.referral_applied_text_template",
         )?;
         validate_template(
-            &self.checkout.payment_ready_referral_details_template,
-            &["code", "discount", "discounted_subtotal"],
-            "checkout.payment_ready_referral_details_template",
-        )?;
-        validate_template(
             &self.advisor_customer.confirm_contact_template,
             &["customer_name", "customer_phone"],
             "advisor_customer.confirm_contact_template",
@@ -382,12 +376,25 @@ impl ClientMessages {
         )?;
         validate_template(
             &self.advisor_customer.confirmed_order_template,
-            &["subtotal", "delivery_cost", "total_final", "address"],
+            &[
+                "subtotal",
+                "discount_line",
+                "delivery_cost",
+                "total_final",
+                "address",
+            ],
             "advisor_customer.confirmed_order_template",
         )?;
         validate_template(
             &self.advisor_customer.scheduled_payment_ready_template,
-            &["date", "time", "subtotal", "delivery_cost", "total_final"],
+            &[
+                "date",
+                "time",
+                "subtotal",
+                "discount_line",
+                "delivery_cost",
+                "total_final",
+            ],
             "advisor_customer.scheduled_payment_ready_template",
         )?;
         validate_template(

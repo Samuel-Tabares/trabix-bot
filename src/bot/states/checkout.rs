@@ -437,45 +437,24 @@ pub fn render_payment_ready_confirmation(context: &ConversationContext) -> Strin
     let pedido = calcular_pedido(&context.items);
     let delivery_cost = context.delivery_cost.unwrap_or_default();
     let total_final = context.total_final.unwrap_or_default();
-    let referral_details = render_payment_ready_referral_details(context, &pedido);
+    let discount_line = render_payment_ready_discount_line(context, &pedido);
 
     if context.delivery_type.as_deref() == Some("scheduled") {
-        return format!(
-            "{}{}",
-            render_template(
-                &client_messages()
-                    .advisor_customer
-                    .scheduled_payment_ready_template,
-                &[
-                    (
-                        "date",
-                        context.scheduled_date.as_deref().unwrap_or("pendiente"),
-                    ),
-                    (
-                        "time",
-                        context.scheduled_time.as_deref().unwrap_or("pendiente"),
-                    ),
-                    ("subtotal", &format_currency(pedido.total_estimado)),
-                    (
-                        "delivery_cost",
-                        &format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
-                    ),
-                    (
-                        "total_final",
-                        &format_currency(u32::try_from(total_final).unwrap_or_default()),
-                    ),
-                ],
-            ),
-            referral_details
-        );
-    }
-
-    format!(
-        "{}{}",
-        render_template(
-            &client_messages().advisor_customer.confirmed_order_template,
+        return render_template(
+            &client_messages()
+                .advisor_customer
+                .scheduled_payment_ready_template,
             &[
+                (
+                    "date",
+                    context.scheduled_date.as_deref().unwrap_or("pendiente"),
+                ),
+                (
+                    "time",
+                    context.scheduled_time.as_deref().unwrap_or("pendiente"),
+                ),
                 ("subtotal", &format_currency(pedido.total_estimado)),
+                ("discount_line", &discount_line),
                 (
                     "delivery_cost",
                     &format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
@@ -484,13 +463,28 @@ pub fn render_payment_ready_confirmation(context: &ConversationContext) -> Strin
                     "total_final",
                     &format_currency(u32::try_from(total_final).unwrap_or_default()),
                 ),
-                (
-                    "address",
-                    context.delivery_address.as_deref().unwrap_or("pendiente"),
-                ),
             ],
-        ),
-        referral_details
+        );
+    }
+
+    render_template(
+        &client_messages().advisor_customer.confirmed_order_template,
+        &[
+            ("subtotal", &format_currency(pedido.total_estimado)),
+            ("discount_line", &discount_line),
+            (
+                "delivery_cost",
+                &format_currency(u32::try_from(delivery_cost).unwrap_or_default()),
+            ),
+            (
+                "total_final",
+                &format_currency(u32::try_from(total_final).unwrap_or_default()),
+            ),
+            (
+                "address",
+                context.delivery_address.as_deref().unwrap_or("pendiente"),
+            ),
+        ],
     )
 }
 
@@ -592,7 +586,7 @@ fn selection_id(input: &UserInput) -> Option<String> {
     }
 }
 
-fn render_payment_ready_referral_details(
+fn render_payment_ready_discount_line(
     context: &ConversationContext,
     pedido: &PedidoCalculado,
 ) -> String {
@@ -600,18 +594,9 @@ fn render_payment_ready_referral_details(
         return String::new();
     };
 
-    render_template(
-        &client_messages()
-            .checkout
-            .payment_ready_referral_details_template,
-        &[
-            ("code", &referral.code),
-            ("discount", &format_currency(referral.total_client_discount)),
-            (
-                "discounted_subtotal",
-                &format_currency(referral.subtotal_after_discount),
-            ),
-        ],
+    format!(
+        "Descuento referido: {}\n",
+        format_currency(referral.total_client_discount)
     )
 }
 
@@ -879,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn payment_ready_confirmation_renders_referral_details_when_present() {
+    fn payment_ready_confirmation_renders_referral_discount_in_totals_when_present() {
         let mut context = wholesale_context();
         context.referral_code = Some("trabix-embajador".to_string());
         context.referral_discount_total = Some(9600);
@@ -888,9 +873,32 @@ mod tests {
 
         let rendered = render_payment_ready_confirmation(&context);
 
-        assert!(rendered.contains("Código aplicado: trabix-embajador"));
         assert!(rendered.contains("Descuento referido: $9.600"));
-        assert!(rendered.contains("Subtotal con descuento: $86.400"));
+        assert!(rendered.contains(
+            "Subtotal: $96.000\nDescuento referido: $9.600\nDomicilio: $5.000\nTotal final: $91.400"
+        ));
+        assert!(!rendered.contains("Código aplicado:"));
+        assert!(!rendered.contains("Subtotal con descuento:"));
+    }
+
+    #[test]
+    fn scheduled_payment_ready_confirmation_renders_referral_discount_in_totals() {
+        let mut context = wholesale_context();
+        context.delivery_type = Some("scheduled".to_string());
+        context.scheduled_date = Some("2030-12-24".to_string());
+        context.scheduled_time = Some("4:00 pm".to_string());
+        context.referral_code = Some("trabix-embajador".to_string());
+        context.referral_discount_total = Some(9600);
+        context.ambassador_commission_total = Some(12960);
+        context.total_final = Some(91400);
+
+        let rendered = render_payment_ready_confirmation(&context);
+
+        assert!(rendered.contains("Fecha de referencia: 2030-12-24"));
+        assert!(rendered.contains("Hora acordada: 4:00 pm"));
+        assert!(rendered.contains(
+            "Subtotal: $96.000\nDescuento referido: $9.600\nDomicilio: $5.000\nTotal final: $91.400"
+        ));
     }
 
     #[test]
