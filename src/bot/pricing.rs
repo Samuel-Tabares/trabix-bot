@@ -206,7 +206,7 @@ fn calcular_bucket_referido(
 ) -> ReferralBucketCalculated {
     let (client_discount_percent, ambassador_commission_percent) = porcentaje_referido(quantity);
     let client_discount_amount =
-        aplicar_porcentaje(subtotal_before_discount, client_discount_percent);
+        aplicar_descuento_cliente(subtotal_before_discount, client_discount_percent);
     let subtotal_after_discount = subtotal_before_discount - client_discount_amount;
     let ambassador_commission_amount =
         aplicar_porcentaje(subtotal_after_discount, ambassador_commission_percent);
@@ -234,6 +234,18 @@ fn porcentaje_referido(quantity: u32) -> (u8, u8) {
 
 fn aplicar_porcentaje(value: u32, percent: u8) -> u32 {
     (((u64::from(value) * u64::from(percent)) + 50) / 100) as u32
+}
+
+fn aplicar_descuento_cliente(value: u32, percent: u8) -> u32 {
+    redondear_hacia_arriba_al_siguiente_centenar(aplicar_porcentaje(value, percent))
+}
+
+fn redondear_hacia_arriba_al_siguiente_centenar(value: u32) -> u32 {
+    if value == 0 {
+        return 0;
+    }
+
+    value.div_ceil(100) * 100
 }
 
 fn calcular_item_mayor(item: &OrderItemData, unit_price: u32) -> ItemCalculated {
@@ -373,6 +385,20 @@ mod tests {
     }
 
     #[test]
+    fn rounds_client_discount_up_to_next_hundred() {
+        let pedido = calcular_pedido(&[OrderItemData {
+            flavor: "Maracumango".to_string(),
+            has_liquor: false,
+            quantity: 22,
+        }]);
+
+        let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
+        assert_eq!(referido.total_client_discount, 10_600);
+        assert_eq!(referido.subtotal_after_discount, 95_000);
+        assert_eq!(referido.total_ambassador_commission, 14_250);
+    }
+
+    #[test]
     fn applies_third_referral_tier_for_100_units() {
         let pedido = calcular_pedido(&[OrderItemData {
             flavor: "Blueberry".to_string(),
@@ -408,8 +434,8 @@ mod tests {
 
         let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
         assert_eq!(referido.buckets.len(), 2);
-        assert_eq!(referido.total_client_discount, 38_760);
-        assert_eq!(referido.subtotal_after_discount, 301_840);
-        assert_eq!(referido.total_ambassador_commission, 51_480);
+        assert_eq!(referido.total_client_discount, 38_800);
+        assert_eq!(referido.subtotal_after_discount, 301_800);
+        assert_eq!(referido.total_ambassador_commission, 51_474);
     }
 }

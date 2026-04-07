@@ -269,13 +269,16 @@ Si el codigo es valido:
   - `20-49`: cliente `10%`, embajador `15%`
   - `50-99`: cliente `12%`, embajador `18%`
   - `100+`: cliente `15%`, embajador `20%`
+- el descuento del cliente siempre se redondea hacia arriba al siguiente centenar:
+  - ejemplo: `$4.510` pasa a `$4.600`
+  - si ya cae exacto en centenar, se mantiene igual
 - el domicilio no participa en el descuento ni en la comision
 - el bot recalcula:
   - `referral_discount_total`
   - `ambassador_commission_total`
   - `total_final = subtotal_con_descuento + delivery_cost`
 - el cliente recibe confirmacion del codigo aplicado
-- el cliente vuelve a ver el resumen listo para pago con codigo, descuento, subtotal con descuento, domicilio y total final
+- el cliente vuelve a ver el resumen listo para pago con subtotal, descuento referido, domicilio y total final
 - luego entra a `select_payment_method`
 
 Si elige `Seguir sin código`:
