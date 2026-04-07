@@ -245,9 +245,7 @@ Hora acordada: {time}
 Subtotal: {subtotal}
 {discount_line}\
 Domicilio: {delivery_cost}
-Total final: {total_final}
-
-Ahora elige cómo deseas pagar tu pedido."""
+Total final: {total_final}"""
 scheduled_confirmation_template = """✅ Tu pedido fue registrado.
 
 Fecha de referencia: {date}
