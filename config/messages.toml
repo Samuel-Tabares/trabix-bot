@@ -1,11 +1,11 @@
 [menu]
 main_welcome = """¡Hola! 👋 Bienvenid@ a Trabix Granizados.
 
-Entregas inmediatas para el departamento del Quindío
+En entregas por todo el Quindío, los granizados vienen ya listos para consumir
 
-Horario de entrega inmediata: {business_hours}
+Horario de entrega inmediata (únicamente en el Quindío): {business_hours}
 
-Yo soy un bot, puedo ayudarte a gestionar tu pedido o puedes contactar un asesor para ayudarte con algo que yo no pueda...
+*Yo soy un bot*, puedo ayudarte a gestionar tu pedido o puedes *contactar un asesor* para ayudarte con algo que yo no pueda...
 
 Si nos escribes fuera de ese horario, igual te ayudo a programar tu pedido. Elige una opción para continuar ✨"""
 main_list_body = "¿Qué te gustaría hacer ahora? 👇"
@@ -74,7 +74,7 @@ confirm_retry = "Confirma la programación o elige cambiarla 👇"
 [data_collect]
 ask_name = "Para empezar, ¿me compartes tu nombre completo? 😊"
 ask_phone = "¿Cuál es tu teléfono de contacto? 📱"
-ask_address = "¿Cuál es la dirección de entrega? 📍"
+ask_address = "¿Cuál es la dirección de entrega? 📍 recuerda que en el Quindío los granizados vienen ya listos para consumir, en  otros lugares solo debes congelarlos a -15°"
 retry_name_non_text = "Escríbeme tu nombre completo para continuar 😊"
 retry_phone_non_text = "Escríbeme un teléfono válido para continuar 📱"
 retry_address_non_text = "Escríbeme la dirección de entrega para continuar 📍"
