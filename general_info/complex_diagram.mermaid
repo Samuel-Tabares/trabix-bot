@@ -11,7 +11,7 @@
 %% simulator HTTP handlers centralized under src/simulator/web.rs and frontend assets extracted under assets/simulator/,
 %% plus the existing main-menu simplification, America/Bogota SQL sessions,
 %% generic customer inactivity reminder/reset only while explicitly armed by inbound customer activity,
-%% and 30-minute stuck advisor hard resets.
+%% and 23-hour scheduled stale resets plus 30-minute stuck advisor hard resets.
 %% Runtime observability logs masked phone markers, short content previews, state transitions,
 %% outbound action summaries, and timer restore/expiry paths while keeping status-only webhooks out of INFO.
 %% Narrative runtime and validation reference is consolidated in general_info/current_runtime_reference.md.
@@ -106,7 +106,7 @@ graph TD
         EditPhone --> ReviewCheckout
         EditAddress --> ReviewCheckout
 
-        SelectReferral["🎟️ select_referral_option<br/>Mayor: Tengo código / Seguir sin código"] -->|Tengo código| WaitReferralCode["⌨️ wait_referral_code<br/>texto libre -> trim lowercase<br/>valida config/referrals.toml<br/>inválido -> Reintentar / Seguir sin código"]
+        SelectReferral["🎟️ select_referral_option<br/>Mayor: Tengo código / Seguir sin código"] -->|Tengo código| WaitReferralCode["⌨️ wait_referral_code<br/>texto libre -> trim lowercase<br/>valida config/referrals.toml<br/>codes + boost_codes subset<br/>inválido -> Reintentar / Seguir sin código"]
         SelectReferral -->|Seguir sin código| SelectPayment["💳 select_payment_method<br/>Botones Contra Entrega / Pago Ahora"]
         WaitReferralCode -->|válido| SelectPayment
         WaitReferralCode -->|inválido| SelectReferral
@@ -137,7 +137,7 @@ graph TD
     Timers --> Conversations
 
     subgraph OrderAdvisorFlow["FLUJO REAL ASESOR PARA PEDIDOS"]
-        AdvisorHandoff --> AskDeliveryCost["ask_delivery_cost\n1. render_order_summary() al asesor\n2. asesor digita domicilio\n3. timer 30m"]
+        AdvisorHandoff --> AskDeliveryCost["ask_delivery_cost\n1. render_order_summary() al asesor\n2. asesor digita domicilio\n3. timer 23h programado / 30m inmediato"]
         AskDeliveryCost --> DeliveryTypeAfterCost{"👨‍💼 ¿delivery_type actual?"}
 
         DeliveryTypeAfterCost -->|scheduled| ScheduledConfirmed["UpdateCurrentOrderDeliveryCost + status=draft_payment\nCliente: subtotal + domicilio + total final + fecha/hora"]
@@ -218,7 +218,7 @@ graph TD
         Timers --> Sweep["⏲️ sweep_expired_timers()<br/>cada 60s"]
 
         Timers --> ReceiptExpire["expire_receipt_timer\nCliente: no llego comprobante\nBotones Cambiar pago / Cancelar"]
-        Timers --> AdvisorExpire["expire_advisor_timer\nPedido inmediato: auto-No puedo a los 5m\nContacto asesor: Dejar mensaje / Menu\nAdvisor-detail waits: hard reset 30m"]
+        Timers --> AdvisorExpire["expire_advisor_timer\nPedido inmediato: auto-No puedo a los 5m\nPedido programado: reset a manual_followup tras 23h\nContacto asesor: Dejar mensaje / Menu\nAdvisor-detail waits: hard reset 30m"]
         Timers --> RelayExpire["expire_relay_timer\nCliente: conversacion cerrada por inactividad"]
         Timers --> IdleReminder["conversation_abandon 2m\nReenvia el prompt actual una sola vez"]
         Timers --> IdleReset["conversation_abandon 35m\nNotifica reinicio y resetea a MainMenu"]

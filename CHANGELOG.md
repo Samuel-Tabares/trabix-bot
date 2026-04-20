@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Add referral boost codes as a subset of the normal registry, applying a +5 percentage-point ambassador commission bump for boosted wholesale referrals and showing the active boost in advisor-facing order packets.
+- Route advisor free-text replies by quoted bot `message_id` when available so simultaneous pending cases can be disambiguated without guessing.
+- Add a 23-hour stale cutoff for scheduled-order `ask_delivery_cost`; when it expires, the customer conversation resets to a safe state and the order moves to `manual_followup`.
+
 ## [1.7.0] - 2026-04-07
 
 - Add a wholesale-only ambassador referral step before payment with `Tengo código` / `Seguir sin código`, lowercase code validation from `config/referrals.toml`, and retry/skip handling for invalid codes.

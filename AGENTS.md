@@ -56,10 +56,13 @@ Current implementation status:
   - advisor hour negotiation for detail and scheduled orders
   - immediate orders now expose only advisor `Confirmar`; 5 minutes of silence auto-falls back to the same path as `No puedo`
   - wholesale orders now expose an optional referral-code step right before payment; valid lowercase-tracked codes from `config/referrals.toml` apply discount only to wholesale-priced buckets, round the client discount up to the next `$100`, require lowercase/no spaces/max 15 chars in the registry, and also calculate ambassador commission/accounting totals
+  - advisor free-text replies can now be routed by quoted bot `message_id` so simultaneous pending cases stay disambiguated even when a newer prompt exists
+  - scheduled-order `ask_delivery_cost` now has a 23-hour stale cutoff; if the advisor never answers, the case is marked `manual_followup` and the customer conversation is reset to a safe entry point
   - when the customer completes payment, the advisor receives a final confirmed-order packet with customer data, order details, and final totals; `Pago Ahora` also forwards the receipt image
-  - 30-minute hard reset for advisor-managed `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, and `wait_advisor_confirm_hour`, with order status moved to `manual_followup`
+  - 30-minute hard reset for advisor-managed `negotiate_hour`, `wait_advisor_hour_decision`, and `wait_advisor_confirm_hour`, while immediate `ask_delivery_cost` keeps the short operational reset and scheduled `ask_delivery_cost` uses the 23-hour stale cutoff
   - generic client inactivity handling on customer-input states: one reminder at 2 minutes and reset to `MainMenu` after 35 minutes, excluding advisor/receipt/relay timed waits
   - wholesale pricing still exists, but checkout no longer branches into a wholesale-specific relay path
+  - wholesale referral boosts now live in a second config list; a boost code only applies if it is also in the normal referral registry, adds `+5%` ambassador commission, and is called out explicitly in the advisor-facing order packet
   - `Hablar con Asesor` now uses advisor `Atender` plus leave-message fallback on timeout, and relay `Finalizar` is delivered only on relay start
   - timer restoration after restart for advisor waits, stuck advisor-detail waits, `relay_mode`, and generic customer inactivity
   - periodic database-backed timer sweep so missed in-memory tasks still expire receipt, advisor, relay, and customer inactivity waits
@@ -184,6 +187,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.6.0`: review-first checkout, advisor delivery-cost-first flow, final payment at the end, 5-minute auto-fallback for immediate orders, and one-time relay finalization buttons
   - `v1.6.1`: final advisor confirmation packet on both payment endings, including full order/customer summary and receipt forwarding for `Pago Ahora`
   - `v1.7.0`: wholesale ambassador referral codes before payment, rounded-up referral discounts, simulator Bogotá clock override, and capped 15-character referral registry entries
+  - `v1.7.1`: advisor reply-thread routing by quoted `message_id` plus 23-hour stale handling for scheduled `ask_delivery_cost`
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases

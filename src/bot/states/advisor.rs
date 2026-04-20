@@ -1557,7 +1557,7 @@ fn referral_from_context(
     context
         .referral_code
         .as_deref()
-        .and_then(|code| calcular_referido(pedido, code))
+        .and_then(|code| calcular_referido(pedido, code, context.referral_has_boost))
 }
 
 fn render_referral_details(referral: Option<&crate::bot::pricing::ReferralApplied>) -> String {
@@ -1588,10 +1588,15 @@ fn render_referral_details(referral: Option<&crate::bot::pricing::ReferralApplie
         .join("\n");
 
     format!(
-        "\n\nReferido:\nCódigo: {}\nDescuento cliente: {}\nComisión embajador total: {}\n{}",
+        "\n\nReferido:\nCódigo: {}\nDescuento cliente: {}\nComisión embajador total: {}\n{}{}",
         referral.code,
         format_currency(referral.total_client_discount),
         format_currency(referral.total_ambassador_commission),
+        if referral.has_boost {
+            "Boost activo: +5% comisión\n"
+        } else {
+            ""
+        },
         bucket_lines,
     )
 }
@@ -1783,6 +1788,7 @@ mod tests {
             referral_code: None,
             referral_discount_total: None,
             ambassador_commission_total: None,
+            referral_has_boost: false,
             delivery_cost: None,
             total_final: None,
             receipt_media_id: None,
@@ -1795,6 +1801,7 @@ mod tests {
             advisor_proposed_hour: None,
             client_counter_hour: None,
             schedule_resume_target: None,
+            advisor_reply_threads: Vec::new(),
             current_order_id: Some(11),
             editing_address: false,
             receipt_timer_expired: false,
@@ -1954,6 +1961,25 @@ mod tests {
             crate::bot::state_machine::BotAction::SendButtons { body, buttons, .. }
                 if body == &crate::messages::client_messages().checkout.referral_prompt_body
                     && buttons.iter().any(|button| button.reply.id == "referral_has_code")
+        )));
+    }
+
+    #[test]
+    fn final_advisor_packet_shows_active_boost() {
+        let mut context = wholesale_context();
+        context.referral_code = Some("trabix-prueba15".to_string());
+        context.referral_discount_total = Some(9600);
+        context.ambassador_commission_total = Some(17280);
+        context.referral_has_boost = true;
+        context.total_final = Some(91400);
+
+        let actions = super::final_order_packet_actions(&context, None);
+
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::SendText { body, .. }
+                if body.contains("Boost activo: +5% comisión")
+                    && body.contains("Código: trabix-prueba15")
         )));
     }
 

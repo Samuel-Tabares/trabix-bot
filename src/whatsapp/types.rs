@@ -117,11 +117,28 @@ pub struct IncomingMessage {
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(default)]
+    pub context: Option<MessageContext>,
+    #[serde(default)]
     pub text: Option<TextContent>,
     #[serde(default)]
     pub interactive: Option<InteractiveContent>,
     #[serde(default)]
     pub image: Option<ImageContent>,
+}
+
+impl IncomingMessage {
+    pub fn reply_to_message_id(&self) -> Option<String> {
+        self.context.as_ref().map(|context| context.id.clone())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageContext {
+    #[serde(default)]
+    #[serde(alias = "message_id")]
+    pub id: String,
+    #[serde(default)]
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -267,8 +284,8 @@ pub struct MarkAsRead {
 #[cfg(test)]
 mod tests {
     use super::{
-        Change, Contact, ContactProfile, Entry, IncomingMessage, StatusEvent, TextContent, Value,
-        WebhookPayload,
+        Change, Contact, ContactProfile, Entry, IncomingMessage, MessageContext, StatusEvent,
+        TextContent, Value, WebhookPayload,
     };
 
     fn text_message(id: &str, from: &str, body: &str) -> IncomingMessage {
@@ -276,6 +293,7 @@ mod tests {
             from: from.to_string(),
             id: id.to_string(),
             kind: "text".to_string(),
+            context: None,
             text: Some(TextContent {
                 body: body.to_string(),
             }),
@@ -435,5 +453,28 @@ mod tests {
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].status, "delivered");
         assert_eq!(statuses[0].recipient_id.as_deref(), Some("573001111111"));
+    }
+
+    #[test]
+    fn incoming_message_exposes_reply_context_message_id() {
+        let message = IncomingMessage {
+            from: "573001234567".to_string(),
+            id: "wamid-1".to_string(),
+            kind: "text".to_string(),
+            context: Some(MessageContext {
+                id: "wamid-replied".to_string(),
+                from: Some("573009999999".to_string()),
+            }),
+            text: Some(TextContent {
+                body: "5000".to_string(),
+            }),
+            interactive: None,
+            image: None,
+        };
+
+        assert_eq!(
+            message.reply_to_message_id(),
+            Some("wamid-replied".to_string())
+        );
     }
 }

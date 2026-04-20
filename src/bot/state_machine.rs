@@ -3,7 +3,7 @@ use std::{error::Error, fmt};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    db::models::{ConversationStateData, OrderItemData},
+    db::models::{AdvisorReplyThread, ConversationStateData, OrderItemData},
     whatsapp::types::{Button, IncomingMessage, ListSection},
 };
 
@@ -375,6 +375,7 @@ pub struct ConversationContext {
     pub referral_code: Option<String>,
     pub referral_discount_total: Option<i32>,
     pub ambassador_commission_total: Option<i32>,
+    pub referral_has_boost: bool,
     pub delivery_cost: Option<i32>,
     pub total_final: Option<i32>,
     pub receipt_media_id: Option<String>,
@@ -387,6 +388,7 @@ pub struct ConversationContext {
     pub advisor_proposed_hour: Option<String>,
     pub client_counter_hour: Option<String>,
     pub schedule_resume_target: Option<String>,
+    pub advisor_reply_threads: Vec<AdvisorReplyThread>,
     pub current_order_id: Option<i32>,
     pub editing_address: bool,
     pub receipt_timer_expired: bool,
@@ -420,6 +422,7 @@ impl ConversationContext {
             referral_code: state_data.referral_code.clone(),
             referral_discount_total: state_data.referral_discount_total,
             ambassador_commission_total: state_data.ambassador_commission_total,
+            referral_has_boost: state_data.referral_has_boost,
             delivery_cost: state_data.delivery_cost,
             total_final: state_data.total_final,
             receipt_media_id: state_data.receipt_media_id.clone(),
@@ -432,6 +435,7 @@ impl ConversationContext {
             advisor_proposed_hour: state_data.advisor_proposed_hour.clone(),
             client_counter_hour: state_data.client_counter_hour.clone(),
             schedule_resume_target: state_data.schedule_resume_target.clone(),
+            advisor_reply_threads: state_data.advisor_reply_threads.clone(),
             current_order_id: state_data.current_order_id,
             editing_address: state_data.editing_address,
             receipt_timer_expired: state_data.receipt_timer_expired,
@@ -453,6 +457,7 @@ impl ConversationContext {
             referral_code: self.referral_code.clone(),
             referral_discount_total: self.referral_discount_total,
             ambassador_commission_total: self.ambassador_commission_total,
+            referral_has_boost: self.referral_has_boost,
             delivery_cost: self.delivery_cost,
             total_final: self.total_final,
             receipt_media_id: self.receipt_media_id.clone(),
@@ -465,6 +470,7 @@ impl ConversationContext {
             advisor_proposed_hour: self.advisor_proposed_hour.clone(),
             client_counter_hour: self.client_counter_hour.clone(),
             schedule_resume_target: self.schedule_resume_target.clone(),
+            advisor_reply_threads: self.advisor_reply_threads.clone(),
             current_order_id: self.current_order_id,
             editing_address: self.editing_address,
             receipt_timer_expired: self.receipt_timer_expired,
@@ -484,6 +490,7 @@ impl ConversationContext {
         self.referral_code = None;
         self.referral_discount_total = None;
         self.ambassador_commission_total = None;
+        self.referral_has_boost = false;
     }
 }
 
@@ -616,8 +623,14 @@ pub fn transition_advisor(
     }
 }
 
-pub fn extract_input(message: &IncomingMessage) -> UserInput {
-    match message.kind.as_str() {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InboundInput {
+    pub input: UserInput,
+    pub reply_to_message_id: Option<String>,
+}
+
+pub fn extract_input(message: &IncomingMessage) -> InboundInput {
+    let input = match message.kind.as_str() {
         "text" => UserInput::TextMessage(
             message
                 .text
@@ -652,5 +665,10 @@ pub fn extract_input(message: &IncomingMessage) -> UserInput {
                 .unwrap_or_default(),
         ),
         _ => UserInput::TextMessage(String::new()),
+    };
+
+    InboundInput {
+        input,
+        reply_to_message_id: message.reply_to_message_id(),
     }
 }

@@ -51,7 +51,7 @@ graph TD
     RESET -->|✅ Sí, reiniciar| TIPO
     RESET -->|↩️ No, volver| AGREGAR
 
-    REVISION -->|✅ Continuar| DOMICILIO["🚚 ask_delivery_cost<br/>─────────────────<br/>Asesor digita costo del domicilio<br/>y el sistema arma la respuesta final<br/>⏱️ Hard reset: 30 min si queda atascado"]
+    REVISION -->|✅ Continuar| DOMICILIO["🚚 ask_delivery_cost<br/>─────────────────<br/>Asesor digita costo del domicilio<br/>y el sistema arma la respuesta final<br/>⏱️ 23 h si es programado / 30 min si es inmediato"]
     REVISION -->|✏️ Modificar datos personales| EDITAR{"🛠️ ¿Qué deseas editar?"}
 
     EDITAR -->|Nombre| EDIT_NOMBRE["✏️ edit_customer_name"]

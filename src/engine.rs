@@ -90,6 +90,7 @@ pub async fn process_customer_input(
     let execution = execute_actions(
         &state,
         conversation.id,
+        &current_state,
         &mut context,
         &actions,
         Some(session_phone.as_str()),
@@ -112,12 +113,17 @@ pub async fn process_customer_input(
 
 pub async fn process_advisor_input(
     state: AppState,
+    reply_to_message_id: Option<String>,
     input: UserInput,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let advisor_phone = state.config.advisor_phone.clone();
     let advisor_conversation = load_or_create_conversation(&state, &advisor_phone).await?;
 
-    let target_phone = resolve_advisor_target_phone(&advisor_conversation.state_data.0, &input);
+    let target_phone = resolve_advisor_target_phone(
+        &advisor_conversation.state_data.0,
+        reply_to_message_id.as_deref(),
+        &input,
+    );
     let Some(target_phone) = target_phone else {
         tracing::info!(
             advisor_phone = %mask_phone(&advisor_phone),
@@ -187,6 +193,7 @@ pub async fn process_advisor_input(
     let execution = execute_actions(
         &state,
         client_conversation.id,
+        &current_state,
         &mut context,
         &actions,
         Some(target_phone.as_str()),
@@ -224,7 +231,7 @@ pub async fn send_text(
     to: &str,
     body: &str,
     session_phone: Option<&str>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
     send_via_transport(
         state,
         to,
@@ -303,6 +310,7 @@ pub async fn send_timer_actions(
 pub async fn execute_actions(
     state: &AppState,
     conversation_id: i32,
+    current_state: &ConversationState,
     context: &mut ConversationContext,
     actions: &[BotAction],
     session_phone: Option<&str>,
@@ -313,10 +321,18 @@ pub async fn execute_actions(
         log_bot_action(action);
         match action {
             BotAction::SendText { to, body } => {
-                send_text(state, to, body, session_phone).await?;
+                let message_id = send_text(state, to, body, session_phone).await?;
+                track_advisor_reply_thread(
+                    state,
+                    current_state,
+                    to,
+                    session_phone,
+                    message_id.as_deref(),
+                )
+                .await?;
             }
             BotAction::SendButtons { to, body, buttons } => {
-                send_via_transport(
+                let message_id = send_via_transport(
                     state,
                     to,
                     "buttons",
@@ -326,6 +342,14 @@ pub async fn execute_actions(
                     None,
                 )
                 .await?;
+                track_advisor_reply_thread(
+                    state,
+                    current_state,
+                    to,
+                    session_phone,
+                    message_id.as_deref(),
+                )
+                .await?;
             }
             BotAction::SendList {
                 to,
@@ -333,7 +357,7 @@ pub async fn execute_actions(
                 button_text,
                 sections,
             } => {
-                send_via_transport(
+                let message_id = send_via_transport(
                     state,
                     to,
                     "list",
@@ -346,16 +370,41 @@ pub async fn execute_actions(
                     None,
                 )
                 .await?;
+                track_advisor_reply_thread(
+                    state,
+                    current_state,
+                    to,
+                    session_phone,
+                    message_id.as_deref(),
+                )
+                .await?;
             }
             BotAction::SendImage {
                 to,
                 media_id,
                 caption,
             } => {
-                send_image(state, to, media_id, caption.clone(), session_phone).await?;
+                let message_id = send_image(state, to, media_id, caption.clone(), session_phone).await?;
+                track_advisor_reply_thread(
+                    state,
+                    current_state,
+                    to,
+                    session_phone,
+                    message_id.as_deref(),
+                )
+                .await?;
             }
             BotAction::SendAssetImage { to, asset, caption } => {
-                send_asset_image(state, to, asset.clone(), caption.clone(), session_phone).await?;
+                let message_id =
+                    send_asset_image(state, to, asset.clone(), caption.clone(), session_phone).await?;
+                track_advisor_reply_thread(
+                    state,
+                    current_state,
+                    to,
+                    session_phone,
+                    message_id.as_deref(),
+                )
+                .await?;
             }
             BotAction::SendTransferInstructions { to } => {
                 let configured = client_messages().checkout.transfer_payment_text.trim();
@@ -368,10 +417,19 @@ pub async fn execute_actions(
                 } else {
                     configured
                 };
-                send_text(state, to, body, session_phone).await?;
+                let message_id = send_text(state, to, body, session_phone).await?;
+                track_advisor_reply_thread(
+                    state,
+                    current_state,
+                    to,
+                    session_phone,
+                    message_id.as_deref(),
+                )
+                .await?;
             }
             BotAction::ResetConversation { phone } => {
                 reset_conversation(&state.pool, phone).await?;
+                clear_advisor_reply_threads_for_target(state, phone).await?;
                 reset_requested = true;
             }
             BotAction::NoOp => {}
@@ -566,15 +624,109 @@ fn seed_customer_data(
 
 fn resolve_advisor_target_phone(
     state_data: &ConversationStateData,
+    reply_to_message_id: Option<&str>,
     input: &UserInput,
 ) -> Option<String> {
     match input {
         UserInput::ButtonPress(id) | UserInput::ListSelection(id) => parse_advisor_button_id(id)
             .map(|(_, phone)| phone)
             .or_else(|| state_data.advisor_target_phone.clone()),
-        UserInput::TextMessage(_) => state_data.advisor_target_phone.clone(),
-        UserInput::ImageMessage(_) => state_data.advisor_target_phone.clone(),
+        UserInput::TextMessage(_) | UserInput::ImageMessage(_) => {
+            if let Some(message_id) = reply_to_message_id {
+                if let Some(target_phone) = state_data.advisor_reply_target_for(message_id) {
+                    return Some(target_phone);
+                }
+            }
+
+            state_data.advisor_target_phone.clone()
+        }
     }
+}
+
+fn advisor_reply_thread_state(state: &ConversationState) -> bool {
+    matches!(
+        state,
+        ConversationState::AskDeliveryCost
+            | ConversationState::WaitAdvisorResponse
+            | ConversationState::NegotiateHour
+            | ConversationState::WaitAdvisorHourDecision { .. }
+            | ConversationState::WaitAdvisorConfirmHour
+            | ConversationState::WaitAdvisorMayor
+            | ConversationState::WaitAdvisorContact
+    )
+}
+
+async fn track_advisor_reply_thread(
+    state: &AppState,
+    current_state: &ConversationState,
+    to: &str,
+    session_phone: Option<&str>,
+    message_id: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    let Some(message_id) = message_id else {
+        return Ok(());
+    };
+
+    if to != state.config.advisor_phone {
+        return Ok(());
+    }
+
+    if !advisor_reply_thread_state(current_state) {
+        return Ok(());
+    }
+
+    let Some(target_phone) = session_phone else {
+        return Ok(());
+    };
+
+    register_advisor_reply_thread(
+        state,
+        &state.config.advisor_phone,
+        target_phone,
+        message_id,
+    )
+    .await
+}
+
+async fn register_advisor_reply_thread(
+    state: &AppState,
+    advisor_phone: &str,
+    target_phone: &str,
+    message_id: &str,
+) -> Result<(), sqlx::Error> {
+    let Some(conversation) = get_conversation(&state.pool, advisor_phone).await? else {
+        return Ok(());
+    };
+
+    let mut state_data = conversation.state_data.0;
+    state_data.push_advisor_reply_thread(message_id.to_string(), target_phone.to_string());
+    update_state(&state.pool, advisor_phone, &conversation.state, &state_data).await?;
+    Ok(())
+}
+
+pub(crate) async fn clear_advisor_reply_threads_for_target(
+    state: &AppState,
+    target_phone: &str,
+) -> Result<(), sqlx::Error> {
+    let advisor_phone = state.config.advisor_phone.clone();
+    let Some(conversation) = get_conversation(&state.pool, &advisor_phone).await? else {
+        return Ok(());
+    };
+
+    let mut state_data = conversation.state_data.0;
+    let original_len = state_data.advisor_reply_threads.len();
+    state_data.clear_advisor_reply_threads_for_target(target_phone);
+
+    if state_data.advisor_reply_threads.len() != original_len {
+        update_state(&state.pool, &advisor_phone, &conversation.state, &state_data).await?;
+        tracing::info!(
+            advisor_phone = %mask_phone(&advisor_phone),
+            target_phone = %mask_phone(target_phone),
+            "cleared advisor reply threads for target"
+        );
+    }
+
+    Ok(())
 }
 
 async fn bind_advisor_session(
@@ -623,38 +775,38 @@ async fn send_via_transport(
     payload: serde_json::Value,
     session_phone: Option<&str>,
     file_path: Option<&Path>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
     match &state.transport {
         OutboundTransport::Production(client) => match message_kind {
             "text" => {
-                client
+                return Ok(client
                     .send_text(to, body.as_deref().unwrap_or_default())
-                    .await?
+                    .await?);
             }
             "buttons" => {
                 let buttons = serde_json::from_value(payload["buttons"].clone())?;
-                client
+                return Ok(client
                     .send_buttons(to, body.as_deref().unwrap_or_default(), buttons)
-                    .await?;
+                    .await?);
             }
             "list" => {
                 let sections = serde_json::from_value(payload["sections"].clone())?;
                 let button_text = payload["button_text"].as_str().unwrap_or_default();
-                client
+                return Ok(client
                     .send_list(
                         to,
                         body.as_deref().unwrap_or_default(),
                         button_text,
                         sections,
                     )
-                    .await?;
+                    .await?);
             }
             "image" => {
                 let media_id = payload["media_id"].as_str().unwrap_or_default();
                 let caption = payload["caption"].as_str();
-                client.send_image(to, media_id, caption).await?;
+                return Ok(client.send_image(to, media_id, caption).await?);
             }
-            _ => {}
+            _ => return Ok(None),
         },
         OutboundTransport::Simulator => {
             let session_id = resolve_session_id_for_send(state, to, session_phone).await?;
@@ -667,7 +819,7 @@ async fn send_via_transport(
             if let Some(path) = file_path {
                 final_payload["url"] = json!(path.to_string_lossy());
             }
-            create_message(
+            let message = create_message(
                 &state.pool,
                 NewSimulatorMessage {
                     session_id,
@@ -679,10 +831,9 @@ async fn send_via_transport(
                 },
             )
             .await?;
+            return Ok(Some(message.id.to_string()));
         }
     }
-
-    Ok(())
 }
 
 async fn send_image(
@@ -691,7 +842,7 @@ async fn send_image(
     media_id: &str,
     caption: Option<String>,
     session_phone: Option<&str>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
     match &state.transport {
         OutboundTransport::Production(_) => {
             let payload_caption = caption.clone();
@@ -735,7 +886,7 @@ async fn send_asset_image(
     asset: ImageAsset,
     caption: Option<String>,
     session_phone: Option<&str>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
     match (&state.transport, asset) {
         (OutboundTransport::Production(_), ImageAsset::Menu) => {
             let media_id = &state.config.production().menu_image_media_id;
@@ -911,5 +1062,27 @@ fn schedule_values_for_persistence(context: &ConversationContext) -> PersistedSc
             .and_then(|value| chrono::NaiveTime::parse_from_str(value, "%H:%M").ok()),
         raw_date: context.scheduled_date.clone(),
         raw_time: context.scheduled_time.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_advisor_target_phone;
+    use crate::{bot::state_machine::UserInput, db::models::ConversationStateData};
+
+    #[test]
+    fn advisor_reply_context_wins_over_later_active_case() {
+        let mut state_data = ConversationStateData::default();
+        state_data.advisor_target_phone = Some("573002222222".to_string());
+        state_data.push_advisor_reply_thread("msg-older".to_string(), "573001111111".to_string());
+        state_data.push_advisor_reply_thread("msg-newer".to_string(), "573002222222".to_string());
+
+        let target = resolve_advisor_target_phone(
+            &state_data,
+            Some("msg-older"),
+            &UserInput::TextMessage("5000".to_string()),
+        );
+
+        assert_eq!(target.as_deref(), Some("573001111111"));
     }
 }

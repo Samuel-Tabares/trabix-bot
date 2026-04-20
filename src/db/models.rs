@@ -16,6 +16,7 @@ pub struct ConversationStateData {
     pub referral_code: Option<String>,
     pub referral_discount_total: Option<i32>,
     pub ambassador_commission_total: Option<i32>,
+    pub referral_has_boost: bool,
     pub delivery_cost: Option<i32>,
     pub total_final: Option<i32>,
     pub receipt_media_id: Option<String>,
@@ -28,6 +29,7 @@ pub struct ConversationStateData {
     pub advisor_proposed_hour: Option<String>,
     pub client_counter_hour: Option<String>,
     pub schedule_resume_target: Option<String>,
+    pub advisor_reply_threads: Vec<AdvisorReplyThread>,
     pub current_order_id: Option<i32>,
     pub editing_address: bool,
     pub receipt_timer_expired: bool,
@@ -49,6 +51,7 @@ impl Default for ConversationStateData {
             referral_code: None,
             referral_discount_total: None,
             ambassador_commission_total: None,
+            referral_has_boost: false,
             delivery_cost: None,
             total_final: None,
             receipt_media_id: None,
@@ -61,6 +64,7 @@ impl Default for ConversationStateData {
             advisor_proposed_hour: None,
             client_counter_hour: None,
             schedule_resume_target: None,
+            advisor_reply_threads: Vec::new(),
             current_order_id: None,
             editing_address: false,
             receipt_timer_expired: false,
@@ -70,6 +74,38 @@ impl Default for ConversationStateData {
             conversation_abandon_reminder_sent: false,
         }
     }
+}
+
+impl ConversationStateData {
+    pub fn advisor_reply_target_for(&self, message_id: &str) -> Option<String> {
+        self.advisor_reply_threads
+            .iter()
+            .rev()
+            .find(|thread| thread.message_id == message_id)
+            .map(|thread| thread.target_phone.clone())
+    }
+
+    pub fn push_advisor_reply_thread(&mut self, message_id: String, target_phone: String) {
+        self.advisor_reply_threads
+            .retain(|thread| thread.message_id != message_id);
+        self.advisor_reply_threads.push(AdvisorReplyThread {
+            message_id,
+            target_phone,
+            created_at: chrono::Utc::now(),
+        });
+    }
+
+    pub fn clear_advisor_reply_threads_for_target(&mut self, target_phone: &str) {
+        self.advisor_reply_threads
+            .retain(|thread| thread.target_phone != target_phone);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AdvisorReplyThread {
+    pub message_id: String,
+    pub target_phone: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -123,4 +159,41 @@ pub struct OrderItem {
     pub unit_price: i32,
     pub subtotal: i32,
     pub created_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConversationStateData;
+
+    #[test]
+    fn advisor_reply_thread_lookup_prefers_the_matching_message_id() {
+        let mut state_data = ConversationStateData::default();
+        state_data.push_advisor_reply_thread("msg-1".to_string(), "573001111111".to_string());
+        state_data.push_advisor_reply_thread("msg-2".to_string(), "573002222222".to_string());
+
+        assert_eq!(
+            state_data.advisor_reply_target_for("msg-1"),
+            Some("573001111111".to_string())
+        );
+        assert_eq!(
+            state_data.advisor_reply_target_for("msg-2"),
+            Some("573002222222".to_string())
+        );
+        assert_eq!(state_data.advisor_reply_target_for("missing"), None);
+    }
+
+    #[test]
+    fn advisor_reply_threads_can_be_cleared_per_target() {
+        let mut state_data = ConversationStateData::default();
+        state_data.push_advisor_reply_thread("msg-1".to_string(), "573001111111".to_string());
+        state_data.push_advisor_reply_thread("msg-2".to_string(), "573002222222".to_string());
+
+        state_data.clear_advisor_reply_threads_for_target("573001111111");
+
+        assert_eq!(state_data.advisor_reply_target_for("msg-1"), None);
+        assert_eq!(
+            state_data.advisor_reply_target_for("msg-2"),
+            Some("573002222222".to_string())
+        );
+    }
 }

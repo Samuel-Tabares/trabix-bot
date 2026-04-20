@@ -260,6 +260,7 @@ Si elige `Tengo código`:
   - solo minusculas
   - sin espacios
   - maximo `15` caracteres
+- `boost_codes` usa las mismas reglas y ademas debe ser subconjunto de `codes`
 
 Si el codigo es invalido:
 
@@ -269,6 +270,7 @@ Si el codigo es invalido:
 Si el codigo es valido:
 
 - el descuento se aplica solo sobre los buckets ya calculados como `mayor`
+- si el codigo tambien aparece en `boost_codes`, el embajador recibe un boost activo de `+5%` en la comision
 - cada bucket elegible calcula su tier de forma independiente:
   - `20-49`: cliente `10%`, embajador `15%`
   - `50-99`: cliente `12%`, embajador `18%`
@@ -283,6 +285,7 @@ Si el codigo es valido:
   - `total_final = subtotal_con_descuento + delivery_cost`
 - el cliente recibe confirmacion del codigo aplicado
 - el cliente vuelve a ver el resumen listo para pago con subtotal, descuento referido, domicilio y total final
+- el asesor recibe en el paquete final una linea explicita cuando el referido tiene boost activo
 - luego entra a `select_payment_method`
 
 Si elige `Seguir sin código`:
@@ -376,6 +379,8 @@ Estados operativos relevantes de la orden:
 
 Si el asesor escribe sin haber seleccionado antes un caso pendiente, el bot responde con el mensaje de guia para el asesor y no muestra el menu de cliente.
 
+Si el asesor responde con cita a un mensaje previo del bot, el runtime usa ese `message_id` para reenviar el texto al caso correcto aunque ya exista otro caso mas reciente. Si no hay cita, usa el caso activo actual como respaldo.
+
 ### Pedido Normal Con Asesor
 
 Despues de `review_checkout`, el pedido pasa al asesor.
@@ -405,6 +410,7 @@ Despues de digitar el domicilio:
 - el cliente recibe confirmacion del pedido programado con subtotal, domicilio y total final
 - si el pedido aplica al por mayor, el cliente entra antes por la validacion opcional de referral
 - no se espera un boton extra de confirmacion del asesor
+- si el asesor no responde durante `23 horas`, el pedido queda en `manual_followup` y la conversacion del cliente se reinicia a una ruta segura
 
 ### Pedido Inmediato
 
@@ -423,6 +429,7 @@ Despues de digitar el domicilio:
 - el asesor recibe solo el boton `Confirmar`
 - si confirma, el cliente recibe subtotal, domicilio, total final y luego el paso opcional de referral antes del selector de pago cuando aplica al por mayor
 - si el asesor no responde durante `5 minutos`, el sistema entra automaticamente a la misma rama que `No puedo`
+- el timeout corto de `ask_delivery_cost` aplica al camino inmediato; el camino programado usa el corte de `23 horas`
 
 ### Negociacion De Hora
 
@@ -494,7 +501,8 @@ Timers de runtime:
 - comprobante: `10 minutos`
 - espera de asesor para `Hablar con Asesor`: `2 minutos`
 - espera de asesor para confirmacion de pedido inmediato: `5 minutos`
-- estados detallados del asesor atascados: `30 minutos`
+- `ask_delivery_cost` programado sin respuesta: `23 horas`
+- estados detallados del asesor atascados en flujo inmediato: `30 minutos`
 - relay: `30 minutos`
 - inactividad generica del cliente:
   - recordatorio a los `2 minutos`
