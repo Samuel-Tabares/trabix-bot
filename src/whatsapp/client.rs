@@ -13,17 +13,6 @@ use super::{
     },
 };
 
-#[derive(Debug, Clone, serde::Deserialize)]
-struct MessageSendResponse {
-    #[serde(default)]
-    messages: Vec<MessageSendId>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct MessageSendId {
-    id: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct WhatsAppClient {
     http_client: Client,
@@ -63,7 +52,7 @@ impl WhatsAppClient {
         }
     }
 
-    pub async fn send_text(&self, to: &str, body: &str) -> Result<Option<String>, WhatsAppError> {
+    pub async fn send_text(&self, to: &str, body: &str) -> Result<(), WhatsAppError> {
         let payload = OutgoingTextMessage {
             messaging_product: "whatsapp".into(),
             to: to.into(),
@@ -79,7 +68,7 @@ impl WhatsAppClient {
         to: &str,
         body: &str,
         buttons: Vec<Button>,
-    ) -> Result<Option<String>, WhatsAppError> {
+    ) -> Result<(), WhatsAppError> {
         let payload = quick_buttons(
             to,
             body,
@@ -98,7 +87,7 @@ impl WhatsAppClient {
         body: &str,
         button_text: &str,
         sections: Vec<ListSection>,
-    ) -> Result<Option<String>, WhatsAppError> {
+    ) -> Result<(), WhatsAppError> {
         let payload = OutgoingListMessage {
             messaging_product: "whatsapp".into(),
             to: to.into(),
@@ -121,7 +110,7 @@ impl WhatsAppClient {
         to: &str,
         media_id: &str,
         caption: Option<&str>,
-    ) -> Result<Option<String>, WhatsAppError> {
+    ) -> Result<(), WhatsAppError> {
         let payload = OutgoingImageMessage {
             messaging_product: "whatsapp".into(),
             to: to.into(),
@@ -142,7 +131,7 @@ impl WhatsAppClient {
             message_id: message_id.into(),
         };
 
-        self.post_message("read", "n/a", &payload).await.map(|_| ())
+        self.post_message("read", "n/a", &payload).await
     }
 
     async fn post_message<T: serde::Serialize>(
@@ -150,7 +139,7 @@ impl WhatsAppClient {
         message_type: &str,
         to: &str,
         payload: &T,
-    ) -> Result<Option<String>, WhatsAppError> {
+    ) -> Result<(), WhatsAppError> {
         let url = format!(
             "https://graph.facebook.com/v21.0/{}/messages",
             self.whatsapp_phone_id
@@ -179,19 +168,11 @@ impl WhatsAppClient {
             return Err(WhatsAppError::Api { status, body });
         }
 
-        let message_id = response
-            .json::<MessageSendResponse>()
-            .await
-            .ok()
-            .and_then(|response| response.messages.into_iter().next())
-            .map(|message| message.id);
-
         tracing::debug!(
             recipient = %mask_phone(to),
             message_type = %message_type,
-            message_id = %message_id.as_deref().unwrap_or("<unknown>"),
             "sent whatsapp message"
         );
-        Ok(message_id)
+        Ok(())
     }
 }

@@ -1,13 +1,9 @@
 [menu]
 main_welcome = """¡Hola! 👋 Bienvenid@ a Trabix Granizados.
 
-En entregas por todo el Quindío, los granizados vienen ya listos para consumir
+Horario de entrega inmediata: {business_hours}
 
-Horario de entrega inmediata (únicamente en el Quindío): {business_hours}
-
-*Yo soy un bot*, puedo ayudarte a gestionar tu pedido o puedes *contactar un asesor* para ayudarte con algo que yo no pueda...
-
-Si nos escribes fuera de ese horario, igual te ayudo a programar tu pedido. Elige una opción para continuar ✨"""
+Si nos escribes fuera de ese horario, igual te ayudo a programar tu pedido o a contactar un asesor. Elige una opción para continuar ✨"""
 main_list_body = "¿Qué te gustaría hacer ahora? 👇"
 main_list_button_text = "Ver opciones"
 main_section_title = "Menú Principal"
@@ -16,7 +12,7 @@ make_order_description = "Arma tu pedido paso a paso"
 view_menu_title = "Ver Menú"
 view_menu_description = "Consulta sabores y precios"
 contact_advisor_title = "Hablar con Asesor"
-contact_advisor_description = "Recibe ayuda personalizada de nuestros asesores"
+contact_advisor_description = "Recibe ayuda personalizada"
 retry_main_menu = "Para continuar, elige una opción del menú principal 👇"
 menu_image_caption = "📋 Menú general de granizados"
 menu_text = """🍧PRECIOS
@@ -45,7 +41,7 @@ view_menu_back_button = "Volver al Menú"
 retry_view_menu = "Elige una de las opciones para continuar 👇"
 
 [scheduling]
-when_delivery_body = "Perfecto ✨ ¿Cuándo necesitas tu pedido? recuerda que las entregas inmediatas únicamente en el Quindío"
+when_delivery_body = "Perfecto ✨ ¿Cuándo necesitas tu pedido?"
 immediate_button = "Entrega Inmediata"
 scheduled_button = "Entrega Programada"
 retry_when_delivery = "Elige si tu pedido es inmediato o programado 👇"
@@ -55,10 +51,10 @@ out_of_hours_schedule_button = "Programar"
 out_of_hours_advisor_button = "Asesor"
 out_of_hours_menu_button = "Menú"
 out_of_hours_retry = "Selecciona una de las opciones disponibles 👇"
-select_date_prompt = "Cuéntame la fecha en la que lo necesitas 📅"
+select_date_prompt = "Cuéntame la fecha en la que lo necesitas 📅 Puedes escribirla como te quede más fácil."
 select_date_retry_non_text = "Escríbeme una fecha para programar tu pedido 📅"
 date_length_error = "La fecha debe tener entre 2 y 40 caracteres."
-select_time_prompt = "Ahora indícame la hora aproximada ⏰"
+select_time_prompt = "Ahora indícame la hora aproximada ⏰ Puedes escribirla como prefieras."
 select_time_retry_non_text = "Escríbeme una hora para programar tu pedido ⏰"
 time_length_error = "La hora debe tener entre 1 y 40 caracteres."
 confirm_template = """📦 Entrega programada
@@ -74,7 +70,7 @@ confirm_retry = "Confirma la programación o elige cambiarla 👇"
 [data_collect]
 ask_name = "Para empezar, ¿me compartes tu nombre completo? 😊"
 ask_phone = "¿Cuál es tu teléfono de contacto? 📱"
-ask_address = "¿Cuál es la dirección de entrega? 📍 recuerda que en el Quindío los granizados vienen ya listos para consumir, en  otros lugares solo debes congelarlos a -15°"
+ask_address = "¿Cuál es la dirección de entrega? 📍"
 retry_name_non_text = "Escríbeme tu nombre completo para continuar 😊"
 retry_phone_non_text = "Escríbeme un teléfono válido para continuar 📱"
 retry_address_non_text = "Escríbeme la dirección de entrega para continuar 📍"

@@ -52,7 +52,6 @@ pub struct ReferralBucketCalculated {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferralApplied {
     pub code: String,
-    pub has_boost: bool,
     pub buckets: Vec<ReferralBucketCalculated>,
     pub total_client_discount: u32,
     pub subtotal_after_discount: u32,
@@ -132,11 +131,7 @@ pub fn has_wholesale_bucket(pedido: &PedidoCalculado) -> bool {
     pedido.es_mayor_con_licor || pedido.es_mayor_sin_licor
 }
 
-pub fn calcular_referido(
-    pedido: &PedidoCalculado,
-    code: &str,
-    has_boost: bool,
-) -> Option<ReferralApplied> {
+pub fn calcular_referido(pedido: &PedidoCalculado, code: &str) -> Option<ReferralApplied> {
     let mut buckets = Vec::new();
 
     if pedido.es_mayor_con_licor {
@@ -144,7 +139,6 @@ pub fn calcular_referido(
             true,
             pedido.cantidad_con_licor,
             pedido.total_con_licor,
-            has_boost,
         ));
     }
     if pedido.es_mayor_sin_licor {
@@ -152,7 +146,6 @@ pub fn calcular_referido(
             false,
             pedido.cantidad_sin_licor,
             pedido.total_sin_licor,
-            has_boost,
         ));
     }
 
@@ -176,7 +169,6 @@ pub fn calcular_referido(
 
     Some(ReferralApplied {
         code: code.to_string(),
-        has_boost,
         buckets,
         total_client_discount,
         subtotal_after_discount,
@@ -211,10 +203,8 @@ fn calcular_bucket_referido(
     has_liquor: bool,
     quantity: u32,
     subtotal_before_discount: u32,
-    has_boost: bool,
 ) -> ReferralBucketCalculated {
     let (client_discount_percent, ambassador_commission_percent) = porcentaje_referido(quantity);
-    let ambassador_commission_percent = ambassador_commission_percent + u8::from(has_boost) * 5;
     let client_discount_amount =
         aplicar_descuento_cliente(subtotal_before_discount, client_discount_percent);
     let subtotal_after_discount = subtotal_before_discount - client_discount_amount;
@@ -363,7 +353,7 @@ mod tests {
         }]);
 
         assert!(!has_wholesale_bucket(&pedido));
-        assert!(calcular_referido(&pedido, "codigo", false).is_none());
+        assert!(calcular_referido(&pedido, "codigo").is_none());
     }
 
     #[test]
@@ -374,11 +364,10 @@ mod tests {
             quantity: 20,
         }]);
 
-        let referido = calcular_referido(&pedido, "codigo", false).expect("eligible referral");
+        let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
         assert_eq!(referido.total_client_discount, 9_600);
         assert_eq!(referido.subtotal_after_discount, 86_400);
         assert_eq!(referido.total_ambassador_commission, 12_960);
-        assert!(!referido.has_boost);
     }
 
     #[test]
@@ -389,7 +378,7 @@ mod tests {
             quantity: 50,
         }]);
 
-        let referido = calcular_referido(&pedido, "codigo", false).expect("eligible referral");
+        let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
         assert_eq!(referido.total_client_discount, 28_200);
         assert_eq!(referido.subtotal_after_discount, 206_800);
         assert_eq!(referido.total_ambassador_commission, 37_224);
@@ -403,7 +392,7 @@ mod tests {
             quantity: 22,
         }]);
 
-        let referido = calcular_referido(&pedido, "codigo", false).expect("eligible referral");
+        let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
         assert_eq!(referido.total_client_discount, 10_600);
         assert_eq!(referido.subtotal_after_discount, 95_000);
         assert_eq!(referido.total_ambassador_commission, 14_250);
@@ -417,7 +406,7 @@ mod tests {
             quantity: 100,
         }]);
 
-        let referido = calcular_referido(&pedido, "codigo", false).expect("eligible referral");
+        let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
         assert_eq!(referido.total_client_discount, 63_000);
         assert_eq!(referido.subtotal_after_discount, 357_000);
         assert_eq!(referido.total_ambassador_commission, 71_400);
@@ -443,26 +432,10 @@ mod tests {
             },
         ]);
 
-        let referido = calcular_referido(&pedido, "codigo", false).expect("eligible referral");
+        let referido = calcular_referido(&pedido, "codigo").expect("eligible referral");
         assert_eq!(referido.buckets.len(), 2);
         assert_eq!(referido.total_client_discount, 38_800);
         assert_eq!(referido.subtotal_after_discount, 301_800);
         assert_eq!(referido.total_ambassador_commission, 51_474);
-    }
-
-    #[test]
-    fn applies_five_point_commission_boost() {
-        let pedido = calcular_pedido(&[OrderItemData {
-            flavor: "Maracumango".to_string(),
-            has_liquor: false,
-            quantity: 20,
-        }]);
-
-        let referido = calcular_referido(&pedido, "trabix-prueba15", true)
-            .expect("eligible referral");
-        assert!(referido.has_boost);
-        assert_eq!(referido.total_client_discount, 9_600);
-        assert_eq!(referido.total_ambassador_commission, 17_280);
-        assert_eq!(referido.buckets[0].ambassador_commission_percent, 20);
     }
 }

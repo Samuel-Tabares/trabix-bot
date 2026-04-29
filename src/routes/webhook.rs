@@ -148,8 +148,7 @@ async fn process_incoming_message(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let from = message.from.clone();
     let message_id = message.id.clone();
-    let extracted = extract_input(&message);
-    let input = extracted.input;
+    let input = extract_input(&message);
     let (message_type, content) = describe_input(&input);
     let actor = if from == state.config.advisor_phone {
         "advisor"
@@ -176,7 +175,7 @@ async fn process_incoming_message(
     }
 
     if from == state.config.advisor_phone {
-        process_advisor_input(state, extracted.reply_to_message_id, input).await?;
+        process_advisor_input(state, input).await?;
     } else {
         let profile_name = contact
             .as_ref()

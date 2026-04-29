@@ -132,8 +132,6 @@ struct CreateSessionRequest {
 #[derive(Debug, Deserialize)]
 struct TextRequest {
     body: String,
-    #[serde(default)]
-    reply_to_message_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -484,16 +482,10 @@ async fn api_advisor_text(
         "advisor",
         "text",
         Some(request.body.clone()),
-        json!({
-            "reply_to_message_id": request.reply_to_message_id.clone(),
-        }),
+        json!({}),
     )
     .await?;
-    process_advisor_input(
-        state,
-        request.reply_to_message_id,
-        UserInput::TextMessage(request.body),
-    )
+    process_advisor_input(state, UserInput::TextMessage(request.body))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
@@ -515,7 +507,7 @@ async fn api_advisor_button(
         json!({ "id": request.id }),
     )
     .await?;
-    process_advisor_input(state, None, UserInput::ButtonPress(request.id))
+    process_advisor_input(state, UserInput::ButtonPress(request.id))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
@@ -537,7 +529,7 @@ async fn api_advisor_list(
         json!({ "id": request.id }),
     )
     .await?;
-    process_advisor_input(state, None, UserInput::ListSelection(request.id))
+    process_advisor_input(state, UserInput::ListSelection(request.id))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)

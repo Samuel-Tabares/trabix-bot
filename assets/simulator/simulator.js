@@ -22,7 +22,6 @@ const state = {
 const TIMER_FIELDS = [
   { key: 'advisor_response', field: 'advisor_response_seconds' },
   { key: 'advisor_auto_cannot', field: 'advisor_auto_cannot_seconds' },
-  { key: 'advisor_scheduled_stuck', field: 'advisor_scheduled_stuck_seconds' },
   { key: 'receipt_upload', field: 'receipt_upload_seconds' },
   { key: 'advisor_stuck', field: 'advisor_stuck_seconds' },
   { key: 'relay_inactivity', field: 'relay_inactivity_seconds' },

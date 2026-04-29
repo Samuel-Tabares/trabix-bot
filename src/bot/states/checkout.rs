@@ -116,8 +116,7 @@ pub fn handle_wait_referral_code(
             }
 
             let pedido = calcular_pedido(&context.items);
-            let has_boost = referral_registry().is_boosted(&normalized);
-            let Some(referral) = calcular_referido(&pedido, &normalized, has_boost) else {
+            let Some(referral) = calcular_referido(&pedido, &normalized) else {
                 clear_referral_and_restore_total(context);
                 return Ok((
                     ConversationState::SelectPaymentMethod,
@@ -619,7 +618,6 @@ fn apply_referral_to_context(context: &mut ConversationContext, referral: &Refer
         Some(i32::try_from(referral.total_client_discount).unwrap_or(i32::MAX));
     context.ambassador_commission_total =
         Some(i32::try_from(referral.total_ambassador_commission).unwrap_or(i32::MAX));
-    context.referral_has_boost = referral.has_boost;
 
     let delivery_cost = context.delivery_cost.unwrap_or_default();
     let subtotal_after_discount =
@@ -642,7 +640,7 @@ fn referral_from_context(
     context
         .referral_code
         .as_deref()
-        .and_then(|code| calcular_referido(pedido, code, context.referral_has_boost))
+        .and_then(|code| calcular_referido(pedido, code))
 }
 
 fn reply_button(id: &str, title: &str) -> Button {
@@ -715,7 +713,6 @@ mod tests {
             referral_code: None,
             referral_discount_total: None,
             ambassador_commission_total: None,
-            referral_has_boost: false,
             delivery_cost: Some(5000),
             total_final: Some(17000),
             receipt_media_id: None,
@@ -728,7 +725,6 @@ mod tests {
             advisor_proposed_hour: None,
             client_counter_hour: None,
             schedule_resume_target: None,
-            advisor_reply_threads: Vec::new(),
             current_order_id: Some(7),
             editing_address: false,
             receipt_timer_expired: false,
@@ -825,16 +821,15 @@ mod tests {
         let mut context = wholesale_context();
 
         let (state, actions) = handle_wait_referral_code(
-            &UserInput::TextMessage("  TRABIX-PRUEBA15 ".to_string()),
+            &UserInput::TextMessage("  TRABIX-AMB15 ".to_string()),
             &mut context,
         )
         .expect("transition");
 
         assert_eq!(state, ConversationState::SelectPaymentMethod);
-        assert_eq!(context.referral_code.as_deref(), Some("trabix-prueba15"));
+        assert_eq!(context.referral_code.as_deref(), Some("trabix-amb15"));
         assert_eq!(context.referral_discount_total, Some(9600));
-        assert_eq!(context.ambassador_commission_total, Some(17280));
-        assert!(context.referral_has_boost);
+        assert_eq!(context.ambassador_commission_total, Some(12960));
         assert_eq!(context.total_final, Some(91400));
         assert!(actions.iter().any(|action| matches!(
             action,
@@ -843,7 +838,7 @@ mod tests {
         assert!(actions.iter().any(|action| matches!(
             action,
             BotAction::SendText { body, .. }
-                if body.contains("trabix-prueba15") && body.contains("$9.600")
+                if body.contains("trabix-amb15") && body.contains("$9.600")
         )));
     }
 
@@ -859,7 +854,6 @@ mod tests {
 
         assert_eq!(state, ConversationState::WaitReferralCode);
         assert_eq!(context.referral_code, None);
-        assert!(!context.referral_has_boost);
         assert!(actions.iter().any(|action| matches!(
             action,
             BotAction::SendButtons { body, buttons, .. }
@@ -872,10 +866,9 @@ mod tests {
     #[test]
     fn payment_ready_confirmation_renders_referral_discount_in_totals_when_present() {
         let mut context = wholesale_context();
-        context.referral_code = Some("trabix-prueba15".to_string());
+        context.referral_code = Some("trabix-amb15".to_string());
         context.referral_discount_total = Some(9600);
-        context.ambassador_commission_total = Some(17280);
-        context.referral_has_boost = true;
+        context.ambassador_commission_total = Some(12960);
         context.total_final = Some(91400);
 
         let rendered = render_payment_ready_confirmation(&context);
@@ -894,10 +887,9 @@ mod tests {
         context.delivery_type = Some("scheduled".to_string());
         context.scheduled_date = Some("2030-12-24".to_string());
         context.scheduled_time = Some("4:00 pm".to_string());
-        context.referral_code = Some("trabix-prueba15".to_string());
+        context.referral_code = Some("trabix-amb15".to_string());
         context.referral_discount_total = Some(9600);
-        context.ambassador_commission_total = Some(17280);
-        context.referral_has_boost = true;
+        context.ambassador_commission_total = Some(12960);
         context.total_final = Some(91400);
 
         let rendered = render_payment_ready_confirmation(&context);
