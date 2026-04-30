@@ -117,11 +117,21 @@ pub struct IncomingMessage {
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(default)]
+    pub context: Option<MessageContext>,
+    #[serde(default)]
     pub text: Option<TextContent>,
     #[serde(default)]
     pub interactive: Option<InteractiveContent>,
     #[serde(default)]
     pub image: Option<ImageContent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageContext {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -264,6 +274,17 @@ pub struct MarkAsRead {
     pub message_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct MessageSendResponse {
+    #[serde(default)]
+    pub messages: Vec<MessageSendId>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct MessageSendId {
+    pub id: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -276,6 +297,7 @@ mod tests {
             from: from.to_string(),
             id: id.to_string(),
             kind: "text".to_string(),
+            context: None,
             text: Some(TextContent {
                 body: body.to_string(),
             }),
@@ -435,5 +457,90 @@ mod tests {
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].status, "delivered");
         assert_eq!(statuses[0].recipient_id.as_deref(), Some("573001111111"));
+    }
+
+    #[test]
+    fn parses_external_customer_payload_with_profile_and_context_variants() {
+        let raw = r#"
+        {
+          "entry": [{
+            "changes": [{
+              "value": {
+                "contacts": [{
+                  "profile": { "name": "Cliente Externo" },
+                  "wa_id": "573001234567"
+                }],
+                "messages": [
+                  {
+                    "from": "573001234567",
+                    "id": "wamid-text",
+                    "timestamp": "1710000000",
+                    "text": { "body": "hola" },
+                    "type": "text"
+                  },
+                  {
+                    "from": "573001234567",
+                    "id": "wamid-button",
+                    "timestamp": "1710000001",
+                    "context": {},
+                    "interactive": {
+                      "type": "button_reply",
+                      "button_reply": { "id": "main_order", "title": "Hacer Pedido" }
+                    },
+                    "type": "interactive"
+                  },
+                  {
+                    "from": "573001234567",
+                    "id": "wamid-list",
+                    "timestamp": "1710000002",
+                    "context": { "id": "" },
+                    "interactive": {
+                      "type": "list_reply",
+                      "list_reply": {
+                        "id": "flavor_maracumango",
+                        "title": "Maracumango",
+                        "description": ""
+                      }
+                    },
+                    "type": "interactive"
+                  }
+                ]
+              }
+            }]
+          }]
+        }
+        "#;
+
+        let payload: WebhookPayload =
+            serde_json::from_str(raw).expect("meta payload should deserialize");
+        let events = payload.message_events();
+
+        assert_eq!(events.len(), 3);
+        assert!(events
+            .iter()
+            .all(|event| event.message.from == "573001234567"));
+        assert!(events.iter().all(|event| event
+            .contact
+            .as_ref()
+            .and_then(|contact| contact.profile.as_ref())
+            .map(|profile| profile.name.as_str())
+            == Some("Cliente Externo")));
+        assert!(events[0].message.context.is_none());
+        assert_eq!(
+            events[1]
+                .message
+                .context
+                .as_ref()
+                .and_then(|ctx| ctx.id.as_deref()),
+            None
+        );
+        assert_eq!(
+            events[2]
+                .message
+                .context
+                .as_ref()
+                .and_then(|ctx| ctx.id.as_deref()),
+            Some("")
+        );
     }
 }

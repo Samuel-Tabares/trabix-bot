@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -14,6 +16,7 @@ pub struct ConversationStateData {
     pub customer_review_scope: Option<String>,
     pub payment_method: Option<String>,
     pub referral_code: Option<String>,
+    pub referral_has_boost: bool,
     pub referral_discount_total: Option<i32>,
     pub ambassador_commission_total: Option<i32>,
     pub delivery_cost: Option<i32>,
@@ -21,6 +24,7 @@ pub struct ConversationStateData {
     pub receipt_media_id: Option<String>,
     pub receipt_timer_started_at: Option<DateTime<Utc>>,
     pub advisor_target_phone: Option<String>,
+    pub advisor_reply_threads: BTreeMap<String, String>,
     pub advisor_timer_started_at: Option<DateTime<Utc>>,
     pub advisor_timer_expired: bool,
     pub relay_timer_started_at: Option<DateTime<Utc>>,
@@ -47,6 +51,7 @@ impl Default for ConversationStateData {
             customer_review_scope: None,
             payment_method: None,
             referral_code: None,
+            referral_has_boost: false,
             referral_discount_total: None,
             ambassador_commission_total: None,
             delivery_cost: None,
@@ -54,6 +59,7 @@ impl Default for ConversationStateData {
             receipt_media_id: None,
             receipt_timer_started_at: None,
             advisor_target_phone: None,
+            advisor_reply_threads: BTreeMap::new(),
             advisor_timer_started_at: None,
             advisor_timer_expired: false,
             relay_timer_started_at: None,
@@ -123,4 +129,32 @@ pub struct OrderItem {
     pub unit_price: i32,
     pub subtotal: i32,
     pub created_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConversationStateData;
+
+    #[test]
+    fn conversation_state_data_deserializes_legacy_json_without_new_fields() {
+        let state_data: ConversationStateData = serde_json::from_str(
+            r#"
+            {
+              "items": [],
+              "delivery_type": "immediate",
+              "referral_code": "rider332",
+              "advisor_target_phone": "573001234567"
+            }
+            "#,
+        )
+        .expect("legacy state data should deserialize");
+
+        assert!(!state_data.referral_has_boost);
+        assert!(state_data.advisor_reply_threads.is_empty());
+        assert_eq!(state_data.referral_code.as_deref(), Some("rider332"));
+        assert_eq!(
+            state_data.advisor_target_phone.as_deref(),
+            Some("573001234567")
+        );
+    }
 }

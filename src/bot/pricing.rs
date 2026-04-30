@@ -132,6 +132,14 @@ pub fn has_wholesale_bucket(pedido: &PedidoCalculado) -> bool {
 }
 
 pub fn calcular_referido(pedido: &PedidoCalculado, code: &str) -> Option<ReferralApplied> {
+    calcular_referido_con_boost(pedido, code, false)
+}
+
+pub fn calcular_referido_con_boost(
+    pedido: &PedidoCalculado,
+    code: &str,
+    has_boost: bool,
+) -> Option<ReferralApplied> {
     let mut buckets = Vec::new();
 
     if pedido.es_mayor_con_licor {
@@ -139,6 +147,7 @@ pub fn calcular_referido(pedido: &PedidoCalculado, code: &str) -> Option<Referra
             true,
             pedido.cantidad_con_licor,
             pedido.total_con_licor,
+            has_boost,
         ));
     }
     if pedido.es_mayor_sin_licor {
@@ -146,6 +155,7 @@ pub fn calcular_referido(pedido: &PedidoCalculado, code: &str) -> Option<Referra
             false,
             pedido.cantidad_sin_licor,
             pedido.total_sin_licor,
+            has_boost,
         ));
     }
 
@@ -203,8 +213,13 @@ fn calcular_bucket_referido(
     has_liquor: bool,
     quantity: u32,
     subtotal_before_discount: u32,
+    has_boost: bool,
 ) -> ReferralBucketCalculated {
-    let (client_discount_percent, ambassador_commission_percent) = porcentaje_referido(quantity);
+    let (client_discount_percent, mut ambassador_commission_percent) =
+        porcentaje_referido(quantity);
+    if has_boost {
+        ambassador_commission_percent += 5;
+    }
     let client_discount_amount =
         aplicar_descuento_cliente(subtotal_before_discount, client_discount_percent);
     let subtotal_after_discount = subtotal_before_discount - client_discount_amount;
@@ -342,7 +357,9 @@ fn calcular_item_licor_detal(item: &OrderItemData, start_position: u32) -> ItemC
 mod tests {
     use crate::db::models::OrderItemData;
 
-    use super::{calcular_pedido, calcular_referido, has_wholesale_bucket};
+    use super::{
+        calcular_pedido, calcular_referido, calcular_referido_con_boost, has_wholesale_bucket,
+    };
 
     #[test]
     fn detail_orders_are_not_referral_eligible() {
@@ -368,6 +385,29 @@ mod tests {
         assert_eq!(referido.total_client_discount, 9_600);
         assert_eq!(referido.subtotal_after_discount, 86_400);
         assert_eq!(referido.total_ambassador_commission, 12_960);
+    }
+
+    #[test]
+    fn boost_referral_keeps_client_discount_and_adds_ambassador_commission() {
+        let pedido = calcular_pedido(&[OrderItemData {
+            flavor: "Maracumango".to_string(),
+            has_liquor: false,
+            quantity: 20,
+        }]);
+
+        let regular =
+            calcular_referido_con_boost(&pedido, "codigo", false).expect("eligible referral");
+        let boosted =
+            calcular_referido_con_boost(&pedido, "codigo", true).expect("eligible referral");
+
+        assert_eq!(boosted.total_client_discount, regular.total_client_discount);
+        assert_eq!(
+            boosted.subtotal_after_discount,
+            regular.subtotal_after_discount
+        );
+        assert_eq!(regular.total_ambassador_commission, 12_960);
+        assert_eq!(boosted.total_ambassador_commission, 17_280);
+        assert_eq!(boosted.buckets[0].ambassador_commission_percent, 20);
     }
 
     #[test]

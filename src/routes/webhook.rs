@@ -148,8 +148,8 @@ async fn process_incoming_message(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let from = message.from.clone();
     let message_id = message.id.clone();
-    let input = extract_input(&message);
-    let (message_type, content) = describe_input(&input);
+    let extracted = extract_input(&message);
+    let (message_type, content) = describe_input(&extracted.input);
     let actor = if from == state.config.advisor_phone {
         "advisor"
     } else {
@@ -175,13 +175,13 @@ async fn process_incoming_message(
     }
 
     if from == state.config.advisor_phone {
-        process_advisor_input(state, input).await?;
+        process_advisor_input(state, extracted.input, extracted.reply_to_message_id).await?;
     } else {
         let profile_name = contact
             .as_ref()
             .and_then(|contact| contact.profile.as_ref())
             .map(|profile| profile.name.clone());
-        process_customer_input(state, from, profile_name, input).await?;
+        process_customer_input(state, from, profile_name, extracted.input).await?;
     }
 
     Ok(())

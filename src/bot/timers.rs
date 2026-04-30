@@ -32,7 +32,7 @@ use crate::{
         },
     },
     engine::{
-        clear_advisor_session as clear_bound_advisor_session,
+        clear_advisor_session as clear_bound_advisor_session, clear_advisor_threads_for_target,
         send_timer_actions as dispatch_timer_actions,
     },
     logging::mask_phone,
@@ -49,6 +49,7 @@ pub const RECEIPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 pub const ADVISOR_AUTO_CANNOT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub const ADVISOR_STUCK_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+pub const ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT: Duration = Duration::from_secs(23 * 60 * 60);
 pub const RELAY_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const TIMER_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 static NEXT_TIMER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -462,6 +463,7 @@ async fn reconcile_boot_expired_timer(
             }
 
             reset_conversation(&state.pool, &conversation.phone_number).await?;
+            clear_advisor_threads_for_target(&state, &conversation.phone_number).await?;
 
             if clear_advisor_session {
                 clear_bound_advisor_session(&state, &state.config.advisor_phone).await?;
@@ -650,6 +652,7 @@ fn timer_recovery_with_overrides(
         is_simulator,
         overrides,
         conversation.state.as_str(),
+        state_data,
     ) {
         if state_data.advisor_timer_expired {
             return None;
@@ -1066,6 +1069,7 @@ async fn expire_advisor_timer_with_source(
             }
 
             reset_conversation(&state.pool, &phone_number).await?;
+            clear_advisor_threads_for_target(&state, &phone_number).await?;
             tracing::info!(
                 phone = %mask_phone(&phone_number),
                 timer_type = %TimerType::AdvisorResponse.as_str(),
@@ -1123,6 +1127,7 @@ async fn expire_relay_timer_with_source(
     }
 
     reset_conversation(&state.pool, &phone_number).await?;
+    clear_advisor_threads_for_target(&state, &phone_number).await?;
     clear_bound_advisor_session(&state, &state.config.advisor_phone).await?;
     tracing::info!(
         phone = %mask_phone(&phone_number),
@@ -1210,6 +1215,7 @@ async fn expire_conversation_abandon_with_source(
                     "failed to rehydrate state for inactivity reminder"
                 );
                 reset_conversation(&state.pool, &phone_number).await?;
+                clear_advisor_threads_for_target(&state, &phone_number).await?;
                 return Ok(());
             }
         };
@@ -1248,6 +1254,7 @@ async fn expire_conversation_abandon_with_source(
     )
     .await?;
     reset_conversation(&state.pool, &phone_number).await?;
+    clear_advisor_threads_for_target(&state, &phone_number).await?;
     tracing::info!(
         phone = %mask_phone(&phone_number),
         timer_type = %TimerType::ConversationAbandon.as_str(),
@@ -1333,6 +1340,7 @@ fn advisor_timeout_for_state_with_overrides(
     is_simulator: bool,
     overrides: &SimulatorTimerOverrides,
     state: &str,
+    state_data: &ConversationStateData,
 ) -> Option<Duration> {
     match advisor_timeout_kind(state) {
         Some(AdvisorTimeoutKind::AutoCannot) => Some(duration_from_overrides(
@@ -1345,11 +1353,19 @@ fn advisor_timeout_for_state_with_overrides(
             overrides,
             TimerRule::AdvisorResponse,
         )),
-        Some(AdvisorTimeoutKind::HardReset) => Some(duration_from_overrides(
-            is_simulator,
-            overrides,
-            TimerRule::AdvisorStuck,
-        )),
+        Some(AdvisorTimeoutKind::HardReset) => {
+            if state == "ask_delivery_cost"
+                && state_data.delivery_type.as_deref() == Some("scheduled")
+            {
+                Some(ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT)
+            } else {
+                Some(duration_from_overrides(
+                    is_simulator,
+                    overrides,
+                    TimerRule::AdvisorStuck,
+                ))
+            }
+        }
         None => None,
     }
 }
@@ -1686,7 +1702,8 @@ mod tests {
 
     use super::{
         boot_expiration_action_with_overrides, timer_recovery_with_overrides, BootExpirationAction,
-        SimulatorTimerOverrides, TimerRecovery, ADVISOR_AUTO_CANNOT_TIMEOUT, ADVISOR_STUCK_TIMEOUT,
+        SimulatorTimerOverrides, TimerRecovery, ADVISOR_AUTO_CANNOT_TIMEOUT,
+        ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT, ADVISOR_STUCK_TIMEOUT,
     };
     use crate::{
         bot::state_machine::TimerType,
@@ -1834,6 +1851,58 @@ mod tests {
         let conversation = active_timer_conversation(
             "ask_delivery_cost",
             ConversationStateData {
+                advisor_timer_started_at: Some(now - ChronoDuration::minutes(3)),
+                ..Default::default()
+            },
+            now,
+        );
+
+        let recovery =
+            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+
+        assert_eq!(
+            recovery,
+            Some(TimerRecovery::Active {
+                timer_type: TimerType::AdvisorResponse,
+                timeout: ADVISOR_STUCK_TIMEOUT,
+                started_at: now - ChronoDuration::minutes(3),
+            })
+        );
+    }
+
+    #[test]
+    fn timer_recovery_uses_twenty_three_hours_for_scheduled_delivery_cost() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "ask_delivery_cost",
+            ConversationStateData {
+                delivery_type: Some("scheduled".to_string()),
+                advisor_timer_started_at: Some(now - ChronoDuration::hours(22)),
+                ..Default::default()
+            },
+            now,
+        );
+
+        let recovery =
+            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+
+        assert_eq!(
+            recovery,
+            Some(TimerRecovery::Active {
+                timer_type: TimerType::AdvisorResponse,
+                timeout: ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT,
+                started_at: now - ChronoDuration::hours(22),
+            })
+        );
+    }
+
+    #[test]
+    fn timer_recovery_keeps_immediate_delivery_cost_on_short_stuck_timeout() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "ask_delivery_cost",
+            ConversationStateData {
+                delivery_type: Some("immediate".to_string()),
                 advisor_timer_started_at: Some(now - ChronoDuration::minutes(3)),
                 ..Default::default()
             },

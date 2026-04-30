@@ -485,7 +485,7 @@ async fn api_advisor_text(
         json!({}),
     )
     .await?;
-    process_advisor_input(state, UserInput::TextMessage(request.body))
+    process_advisor_input(state, UserInput::TextMessage(request.body), None)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
@@ -507,7 +507,7 @@ async fn api_advisor_button(
         json!({ "id": request.id }),
     )
     .await?;
-    process_advisor_input(state, UserInput::ButtonPress(request.id))
+    process_advisor_input(state, UserInput::ButtonPress(request.id), None)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
@@ -529,7 +529,7 @@ async fn api_advisor_list(
         json!({ "id": request.id }),
     )
     .await?;
-    process_advisor_input(state, UserInput::ListSelection(request.id))
+    process_advisor_input(state, UserInput::ListSelection(request.id), None)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)

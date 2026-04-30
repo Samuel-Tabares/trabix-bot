@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::{
     bot::{
         pricing::{
-            calcular_pedido, calcular_referido, has_wholesale_bucket, ItemCalculated,
+            calcular_pedido, calcular_referido_con_boost, has_wholesale_bucket, ItemCalculated,
             PedidoCalculado, ReferralApplied,
         },
         state_machine::{
@@ -116,7 +116,9 @@ pub fn handle_wait_referral_code(
             }
 
             let pedido = calcular_pedido(&context.items);
-            let Some(referral) = calcular_referido(&pedido, &normalized) else {
+            let has_boost = referral_registry().has_boost(&normalized);
+            let Some(referral) = calcular_referido_con_boost(&pedido, &normalized, has_boost)
+            else {
                 clear_referral_and_restore_total(context);
                 return Ok((
                     ConversationState::SelectPaymentMethod,
@@ -124,7 +126,7 @@ pub fn handle_wait_referral_code(
                 ));
             };
 
-            apply_referral_to_context(context, &referral);
+            apply_referral_to_context(context, &referral, has_boost);
 
             let mut actions = vec![
                 BotAction::UpsertDraftOrder {
@@ -612,8 +614,13 @@ fn invalid_referral_code_actions(phone: &str) -> Vec<BotAction> {
     }]
 }
 
-fn apply_referral_to_context(context: &mut ConversationContext, referral: &ReferralApplied) {
+fn apply_referral_to_context(
+    context: &mut ConversationContext,
+    referral: &ReferralApplied,
+    has_boost: bool,
+) {
     context.referral_code = Some(referral.code.clone());
+    context.referral_has_boost = has_boost;
     context.referral_discount_total =
         Some(i32::try_from(referral.total_client_discount).unwrap_or(i32::MAX));
     context.ambassador_commission_total =
@@ -640,7 +647,7 @@ fn referral_from_context(
     context
         .referral_code
         .as_deref()
-        .and_then(|code| calcular_referido(pedido, code))
+        .and_then(|code| calcular_referido_con_boost(pedido, code, context.referral_has_boost))
 }
 
 fn reply_button(id: &str, title: &str) -> Button {
@@ -711,6 +718,7 @@ mod tests {
             customer_review_scope: Some("checkout_review".to_string()),
             payment_method: None,
             referral_code: None,
+            referral_has_boost: false,
             referral_discount_total: None,
             ambassador_commission_total: None,
             delivery_cost: Some(5000),
@@ -821,15 +829,16 @@ mod tests {
         let mut context = wholesale_context();
 
         let (state, actions) = handle_wait_referral_code(
-            &UserInput::TextMessage("  TRABIX-AMB15 ".to_string()),
+            &UserInput::TextMessage("  TRABIX-PRUEBA15 ".to_string()),
             &mut context,
         )
         .expect("transition");
 
         assert_eq!(state, ConversationState::SelectPaymentMethod);
-        assert_eq!(context.referral_code.as_deref(), Some("trabix-amb15"));
+        assert_eq!(context.referral_code.as_deref(), Some("trabix-prueba15"));
+        assert!(context.referral_has_boost);
         assert_eq!(context.referral_discount_total, Some(9600));
-        assert_eq!(context.ambassador_commission_total, Some(12960));
+        assert_eq!(context.ambassador_commission_total, Some(17280));
         assert_eq!(context.total_final, Some(91400));
         assert!(actions.iter().any(|action| matches!(
             action,
@@ -838,7 +847,7 @@ mod tests {
         assert!(actions.iter().any(|action| matches!(
             action,
             BotAction::SendText { body, .. }
-                if body.contains("trabix-amb15") && body.contains("$9.600")
+                if body.contains("trabix-prueba15") && body.contains("$9.600")
         )));
     }
 

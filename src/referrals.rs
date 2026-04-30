@@ -44,11 +44,14 @@ impl Error for ReferralRegistryError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferralRegistry {
     codes: BTreeSet<String>,
+    boost_codes: BTreeSet<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ReferralRegistryFile {
     codes: Vec<String>,
+    #[serde(default)]
+    boost_codes: Vec<String>,
 }
 
 impl ReferralRegistry {
@@ -69,33 +72,17 @@ impl ReferralRegistry {
         self.codes.contains(code)
     }
 
+    pub fn has_boost(&self, code: &str) -> bool {
+        self.codes.contains(code) && self.boost_codes.contains(code)
+    }
+
     fn from_toml_str(raw: &str) -> Result<Self, ReferralRegistryError> {
         let parsed: ReferralRegistryFile =
             toml::from_str(raw).map_err(ReferralRegistryError::Parse)?;
 
         let mut codes = BTreeSet::new();
         for code in parsed.codes {
-            let normalized = normalize_referral_code(&code);
-            if normalized.is_empty() {
-                return Err(ReferralRegistryError::Validation(
-                    "codes cannot be empty".to_string(),
-                ));
-            }
-            if normalized != code {
-                return Err(ReferralRegistryError::Validation(format!(
-                    "code `{code}` must already be trimmed lowercase"
-                )));
-            }
-            if normalized.chars().any(char::is_whitespace) {
-                return Err(ReferralRegistryError::Validation(format!(
-                    "code `{code}` cannot contain whitespace"
-                )));
-            }
-            if normalized.len() > MAX_REFERRAL_CODE_LEN {
-                return Err(ReferralRegistryError::Validation(format!(
-                    "code `{code}` cannot be longer than {MAX_REFERRAL_CODE_LEN} characters"
-                )));
-            }
+            let normalized = validate_registry_code(&code)?;
             if !codes.insert(normalized.clone()) {
                 return Err(ReferralRegistryError::Validation(format!(
                     "duplicate code `{normalized}`"
@@ -103,7 +90,22 @@ impl ReferralRegistry {
             }
         }
 
-        Ok(Self { codes })
+        let mut boost_codes = BTreeSet::new();
+        for code in parsed.boost_codes {
+            let normalized = validate_registry_code(&code)?;
+            if !codes.contains(&normalized) {
+                return Err(ReferralRegistryError::Validation(format!(
+                    "boost code `{normalized}` must also exist in codes"
+                )));
+            }
+            if !boost_codes.insert(normalized.clone()) {
+                return Err(ReferralRegistryError::Validation(format!(
+                    "duplicate boost code `{normalized}`"
+                )));
+            }
+        }
+
+        Ok(Self { codes, boost_codes })
     }
 
     #[cfg(test)]
@@ -115,6 +117,32 @@ impl ReferralRegistry {
 
 pub fn normalize_referral_code(input: &str) -> String {
     input.trim().to_lowercase()
+}
+
+fn validate_registry_code(code: &str) -> Result<String, ReferralRegistryError> {
+    let normalized = normalize_referral_code(code);
+    if normalized.is_empty() {
+        return Err(ReferralRegistryError::Validation(
+            "codes cannot be empty".to_string(),
+        ));
+    }
+    if normalized != code {
+        return Err(ReferralRegistryError::Validation(format!(
+            "code `{code}` must already be trimmed lowercase"
+        )));
+    }
+    if normalized.chars().any(char::is_whitespace) {
+        return Err(ReferralRegistryError::Validation(format!(
+            "code `{code}` cannot contain whitespace"
+        )));
+    }
+    if normalized.len() > MAX_REFERRAL_CODE_LEN {
+        return Err(ReferralRegistryError::Validation(format!(
+            "code `{code}` cannot be longer than {MAX_REFERRAL_CODE_LEN} characters"
+        )));
+    }
+
+    Ok(normalized)
 }
 
 pub fn set_referral_registry(registry: ReferralRegistry) -> Result<(), ReferralRegistryError> {
@@ -186,5 +214,36 @@ codes = [" Codigo-1 "]
         assert!(
             matches!(error, ReferralRegistryError::Validation(message) if message.contains("longer than"))
         );
+    }
+
+    #[test]
+    fn boost_codes_must_exist_in_codes() {
+        let error = ReferralRegistry::from_toml_str(
+            r#"
+codes = ["codigo-1"]
+boost_codes = ["codigo-2"]
+"#,
+        )
+        .expect_err("orphan boost codes should fail");
+
+        assert!(
+            matches!(error, ReferralRegistryError::Validation(message) if message.contains("must also exist"))
+        );
+    }
+
+    #[test]
+    fn detects_boost_codes_only_when_registered_as_codes() {
+        let registry = ReferralRegistry::from_toml_str(
+            r#"
+codes = ["codigo-1", "codigo-2"]
+boost_codes = ["codigo-1"]
+"#,
+        )
+        .expect("registry should parse");
+
+        assert!(registry.contains("codigo-1"));
+        assert!(registry.has_boost("codigo-1"));
+        assert!(registry.contains("codigo-2"));
+        assert!(!registry.has_boost("codigo-2"));
     }
 }

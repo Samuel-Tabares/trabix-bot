@@ -261,6 +261,12 @@ pub enum UserInput {
     ListSelection(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractedInput {
+    pub input: UserInput,
+    pub reply_to_message_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum TimerType {
     AdvisorResponse,
@@ -373,6 +379,7 @@ pub struct ConversationContext {
     pub customer_review_scope: Option<String>,
     pub payment_method: Option<String>,
     pub referral_code: Option<String>,
+    pub referral_has_boost: bool,
     pub referral_discount_total: Option<i32>,
     pub ambassador_commission_total: Option<i32>,
     pub delivery_cost: Option<i32>,
@@ -418,6 +425,7 @@ impl ConversationContext {
             customer_review_scope: state_data.customer_review_scope.clone(),
             payment_method: state_data.payment_method.clone(),
             referral_code: state_data.referral_code.clone(),
+            referral_has_boost: state_data.referral_has_boost,
             referral_discount_total: state_data.referral_discount_total,
             ambassador_commission_total: state_data.ambassador_commission_total,
             delivery_cost: state_data.delivery_cost,
@@ -451,6 +459,7 @@ impl ConversationContext {
             customer_review_scope: self.customer_review_scope.clone(),
             payment_method: self.payment_method.clone(),
             referral_code: self.referral_code.clone(),
+            referral_has_boost: self.referral_has_boost,
             referral_discount_total: self.referral_discount_total,
             ambassador_commission_total: self.ambassador_commission_total,
             delivery_cost: self.delivery_cost,
@@ -458,6 +467,7 @@ impl ConversationContext {
             receipt_media_id: self.receipt_media_id.clone(),
             receipt_timer_started_at: self.receipt_timer_started_at,
             advisor_target_phone: self.advisor_target_phone.clone(),
+            advisor_reply_threads: Default::default(),
             advisor_timer_started_at: self.advisor_timer_started_at,
             advisor_timer_expired: self.advisor_timer_expired,
             relay_timer_started_at: self.relay_timer_started_at,
@@ -482,6 +492,7 @@ impl ConversationContext {
 
     pub fn clear_referral_data(&mut self) {
         self.referral_code = None;
+        self.referral_has_boost = false;
         self.referral_discount_total = None;
         self.ambassador_commission_total = None;
     }
@@ -616,7 +627,23 @@ pub fn transition_advisor(
     }
 }
 
-pub fn extract_input(message: &IncomingMessage) -> UserInput {
+pub fn extract_input(message: &IncomingMessage) -> ExtractedInput {
+    let input = extract_user_input(message);
+    let reply_to_message_id = message
+        .context
+        .as_ref()
+        .and_then(|context| context.id.as_deref())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+
+    ExtractedInput {
+        input,
+        reply_to_message_id,
+    }
+}
+
+pub fn extract_user_input(message: &IncomingMessage) -> UserInput {
     match message.kind.as_str() {
         "text" => UserInput::TextMessage(
             message
@@ -652,5 +679,106 @@ pub fn extract_input(message: &IncomingMessage) -> UserInput {
                 .unwrap_or_default(),
         ),
         _ => UserInput::TextMessage(String::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::whatsapp::types::{
+        ButtonReply, ImageContent, IncomingMessage, InteractiveContent, ListReply, MessageContext,
+        TextContent,
+    };
+
+    use super::{extract_input, UserInput};
+
+    fn base_message(kind: &str) -> IncomingMessage {
+        IncomingMessage {
+            from: "573001234567".to_string(),
+            id: "wamid-in".to_string(),
+            kind: kind.to_string(),
+            context: None,
+            text: None,
+            interactive: None,
+            image: None,
+        }
+    }
+
+    #[test]
+    fn extract_input_returns_text_and_reply_context() {
+        let mut message = base_message("text");
+        message.text = Some(TextContent {
+            body: "hola".to_string(),
+        });
+        message.context = Some(MessageContext {
+            id: Some("wamid-advisor".to_string()),
+            from: Some("573009999999".to_string()),
+        });
+
+        let extracted = extract_input(&message);
+
+        assert_eq!(extracted.input, UserInput::TextMessage("hola".to_string()));
+        assert_eq!(
+            extracted.reply_to_message_id.as_deref(),
+            Some("wamid-advisor")
+        );
+    }
+
+    #[test]
+    fn extract_input_ignores_missing_or_empty_reply_context() {
+        let mut message = base_message("text");
+        message.text = Some(TextContent {
+            body: "hola".to_string(),
+        });
+        message.context = Some(MessageContext {
+            id: Some("  ".to_string()),
+            from: None,
+        });
+
+        let extracted = extract_input(&message);
+
+        assert_eq!(extracted.input, UserInput::TextMessage("hola".to_string()));
+        assert_eq!(extracted.reply_to_message_id, None);
+    }
+
+    #[test]
+    fn extract_input_returns_button_list_and_image() {
+        let mut button = base_message("interactive");
+        button.interactive = Some(InteractiveContent {
+            kind: "button_reply".to_string(),
+            button_reply: Some(ButtonReply {
+                id: "btn-1".to_string(),
+                title: "Botón".to_string(),
+            }),
+            list_reply: None,
+        });
+        assert_eq!(
+            extract_input(&button).input,
+            UserInput::ButtonPress("btn-1".to_string())
+        );
+
+        let mut list = base_message("interactive");
+        list.interactive = Some(InteractiveContent {
+            kind: "list_reply".to_string(),
+            button_reply: None,
+            list_reply: Some(ListReply {
+                id: "list-1".to_string(),
+                title: "Lista".to_string(),
+                description: String::new(),
+            }),
+        });
+        assert_eq!(
+            extract_input(&list).input,
+            UserInput::ListSelection("list-1".to_string())
+        );
+
+        let mut image = base_message("image");
+        image.image = Some(ImageContent {
+            id: "media-1".to_string(),
+            mime_type: Some("image/jpeg".to_string()),
+        });
+        assert_eq!(
+            extract_input(&image).input,
+            UserInput::ImageMessage("media-1".to_string())
+        );
     }
 }

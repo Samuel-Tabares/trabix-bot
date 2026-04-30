@@ -4,13 +4,16 @@ use chrono::{FixedOffset, Utc};
 
 use crate::{
     bot::{
-        pricing::{calcular_pedido, calcular_referido, ItemCalculated, PedidoCalculado},
+        pricing::{calcular_pedido, calcular_referido_con_boost, ItemCalculated, PedidoCalculado},
         state_machine::{
             BotAction, ConversationContext, ConversationState, TimerType, TransitionResult,
             UserInput,
         },
         states::{checkout, customer_data, data_collect, menu, scheduling},
-        timers::{ADVISOR_AUTO_CANNOT_TIMEOUT, ADVISOR_RESPONSE_TIMEOUT, ADVISOR_STUCK_TIMEOUT},
+        timers::{
+            ADVISOR_AUTO_CANNOT_TIMEOUT, ADVISOR_RESPONSE_TIMEOUT,
+            ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT, ADVISOR_STUCK_TIMEOUT,
+        },
     },
     messages::{client_messages, render_template},
     whatsapp::types::{Button, ButtonReplyPayload},
@@ -1199,9 +1202,17 @@ fn ask_delivery_cost_entry_actions(
         BotAction::StartTimer {
             timer_type: TimerType::AdvisorResponse,
             phone: context.phone_number.clone(),
-            duration: ADVISOR_STUCK_TIMEOUT,
+            duration: ask_delivery_cost_timeout(context),
         },
     ]
+}
+
+fn ask_delivery_cost_timeout(context: &ConversationContext) -> Duration {
+    if context.delivery_type.as_deref() == Some("scheduled") {
+        ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT
+    } else {
+        ADVISOR_STUCK_TIMEOUT
+    }
 }
 
 fn wait_advisor_response_entry_actions(
@@ -1557,7 +1568,7 @@ fn referral_from_context(
     context
         .referral_code
         .as_deref()
-        .and_then(|code| calcular_referido(pedido, code))
+        .and_then(|code| calcular_referido_con_boost(pedido, code, context.referral_has_boost))
 }
 
 fn render_referral_details(referral: Option<&crate::bot::pricing::ReferralApplied>) -> String {
@@ -1781,6 +1792,7 @@ mod tests {
             customer_review_scope: None,
             payment_method: Some("cash_on_delivery".to_string()),
             referral_code: None,
+            referral_has_boost: false,
             referral_discount_total: None,
             ambassador_commission_total: None,
             delivery_cost: None,
@@ -1933,6 +1945,20 @@ mod tests {
         )));
         assert_eq!(context.delivery_cost, Some(5000));
         assert_eq!(context.total_final, Some(17000));
+    }
+
+    #[test]
+    fn scheduled_order_delivery_cost_wait_uses_twenty_three_hour_timer() {
+        let mut context = context();
+        context.delivery_type = Some("scheduled".to_string());
+
+        let (_state, actions) = super::start_order_advisor_flow(&mut context);
+
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            crate::bot::state_machine::BotAction::StartTimer { duration, .. }
+                if *duration == crate::bot::timers::ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT
+        )));
     }
 
     #[test]

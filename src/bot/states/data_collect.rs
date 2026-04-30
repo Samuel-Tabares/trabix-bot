@@ -185,6 +185,7 @@ mod tests {
             customer_review_scope: None,
             payment_method: None,
             referral_code: None,
+            referral_has_boost: false,
             referral_discount_total: None,
             ambassador_commission_total: None,
             delivery_cost: None,
