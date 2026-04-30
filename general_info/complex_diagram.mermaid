@@ -1,5 +1,5 @@
 %%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor':'#667eea', 'primaryBorderColor':'#7b9bff', 'background':'#1e1e2e', 'mainBkg':'#2a2a3a', 'tertiaryBkg':'#333344', 'lineColor':'#7b9bff', 'textColor':'#e0e0e0', 'clusterBkg':'#2a2a3a', 'clusterBorder':'#7b9bff'}}}%%
-%% Release baseline: v1.5.1 - 2026-03-26
+%% Release baseline: v1.7.2 - 2026-04-30
 %% Includes local simulator mode with shared engine/transport, persisted local transcripts/media,
 %% simulator transcript timestamps in America/Bogota, active timer inspection/countdowns,
 %% simulator-only timer overrides, and timeout source notices for runtime/sweep/boot reconciliation,
@@ -11,7 +11,9 @@
 %% simulator HTTP handlers centralized under src/simulator/web.rs and frontend assets extracted under assets/simulator/,
 %% plus the existing main-menu simplification, America/Bogota SQL sessions,
 %% generic customer inactivity reminder/reset only while explicitly armed by inbound customer activity,
-%% and 30-minute stuck advisor hard resets.
+%% and 30-minute stuck advisor hard resets, with 23-hour scheduled delivery-cost cutoffs.
+%% v1.7.2 also includes safe advisor quoted-message routing by Meta message_id,
+%% external customer payload tolerance, and referral boost_codes.
 %% Runtime observability logs masked phone markers, short content previews, state transitions,
 %% outbound action summaries, and timer restore/expiry paths while keeping status-only webhooks out of INFO.
 %% Narrative runtime and validation reference is consolidated in general_info/current_runtime_reference.md.
@@ -29,7 +31,7 @@ graph TD
         HMAC -->|No| Reject["401 / ignorar"]
         HMAC -->|Si| Parse["🧩 Parse webhook + describe_input + match contacts/profile"]
         SimUI --> SimParse["🧩 Parse local session + profile name + local media"]
-        Parse --> Msg{"💬 ¿Hay mensaje útil?"}
+        Parse --> Msg{"💬 ¿Hay mensaje útil?<br/>context.id opcional/tolerante"}
         SimParse --> SimMsg{"💬 ¿Hay mensaje útil?"}
         Msg -->|No| Ignore["200 OK + log"]
         SimMsg -->|No| SimIgnore["UI sin cambio"]
@@ -46,11 +48,11 @@ graph TD
         SimSessions["🧪 simulator_sessions<br/>- customer_phone<br/>- profile_name"]
         SimMessages["💬 simulator_messages<br/>- actor<br/>- audience<br/>- message_kind<br/>- body<br/>- payload JSONB<br/>- created_at timestamp"]
         SimMedia["🖼️ simulator_media<br/>- file_path<br/>- mime_type<br/>- original_filename"]
-        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- advisor_detail_stuck 30m<br/>- relay_inactivity 30m<br/>- inactivity reminder 2m / reset 35m<br/>- restore_pending_timers()<br/>- sweep_expired_timers()<br/>- simulator UI overrides/countdowns"]
+        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- advisor_detail_stuck 30m<br/>- scheduled ask_delivery_cost 23h<br/>- relay_inactivity 30m<br/>- inactivity reminder 2m / reset 35m<br/>- restore_pending_timers()<br/>- sweep_expired_timers()<br/>- simulator UI overrides/countdowns"]
     end
 
     Engine -->|Cliente| LoadClient["load_or_create_conversation + rehydrate context + seed inbound name/phone"]
-    Engine -->|Asesor| LoadAdvisor["load advisor conversation + resolve target phone"]
+    Engine -->|Asesor| LoadAdvisor["load advisor conversation + resolve target phone<br/>quoted message_id gana; session activa fallback"]
 
     LoadClient --> ClientState{"Estado actual"}
     LoadAdvisor --> AdvisorState{"Estado actual del caso"}
@@ -106,7 +108,7 @@ graph TD
         EditPhone --> ReviewCheckout
         EditAddress --> ReviewCheckout
 
-        SelectReferral["🎟️ select_referral_option<br/>Mayor: Tengo código / Seguir sin código"] -->|Tengo código| WaitReferralCode["⌨️ wait_referral_code<br/>texto libre -> trim lowercase<br/>valida config/referrals.toml<br/>inválido -> Reintentar / Seguir sin código"]
+        SelectReferral["🎟️ select_referral_option<br/>Mayor: Tengo código / Seguir sin código"] -->|Tengo código| WaitReferralCode["⌨️ wait_referral_code<br/>texto libre -> trim lowercase<br/>valida codes + boost_codes<br/>inválido -> Reintentar / Seguir sin código"]
         SelectReferral -->|Seguir sin código| SelectPayment["💳 select_payment_method<br/>Botones Contra Entrega / Pago Ahora"]
         WaitReferralCode -->|válido| SelectPayment
         WaitReferralCode -->|inválido| SelectReferral
@@ -119,7 +121,7 @@ graph TD
 
     subgraph OrderPersistence["PERSISTENCIA DEL PEDIDO"]
         DraftUpsert["💾 UpsertDraftOrder / FinalizeCurrentOrder<br/>usa conversations + context para orders y order_items"]
-        ContextData["🧠 state_data relevante<br/>- items[]<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- referral_code<br/>- referral_discount_total<br/>- ambassador_commission_total<br/>- delivery_cost<br/>- total_final<br/>- receipt_media_id<br/>- current_order_id<br/>- advisor timers / relay timers"]
+        ContextData["🧠 state_data relevante<br/>- items[]<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- referral_code / referral_has_boost<br/>- referral_discount_total<br/>- ambassador_commission_total<br/>- delivery_cost<br/>- total_final<br/>- receipt_media_id<br/>- current_order_id<br/>- advisor_reply_threads<br/>- advisor timers / relay timers"]
     end
 
     AdvisorHandoff --> DraftUpsert
@@ -189,7 +191,7 @@ graph TD
     end
 
     subgraph AdvisorIngress["INGRESO DE MENSAJES DEL ASESOR"]
-        AdvisorState --> AdvisorTarget{"📌 ¿Hay target_phone o button_id?"}
+        AdvisorState --> AdvisorTarget{"📌 ¿Hay quoted message_id,<br/>target_phone o button_id?"}
         AdvisorTarget -->|No| AdvisorNoTarget["Responder al asesor:\nPrimero usa un boton de un caso pendiente"]
         AdvisorTarget -->|Si| AdvisorTransition["transition_advisor() segun estado del cliente"]
         AdvisorTransition --> OrderAdvisorFlow
@@ -218,7 +220,7 @@ graph TD
         Timers --> Sweep["⏲️ sweep_expired_timers()<br/>cada 60s"]
 
         Timers --> ReceiptExpire["expire_receipt_timer\nCliente: no llego comprobante\nBotones Cambiar pago / Cancelar"]
-        Timers --> AdvisorExpire["expire_advisor_timer\nPedido inmediato: auto-No puedo a los 5m\nContacto asesor: Dejar mensaje / Menu\nAdvisor-detail waits: hard reset 30m"]
+        Timers --> AdvisorExpire["expire_advisor_timer\nPedido inmediato: auto-No puedo a los 5m\nContacto asesor: Dejar mensaje / Menu\nAdvisor-detail waits: hard reset 30m\nScheduled ask_delivery_cost: 23h"]
         Timers --> RelayExpire["expire_relay_timer\nCliente: conversacion cerrada por inactividad"]
         Timers --> IdleReminder["conversation_abandon 2m\nReenvia el prompt actual una sola vez"]
         Timers --> IdleReset["conversation_abandon 35m\nNotifica reinicio y resetea a MainMenu"]

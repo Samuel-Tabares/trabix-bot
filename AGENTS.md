@@ -51,13 +51,13 @@ Current implementation status:
   - conversation persistence of payment context, receipt state, delivery cost/total final, and timer rehydration data
   - handoff persistence into `pending_advisor`
 - Phase 4 is implemented and now working as the current production runtime:
-  - real advisor routing in `webhook.rs`, including per-client advisor buttons and active advisor session binding
+  - real advisor routing in `webhook.rs`, including per-client advisor buttons, quoted-message routing by Meta `message_id`, and active advisor session binding fallback
   - advisor detail flow now starts with delivery-cost capture, then either final payment selection or hour negotiation depending on delivery type
   - advisor hour negotiation for detail and scheduled orders
   - immediate orders now expose only advisor `Confirmar`; 5 minutes of silence auto-falls back to the same path as `No puedo`
-  - wholesale orders now expose an optional referral-code step right before payment; valid lowercase-tracked codes from `config/referrals.toml` apply discount only to wholesale-priced buckets, round the client discount up to the next `$100`, require lowercase/no spaces/max 15 chars in the registry, and also calculate ambassador commission/accounting totals
+  - wholesale orders now expose an optional referral-code step right before payment; valid lowercase-tracked codes from `config/referrals.toml` apply discount only to wholesale-priced buckets, round the client discount up to the next `$100`, require lowercase/no spaces/max 15 chars in the registry, and also calculate ambassador commission/accounting totals, with optional `boost_codes` adding 5 percentage points only for codes also present in `codes`
   - when the customer completes payment, the advisor receives a final confirmed-order packet with customer data, order details, and final totals; `Pago Ahora` also forwards the receipt image
-  - 30-minute hard reset for advisor-managed `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, and `wait_advisor_confirm_hour`, with order status moved to `manual_followup`
+  - hard reset for advisor-managed waits with order status moved to `manual_followup`: 30 minutes for immediate `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, and `wait_advisor_confirm_hour`, plus 23 hours for scheduled-order `ask_delivery_cost`
   - generic client inactivity handling on customer-input states: one reminder at 2 minutes and reset to `MainMenu` after 35 minutes, excluding advisor/receipt/relay timed waits
   - wholesale pricing still exists, but checkout no longer branches into a wholesale-specific relay path
   - `Hablar con Asesor` now uses advisor `Atender` plus leave-message fallback on timeout, and relay `Finalizar` is delivered only on relay start
@@ -84,6 +84,7 @@ Current real runtime behavior:
 - Any public user can message the production WhatsApp number when the Meta app is in `Live` mode and the WABA is correctly subscribed to the app.
 - Messages from `ADVISOR_PHONE` are never treated as customer messages; they always enter the advisor flow.
 - If the advisor writes without first selecting a pending case, the bot should answer with the advisor guidance message rather than the customer menu.
+- When the advisor replies to a bot message quoted in WhatsApp, the bot resolves the client by quoted `message_id` if that message was sent during an advisor wait; otherwise it falls back to the active advisor session.
 - The bot replies with text, buttons, lists, and images through Meta Cloud API, and persists conversation/order state in PostgreSQL.
 - For customer messages, the runtime seeds `customer_phone` from inbound WhatsApp `from` and seeds `customer_name` from `contacts[].profile.name` when Meta includes it; manual edits remain authoritative.
 - Backend logs now prioritize operational flow visibility: masked phone suffixes, short content previews, state transitions, outbound action summaries, and timer recovery/expiry events. Meta status-only webhooks should stay out of `INFO` noise unless `DEBUG` is enabled.
@@ -121,7 +122,7 @@ Operational notes:
 - The simulator always uses the tracked file `assets/trabix-menu.png` for `Ver Menú`. Replace that tracked file if the shared simulator menu image changes in the future.
 - `SIMULATOR_UPLOAD_DIR` stores local receipt/image uploads for simulator conversations and should stay outside production deploy flows.
 - Customer-facing bot copy now lives in `config/messages.toml` and is loaded at startup; restart the service after editing that file.
-- Ambassador referral codes now live in `config/referrals.toml` and are loaded at startup; keep them trimmed lowercase, without spaces, at 15 characters max, and restart the service after editing that file.
+- Ambassador referral codes now live in `config/referrals.toml` and are loaded at startup; keep `codes` and `boost_codes` trimmed lowercase, without spaces, at 15 characters max, and restart the service after editing that file. Every `boost_codes` entry must also exist in `codes`.
 - Referral client discounts round up to the next `$100` before the final subtotal and ambassador commission are calculated.
 - `TRANSFER_PAYMENT_TEXT` is now optional fallback-only in `.env` for backward compatibility if `config/messages.toml` leaves `checkout.transfer_payment_text` empty.
 - `MENU_IMAGE_MEDIA_ID` must contain a valid Meta `media_id`; the runtime no longer expects separate media IDs for liquor/non-liquor flavor flows.
@@ -184,6 +185,7 @@ This repository now uses release versions and tags, every change made on the pro
   - `v1.6.0`: review-first checkout, advisor delivery-cost-first flow, final payment at the end, 5-minute auto-fallback for immediate orders, and one-time relay finalization buttons
   - `v1.6.1`: final advisor confirmation packet on both payment endings, including full order/customer summary and receipt forwarding for `Pago Ahora`
   - `v1.7.0`: wholesale ambassador referral codes before payment, rounded-up referral discounts, simulator Bogotá clock override, and capped 15-character referral registry entries
+  - `v1.7.2`: safe recovery of advisor quoted-message routing, referral boost codes, external Meta payload tolerance, and 23-hour scheduled delivery-cost wait cutoff
 - Use semantic versioning from this point forward:
   - `MAJOR` for breaking changes or major product resets
   - `MINOR` for backward-compatible feature releases

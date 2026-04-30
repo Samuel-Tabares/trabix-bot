@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-04-30
+
+- Restore safe advisor routing by quoted Meta `context.id` for advisor replies while keeping active advisor-session fallback when no valid quote exists.
+- Keep customer webhook intake tolerant of external Meta payloads with profile names, interactive messages, and missing or empty quoted context IDs, preserving the early `received whatsapp message` log.
+- Add referral boost codes from `config/referrals.toml`; boost codes must also be valid referral codes and add 5 percentage points to ambassador commission without changing the customer discount.
+- Update tracked referral codes to `trabix-prueba15`, `rider332`, and `bytebann`, with `trabix-prueba15` enabled as the boosted code.
+- Use a 23-hour stale cutoff for scheduled-order `ask_delivery_cost` waits while keeping immediate delivery-cost waits on the existing 30-minute hard reset.
+- Store new advisor reply-thread and referral boost metadata in `conversations.state_data` with legacy JSON defaults, avoiding a SQL migration.
+
 ## [1.7.0] - 2026-04-07
 
 - Add a wholesale-only ambassador referral step before payment with `Tengo código` / `Seguir sin código`, lowercase code validation from `config/referrals.toml`, and retry/skip handling for invalid codes.

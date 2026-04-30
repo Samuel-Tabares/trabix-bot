@@ -69,6 +69,8 @@ Flujo base:
 
 Comportamiento actual relevante:
 
+- El log `received whatsapp message` se emite antes de `mark_as_read` y antes de consultar la base de datos, para distinguir recepcion real de fallos internos.
+- Los payloads Meta de clientes externos pueden incluir `contacts[].profile.name`, mensajes interactivos y `context` ausente o sin `id`; esos casos deben parsear sin romper ni redirigir el mensaje.
 - `mark_as_read` es best-effort. Si Meta rechaza ese request, el bot solo registra warning y sigue procesando.
 - Los logs del runtime priorizan visibilidad operativa con telefono enmascarado, previews cortos de texto, transiciones de estado, resumen de respuestas salientes y eventos de timers. Los callbacks de estado `sent/delivered/read` de Meta deben quedar fuera del ruido normal de `INFO` y verse en `DEBUG` cuando haga falta.
 - El callback productivo exacto es `/webhook`.
@@ -260,6 +262,7 @@ Si elige `Tengo código`:
   - solo minusculas
   - sin espacios
   - maximo `15` caracteres
+- `boost_codes` es opcional y cada entrada debe existir tambien en `codes`
 
 Si el codigo es invalido:
 
@@ -273,6 +276,7 @@ Si el codigo es valido:
   - `20-49`: cliente `10%`, embajador `15%`
   - `50-99`: cliente `12%`, embajador `18%`
   - `100+`: cliente `15%`, embajador `20%`
+- si el codigo esta en `boost_codes`, la comision del embajador suma `5` puntos porcentuales sin cambiar el descuento del cliente
 - el descuento del cliente siempre se redondea hacia arriba al siguiente centenar:
   - ejemplo: `$4.510` pasa a `$4.600`
   - si ya cae exacto en centenar, se mantiene igual
@@ -405,6 +409,7 @@ Despues de digitar el domicilio:
 - el cliente recibe confirmacion del pedido programado con subtotal, domicilio y total final
 - si el pedido aplica al por mayor, el cliente entra antes por la validacion opcional de referral
 - no se espera un boton extra de confirmacion del asesor
+- si el asesor no digita el domicilio en `ask_delivery_cost`, el cutoff de pedido programado es `23 horas`
 
 ### Pedido Inmediato
 
@@ -423,6 +428,7 @@ Despues de digitar el domicilio:
 - el asesor recibe solo el boton `Confirmar`
 - si confirma, el cliente recibe subtotal, domicilio, total final y luego el paso opcional de referral antes del selector de pago cuando aplica al por mayor
 - si el asesor no responde durante `5 minutos`, el sistema entra automaticamente a la misma rama que `No puedo`
+- si el asesor no digita el domicilio en `ask_delivery_cost`, el cutoff de pedido inmediato sigue siendo `30 minutos`
 
 ### Negociacion De Hora
 
@@ -551,7 +557,7 @@ Catch-up silencioso actual:
 - `wait_receipt`: marca timeout pendiente sin enviar mensajes en boot
 - `wait_advisor_response`: marca el timeout del pedido inmediato sin fanout en boot
 - `wait_advisor_contact`: marca timeout del asesor sin fanout en boot
-- `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, `wait_advisor_confirm_hour`: puede resetear y mover orden a `manual_followup` sin enviar mensajes en boot
+- `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, `wait_advisor_confirm_hour`: puede resetear y mover orden a `manual_followup` sin enviar mensajes en boot; `ask_delivery_cost` usa `23 horas` para programados y `30 minutos` para inmediatos
 - `relay_mode`: cierra silenciosamente si ya estaba vencido
 - inactividad generica:
   - si ya debia mandar recordatorio, marca el recordatorio como consumido y solo conserva el deadline de reset
@@ -583,9 +589,14 @@ Campos mas importantes hoy:
 - `scheduled_date`
 - `scheduled_time`
 - `payment_method`
+- `referral_code`
+- `referral_has_boost`
+- `referral_discount_total`
+- `ambassador_commission_total`
 - `receipt_media_id`
 - `receipt_timer_started_at`
 - `advisor_target_phone`
+- `advisor_reply_threads`
 - `advisor_timer_started_at`
 - `advisor_timer_expired`
 - `relay_timer_started_at`
