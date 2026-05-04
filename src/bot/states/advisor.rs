@@ -1400,7 +1400,7 @@ fn render_order_summary(context: &ConversationContext, pedido: &PedidoCalculado)
     };
 
     let referral = referral_from_context(context, pedido);
-    let referral_details = render_referral_details(referral.as_ref());
+    let referral_details = render_referral_details(referral.as_ref(), context.referral_has_boost);
 
     let totals = match (context.delivery_cost, context.total_final, referral.as_ref()) {
         (Some(delivery_cost), Some(total_final), Some(referral)) => format!(
@@ -1571,7 +1571,10 @@ fn referral_from_context(
         .and_then(|code| calcular_referido_con_boost(pedido, code, context.referral_has_boost))
 }
 
-fn render_referral_details(referral: Option<&crate::bot::pricing::ReferralApplied>) -> String {
+fn render_referral_details(
+    referral: Option<&crate::bot::pricing::ReferralApplied>,
+    has_boost: bool,
+) -> String {
     let Some(referral) = referral else {
         return String::new();
     };
@@ -1598,9 +1601,12 @@ fn render_referral_details(referral: Option<&crate::bot::pricing::ReferralApplie
         .collect::<Vec<_>>()
         .join("\n");
 
+    let boost_line = if has_boost { "\nBOOST" } else { "" };
+
     format!(
-        "\n\nReferido:\nCódigo: {}\nDescuento cliente: {}\nComisión embajador total: {}\n{}",
+        "\n\nReferido:\nCódigo: {}{}\nDescuento cliente: {}\nComisión embajador total: {}\n{}",
         referral.code,
+        boost_line,
         format_currency(referral.total_client_discount),
         format_currency(referral.total_ambassador_commission),
         bucket_lines,
@@ -1771,7 +1777,7 @@ mod tests {
     use super::{
         handle_advisor_ask_delivery_cost, handle_advisor_confirm_hour,
         handle_advisor_wait_advisor_response, handle_client_waiting_state, handle_leave_message,
-        parse_advisor_button_id, start_contact_advisor, AdvisorButtonAction,
+        parse_advisor_button_id, render_order_summary, start_contact_advisor, AdvisorButtonAction,
     };
 
     fn context() -> ConversationContext {
@@ -1959,6 +1965,32 @@ mod tests {
             crate::bot::state_machine::BotAction::StartTimer { duration, .. }
                 if *duration == crate::bot::timers::ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT
         )));
+    }
+
+    #[test]
+    fn advisor_summary_marks_boosted_referral_with_boost_word() {
+        let mut context = wholesale_context();
+        context.referral_code = Some("trabix-prueba15".to_string());
+        context.referral_has_boost = true;
+
+        let pedido = crate::bot::pricing::calcular_pedido(&context.items);
+        let summary = render_order_summary(&context, &pedido);
+
+        assert!(summary.contains("\nBOOST\n"));
+        assert!(summary.contains("comisión 20%"));
+    }
+
+    #[test]
+    fn advisor_summary_does_not_mark_regular_referral_as_boost() {
+        let mut context = wholesale_context();
+        context.referral_code = Some("rider332".to_string());
+        context.referral_has_boost = false;
+
+        let pedido = crate::bot::pricing::calcular_pedido(&context.items);
+        let summary = render_order_summary(&context, &pedido);
+
+        assert!(!summary.contains("BOOST"));
+        assert!(summary.contains("comisión 15%"));
     }
 
     #[test]
