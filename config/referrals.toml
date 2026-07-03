@@ -1,7 +1,3 @@
-codes = [
-  "trabix-prueba15",
-  "rider332",
-  "bytebann",
-]
+codes = ["trabix-prueba15", "roma08", "jega1"]
 
 boost_codes = ["trabix-prueba15"]
