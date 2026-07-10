@@ -7,7 +7,7 @@ Su objetivo es describir el funcionamiento real y actual del bot en produccion, 
 
 Este archivo debe mantenerse alineado con:
 
-- `AGENTS.md`
+- `CLAUDE.md`
 - `general_info/complex_diagram.mermaid`
 - `general_info/simple_diagram.mermaid`
 - la implementacion vigente en `src/`
