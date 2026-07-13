@@ -23,7 +23,7 @@ use crate::{
     db::{
         models::{Conversation, ConversationStateData},
         queries::{
-            create_conversation, create_order, get_conversation, replace_order_items,
+            create_conversation, create_order, create_or_update_customer, get_conversation, replace_order_items,
             reset_conversation, update_customer_data, update_last_message, update_order,
             update_order_delivery_cost, update_order_status, update_state,
         },
@@ -43,6 +43,7 @@ pub async fn process_customer_input(
     state: AppState,
     phone: String,
     profile_name: Option<String>,
+    username: Option<String>,
     input: UserInput,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let _case_lock = crate::lock_conversation(&state.conversation_locks, &phone).await;
@@ -88,6 +89,17 @@ pub async fn process_customer_input(
         &phone,
         context.customer_name.as_deref(),
         context.customer_phone.as_deref(),
+        context.delivery_address.as_deref(),
+    )
+    .await?;
+
+    create_or_update_customer(
+        &state.pool,
+        &phone,
+        context.customer_phone.as_deref(),
+        context.customer_name.as_deref(),
+        None,
+        username.as_deref(),
         context.delivery_address.as_deref(),
     )
     .await?;

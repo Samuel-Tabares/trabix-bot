@@ -1,8 +1,8 @@
 # MASTER PROMPT: Refactorización del Bot de IA (Claude Haiku 4.5)
 
 **Fecha:** 2026-07-13  
-**Versión:** 1.1 (con cambios integrados)  
-**Estado:** FASE 2 COMPLETADA (2026-07-13 ~10:45) — Próxima: FASE 3
+**Versión:** 1.2 (FASE 3 integrada)  
+**Estado:** FASE 3 COMPLETADA (2026-07-13 ~11:30) — Próxima: FASE 4
 
 ---
 
@@ -695,11 +695,11 @@ Escenario C - Cliente desvía totalmente:
   - [x] `apply_referral_discount()` — aplica descuentos referral con boost detection
 - [ ] Actualizar `src/ai/agent.rs` para usar estos tools (FASE 3)
 
-### FASE 3: Datos y Captura (Día 2-3)
+### FASE 3: Datos y Captura (Día 2-3) ✅ COMPLETADA
 
-- [ ] Actualizar `src/routes/webhook.rs` para capturar `username` de Meta
-- [ ] Integrar captura automática en tabla `customers`
-- [ ] Eliminar llamadas a `clear_messages()` en `src/ai/memory.rs`
+- [x] Actualizar `src/routes/webhook.rs` para capturar `username` de Meta
+- [x] Integrar captura automática en tabla `customers`
+- [x] Eliminar llamadas a `clear_messages()` en `src/ai/memory.rs`
 
 ### FASE 4: UI/UX (Día 3)
 

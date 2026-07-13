@@ -125,7 +125,6 @@ async fn run_case_turn(
     if let Some((next_state, actions)) =
         try_handle_receipt_shortcut(context, current_state, actor, input)
     {
-        memory::clear_messages(&state.pool, &context.phone_number).await?;
         return Ok((next_state, actions));
     }
 
@@ -267,10 +266,6 @@ async fn run_case_turn(
             to: phone.clone(),
             body: "Dame un segundo y ya te ayudo.".to_string(),
         });
-    }
-
-    if final_state == ConversationState::MainMenu {
-        memory::clear_messages(&state.pool, &phone).await?;
     }
 
     Ok((final_state, actions))

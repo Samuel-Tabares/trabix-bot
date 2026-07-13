@@ -103,6 +103,8 @@ pub struct Contact {
     pub wa_id: Option<String>,
     #[serde(default)]
     pub profile: Option<ContactProfile>,
+    #[serde(default)]
+    pub username: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -354,6 +356,7 @@ mod tests {
                             profile: Some(ContactProfile {
                                 name: "Ana Maria".to_string(),
                             }),
+                            username: None,
                         }]),
                         statuses: None,
                     },
@@ -386,6 +389,7 @@ mod tests {
                             profile: Some(ContactProfile {
                                 name: "Ana Maria".to_string(),
                             }),
+                            username: None,
                         }]),
                         statuses: None,
                     },
@@ -421,6 +425,7 @@ mod tests {
                             profile: Some(ContactProfile {
                                 name: "Ana Maria".to_string(),
                             }),
+                            username: None,
                         }]),
                         statuses: None,
                     },

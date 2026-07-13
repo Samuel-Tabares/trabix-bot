@@ -344,6 +344,7 @@ async fn api_customer_text(
         state,
         session.customer_phone,
         session.profile_name,
+        None,
         UserInput::TextMessage(request.body),
     )
     .await
@@ -371,6 +372,7 @@ async fn api_customer_button(
         state,
         session.customer_phone,
         session.profile_name,
+        None,
         UserInput::ButtonPress(request.id),
     )
     .await
@@ -398,6 +400,7 @@ async fn api_customer_list(
         state,
         session.customer_phone,
         session.profile_name,
+        None,
         UserInput::ListSelection(request.id),
     )
     .await
@@ -462,6 +465,7 @@ async fn api_customer_image(
         state,
         session.customer_phone,
         session.profile_name,
+        None,
         UserInput::ImageMessage(media_id),
     )
     .await

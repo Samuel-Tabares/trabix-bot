@@ -181,7 +181,11 @@ async fn process_incoming_message(
             .as_ref()
             .and_then(|contact| contact.profile.as_ref())
             .map(|profile| profile.name.clone());
-        process_customer_input(state, from, profile_name, extracted.input).await?;
+        let username = contact
+            .as_ref()
+            .and_then(|contact| contact.username.as_deref())
+            .map(|u| u.to_string());
+        process_customer_input(state, from, profile_name, username, extracted.input).await?;
     }
 
     Ok(())
