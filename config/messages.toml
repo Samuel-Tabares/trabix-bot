@@ -3,7 +3,9 @@ main_welcome = """¡Hola! 👋 Bienvenid@ a Trabix Granizados.
 
 Horario de entrega inmediata: {business_hours}
 
-Recuerda que las entregas pueden ser inmediatas (de ser posible), y programadas ☺️
+Domicilios a todo el Quindío congelados listos para consumir, por fuera se entregan descongelados
+
+Recuerda que la entregas puede ser inmediata (de ser posible), y programada ☺️
 
 Si nos escribes fuera de ese horario, igual te ayudo a programar tu pedido. Elige una opción para continuar ✨"""
 main_list_body = "¿Qué te gustaría hacer ahora? 👇"
