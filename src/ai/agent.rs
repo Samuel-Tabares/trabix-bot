@@ -32,7 +32,7 @@ use crate::{
         delivery_zone::{self, ArmeniaZone, MIN_UNITS_OUTSIDE_ARMENIA},
         state_machine::{BotAction, ConversationContext, ConversationState, ImageAsset, TimerType, UserInput},
         states::checkout,
-        timers::{ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT, ADVISOR_STUCK_TIMEOUT, RECEIPT_TIMEOUT},
+        timers::{ADVISOR_RESPONSE_TIMEOUT, RECEIPT_TIMEOUT},
     },
     db::models::OrderItemData,
     AppState,
@@ -817,9 +817,9 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
     context.advisor_timer_expired = false;
 
     let timeout = if context.delivery_type.as_deref() == Some("scheduled") {
-        ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT
+        ADVISOR_RESPONSE_TIMEOUT
     } else {
-        ADVISOR_STUCK_TIMEOUT
+        ADVISOR_RESPONSE_TIMEOUT
     };
 
     let actions = vec![

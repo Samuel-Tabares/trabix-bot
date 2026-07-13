@@ -19,7 +19,6 @@ use crate::{
     bot::{
         inactivity::{
             reminder_actions, reset_notice_actions, CONVERSATION_REMINDER_TIMEOUT,
-            CONVERSATION_RESET_TIMEOUT,
         },
         state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
         states::advisor,
@@ -46,11 +45,7 @@ pub type TimerKey = (String, TimerType);
 pub type TimerMap = Arc<Mutex<HashMap<TimerKey, ActiveTimer>>>;
 
 pub const RECEIPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
-pub const ADVISOR_AUTO_CANNOT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-pub const ADVISOR_STUCK_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-pub const ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT: Duration = Duration::from_secs(23 * 60 * 60);
-pub const RELAY_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const TIMER_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 static NEXT_TIMER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -60,48 +55,32 @@ pub type TimerOverridesHandle = Arc<RwLock<SimulatorTimerOverrides>>;
 #[serde(rename_all = "snake_case")]
 pub enum TimerRule {
     AdvisorResponse,
-    AdvisorAutoCannot,
     ReceiptUpload,
-    AdvisorStuck,
-    RelayInactivity,
     ConversationReminder,
-    ConversationReset,
 }
 
 impl TimerRule {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::AdvisorResponse => "advisor_response",
-            Self::AdvisorAutoCannot => "advisor_auto_cannot",
             Self::ReceiptUpload => "receipt_upload",
-            Self::AdvisorStuck => "advisor_stuck",
-            Self::RelayInactivity => "relay_inactivity",
             Self::ConversationReminder => "conversation_reminder",
-            Self::ConversationReset => "conversation_reset",
         }
     }
 
     pub fn label(&self) -> &'static str {
         match self {
             Self::AdvisorResponse => "Asesor sin responder",
-            Self::AdvisorAutoCannot => "Pedido inmediato sin respuesta",
             Self::ReceiptUpload => "Espera de comprobante",
-            Self::AdvisorStuck => "Asesor atascado",
-            Self::RelayInactivity => "Relay inactivo",
             Self::ConversationReminder => "Recordatorio por inactividad",
-            Self::ConversationReset => "Reinicio por inactividad",
         }
     }
 
     pub fn default_duration(&self) -> Duration {
         match self {
             Self::AdvisorResponse => ADVISOR_RESPONSE_TIMEOUT,
-            Self::AdvisorAutoCannot => ADVISOR_AUTO_CANNOT_TIMEOUT,
             Self::ReceiptUpload => RECEIPT_TIMEOUT,
-            Self::AdvisorStuck => ADVISOR_STUCK_TIMEOUT,
-            Self::RelayInactivity => RELAY_INACTIVITY_TIMEOUT,
             Self::ConversationReminder => CONVERSATION_REMINDER_TIMEOUT,
-            Self::ConversationReset => CONVERSATION_RESET_TIMEOUT,
         }
     }
 }
@@ -109,24 +88,16 @@ impl TimerRule {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimulatorTimerOverrides {
     pub advisor_response_seconds: Option<u64>,
-    pub advisor_auto_cannot_seconds: Option<u64>,
     pub receipt_upload_seconds: Option<u64>,
-    pub advisor_stuck_seconds: Option<u64>,
-    pub relay_inactivity_seconds: Option<u64>,
     pub conversation_reminder_seconds: Option<u64>,
-    pub conversation_reset_seconds: Option<u64>,
 }
 
 impl SimulatorTimerOverrides {
     pub fn seconds_for(&self, rule: TimerRule) -> Option<u64> {
         match rule {
             TimerRule::AdvisorResponse => self.advisor_response_seconds,
-            TimerRule::AdvisorAutoCannot => self.advisor_auto_cannot_seconds,
             TimerRule::ReceiptUpload => self.receipt_upload_seconds,
-            TimerRule::AdvisorStuck => self.advisor_stuck_seconds,
-            TimerRule::RelayInactivity => self.relay_inactivity_seconds,
             TimerRule::ConversationReminder => self.conversation_reminder_seconds,
-            TimerRule::ConversationReset => self.conversation_reset_seconds,
         }
     }
 
@@ -197,12 +168,8 @@ pub fn simulator_timer_rules(state: &AppState) -> Vec<SimulatorTimerRuleInfo> {
 
     [
         TimerRule::AdvisorResponse,
-        TimerRule::AdvisorAutoCannot,
         TimerRule::ReceiptUpload,
-        TimerRule::AdvisorStuck,
-        TimerRule::RelayInactivity,
         TimerRule::ConversationReminder,
-        TimerRule::ConversationReset,
     ]
     .into_iter()
     .map(|rule| SimulatorTimerRuleInfo {
@@ -280,22 +247,13 @@ fn duration_from_overrides(
 
 fn timer_rule_for_start_timer(
     timer_type: &TimerType,
-    requested_duration: Duration,
+    _requested_duration: Duration,
 ) -> Option<TimerRule> {
     match timer_type {
         TimerType::ReceiptUpload => Some(TimerRule::ReceiptUpload),
-        TimerType::RelayInactivity => Some(TimerRule::RelayInactivity),
         TimerType::ConversationAbandon => Some(TimerRule::ConversationReminder),
-        TimerType::AdvisorResponse if requested_duration == ADVISOR_STUCK_TIMEOUT => {
-            Some(TimerRule::AdvisorStuck)
-        }
-        TimerType::AdvisorResponse if requested_duration == ADVISOR_AUTO_CANNOT_TIMEOUT => {
-            Some(TimerRule::AdvisorAutoCannot)
-        }
-        TimerType::AdvisorResponse if requested_duration == ADVISOR_RESPONSE_TIMEOUT => {
-            Some(TimerRule::AdvisorResponse)
-        }
-        TimerType::AdvisorResponse => None,
+        TimerType::AdvisorResponse => Some(TimerRule::AdvisorResponse),
+        TimerType::RelayInactivity => None,
     }
 }
 
@@ -495,7 +453,7 @@ async fn reconcile_boot_expired_timer(
                 state.clone(),
                 conversation.phone_number.clone(),
                 TimerType::ConversationAbandon,
-                effective_duration(&state, TimerRule::ConversationReset),
+                effective_duration(&state, TimerRule::ConversationReminder),
                 started_at,
             )
             .await;
@@ -639,11 +597,10 @@ fn timer_recovery_with_overrides(
         let Some(started_at) = state_data.conversation_abandon_started_at else {
             return None;
         };
-        let timeout = if state_data.conversation_abandon_reminder_sent {
-            duration_from_overrides(is_simulator, overrides, TimerRule::ConversationReset)
-        } else {
-            duration_from_overrides(is_simulator, overrides, TimerRule::ConversationReminder)
-        };
+        if state_data.conversation_abandon_reminder_sent {
+            return None;
+        }
+        let timeout = duration_from_overrides(is_simulator, overrides, TimerRule::ConversationReminder);
 
         return timer_recovery_for(TimerType::ConversationAbandon, timeout, started_at, now);
     }
@@ -674,14 +631,6 @@ fn timer_recovery_with_overrides(
             duration_from_overrides(is_simulator, overrides, TimerRule::ReceiptUpload),
             state_data
                 .receipt_timer_started_at
-                .unwrap_or(conversation.last_message_at),
-            now,
-        ),
-        "relay_mode" => timer_recovery_for(
-            TimerType::RelayInactivity,
-            duration_from_overrides(is_simulator, overrides, TimerRule::RelayInactivity),
-            state_data
-                .relay_timer_started_at
                 .unwrap_or(conversation.last_message_at),
             now,
         ),
@@ -784,7 +733,7 @@ fn boot_expiration_action_with_overrides(
             let elapsed = elapsed_since(started_at, now);
             if !state_data.conversation_abandon_reminder_sent
                 && elapsed
-                    < duration_from_overrides(is_simulator, overrides, TimerRule::ConversationReset)
+                    < duration_from_overrides(is_simulator, overrides, TimerRule::ConversationReminder)
             {
                 BootExpirationAction::MarkInactivityReminderAndRestore { started_at }
             } else {
@@ -1195,7 +1144,7 @@ async fn expire_conversation_abandon_with_source(
     let elapsed = elapsed_since(started_at, now);
 
     if !state_data.conversation_abandon_reminder_sent
-        && elapsed < effective_duration(&state, TimerRule::ConversationReset)
+        && elapsed < effective_duration(&state, TimerRule::ConversationReminder)
     {
         let context = ConversationContext::from_persisted(
             conversation.phone_number.clone(),
@@ -1340,32 +1289,14 @@ fn advisor_timeout_for_state_with_overrides(
     is_simulator: bool,
     overrides: &SimulatorTimerOverrides,
     state: &str,
-    state_data: &ConversationStateData,
+    _state_data: &ConversationStateData,
 ) -> Option<Duration> {
     match advisor_timeout_kind(state) {
-        Some(AdvisorTimeoutKind::AutoCannot) => Some(duration_from_overrides(
-            is_simulator,
-            overrides,
-            TimerRule::AdvisorAutoCannot,
-        )),
-        Some(AdvisorTimeoutKind::FallbackButtons) => Some(duration_from_overrides(
+        Some(_) => Some(duration_from_overrides(
             is_simulator,
             overrides,
             TimerRule::AdvisorResponse,
         )),
-        Some(AdvisorTimeoutKind::HardReset) => {
-            if state == "ask_delivery_cost"
-                && state_data.delivery_type.as_deref() == Some("scheduled")
-            {
-                Some(ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT)
-            } else {
-                Some(duration_from_overrides(
-                    is_simulator,
-                    overrides,
-                    TimerRule::AdvisorStuck,
-                ))
-            }
-        }
         None => None,
     }
 }
@@ -1381,37 +1312,27 @@ fn derive_timer_snapshots(
 
     if customer_inactivity_state(conversation_state) {
         if let Some(started_at) = state_data.conversation_abandon_started_at {
-            let (rule, phase) = if state_data.conversation_abandon_reminder_sent {
-                (TimerRule::ConversationReset, "reset")
-            } else {
-                (TimerRule::ConversationReminder, "reminder")
-            };
-            snapshots.push(build_timer_snapshot(
-                state,
-                TimerType::ConversationAbandon,
-                rule,
-                phase,
-                conversation_state,
-                started_at,
-                now,
-            ));
+            if !state_data.conversation_abandon_reminder_sent {
+                snapshots.push(build_timer_snapshot(
+                    state,
+                    TimerType::ConversationAbandon,
+                    TimerRule::ConversationReminder,
+                    "reminder",
+                    conversation_state,
+                    started_at,
+                    now,
+                ));
+            }
         }
     }
 
     if !state_data.advisor_timer_expired {
-        if let Some(kind) = advisor_timeout_kind(conversation_state) {
-            let (rule, phase) = match kind {
-                AdvisorTimeoutKind::AutoCannot => (TimerRule::AdvisorAutoCannot, "auto_no_puedo"),
-                AdvisorTimeoutKind::FallbackButtons => {
-                    (TimerRule::AdvisorResponse, "fallback_buttons")
-                }
-                AdvisorTimeoutKind::HardReset => (TimerRule::AdvisorStuck, "hard_reset"),
-            };
+        if let Some(_kind) = advisor_timeout_kind(conversation_state) {
             snapshots.push(build_timer_snapshot(
                 state,
                 TimerType::AdvisorResponse,
-                rule,
-                phase,
+                TimerRule::AdvisorResponse,
+                "advisor_response",
                 conversation_state,
                 state_data
                     .advisor_timer_started_at
@@ -1431,18 +1352,6 @@ fn derive_timer_snapshots(
             state_data
                 .receipt_timer_started_at
                 .unwrap_or(last_message_at),
-            now,
-        ));
-    }
-
-    if conversation_state == "relay_mode" {
-        snapshots.push(build_timer_snapshot(
-            state,
-            TimerType::RelayInactivity,
-            TimerRule::RelayInactivity,
-            "relay_inactivity",
-            conversation_state,
-            state_data.relay_timer_started_at.unwrap_or(last_message_at),
             now,
         ));
     }
@@ -1702,8 +1611,7 @@ mod tests {
 
     use super::{
         boot_expiration_action_with_overrides, timer_recovery_with_overrides, BootExpirationAction,
-        SimulatorTimerOverrides, TimerRecovery, ADVISOR_AUTO_CANNOT_TIMEOUT,
-        ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT, ADVISOR_STUCK_TIMEOUT,
+        SimulatorTimerOverrides, TimerRecovery, ADVISOR_RESPONSE_TIMEOUT,
     };
     use crate::{
         bot::state_machine::TimerType,
@@ -1732,27 +1640,6 @@ mod tests {
     }
 
     #[test]
-    fn timer_recovery_marks_expired_relay_as_overdue() {
-        let now = chrono::Utc::now();
-        let conversation = active_timer_conversation(
-            "relay_mode",
-            ConversationStateData {
-                relay_timer_started_at: Some(now - ChronoDuration::minutes(31)),
-                ..Default::default()
-            },
-            now,
-        );
-
-        let recovery =
-            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
-
-        assert_eq!(
-            recovery,
-            Some(TimerRecovery::Expired(TimerType::RelayInactivity))
-        );
-    }
-
-    #[test]
     fn timer_recovery_uses_last_message_when_start_timestamp_is_missing() {
         let now = chrono::Utc::now();
         let conversation = active_timer_conversation(
@@ -1768,7 +1655,7 @@ mod tests {
             recovery,
             Some(TimerRecovery::Active {
                 timer_type: TimerType::AdvisorResponse,
-                timeout: ADVISOR_AUTO_CANNOT_TIMEOUT,
+                timeout: ADVISOR_RESPONSE_TIMEOUT,
                 started_at: now - ChronoDuration::minutes(3),
             })
         );
@@ -1864,20 +1751,20 @@ mod tests {
             recovery,
             Some(TimerRecovery::Active {
                 timer_type: TimerType::AdvisorResponse,
-                timeout: ADVISOR_STUCK_TIMEOUT,
+                timeout: ADVISOR_RESPONSE_TIMEOUT,
                 started_at: now - ChronoDuration::minutes(3),
             })
         );
     }
 
     #[test]
-    fn timer_recovery_uses_twenty_three_hours_for_scheduled_delivery_cost() {
+    fn timer_recovery_uses_unified_timeout_for_all_advisor_response() {
         let now = chrono::Utc::now();
         let conversation = active_timer_conversation(
             "ask_delivery_cost",
             ConversationStateData {
                 delivery_type: Some("scheduled".to_string()),
-                advisor_timer_started_at: Some(now - ChronoDuration::hours(22)),
+                advisor_timer_started_at: Some(now - ChronoDuration::minutes(2)),
                 ..Default::default()
             },
             now,
@@ -1890,8 +1777,8 @@ mod tests {
             recovery,
             Some(TimerRecovery::Active {
                 timer_type: TimerType::AdvisorResponse,
-                timeout: ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT,
-                started_at: now - ChronoDuration::hours(22),
+                timeout: ADVISOR_RESPONSE_TIMEOUT,
+                started_at: now - ChronoDuration::minutes(2),
             })
         );
     }
@@ -1916,7 +1803,7 @@ mod tests {
             recovery,
             Some(TimerRecovery::Active {
                 timer_type: TimerType::AdvisorResponse,
-                timeout: ADVISOR_STUCK_TIMEOUT,
+                timeout: ADVISOR_RESPONSE_TIMEOUT,
                 started_at: now - ChronoDuration::minutes(3),
             })
         );
@@ -1944,7 +1831,7 @@ mod tests {
     }
 
     #[test]
-    fn timer_recovery_keeps_customer_reset_deadline_after_reminder() {
+    fn timer_recovery_stops_after_reminder_sent() {
         let now = chrono::Utc::now();
         let conversation = active_timer_conversation(
             "collect_name",
@@ -1959,14 +1846,7 @@ mod tests {
         let recovery =
             timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
 
-        assert_eq!(
-            recovery,
-            Some(TimerRecovery::Active {
-                timer_type: TimerType::ConversationAbandon,
-                timeout: crate::bot::inactivity::CONVERSATION_RESET_TIMEOUT,
-                started_at: now - ChronoDuration::minutes(10),
-            })
-        );
+        assert_eq!(recovery, None);
     }
 
     #[test]
@@ -2058,33 +1938,6 @@ mod tests {
                 clear_advisor_session: true,
                 mark_manual_followup: false,
             }
-        );
-    }
-
-    #[test]
-    fn boot_expiration_marks_customer_reminder_and_restores_deadline() {
-        let now = chrono::Utc::now();
-        let started_at = now - ChronoDuration::minutes(3);
-        let conversation = active_timer_conversation(
-            "collect_phone",
-            ConversationStateData {
-                conversation_abandon_started_at: Some(started_at),
-                ..Default::default()
-            },
-            now,
-        );
-
-        let action = boot_expiration_action_with_overrides(
-            false,
-            &production_overrides(),
-            &conversation,
-            TimerType::ConversationAbandon,
-            now,
-        );
-
-        assert_eq!(
-            action,
-            BootExpirationAction::MarkInactivityReminderAndRestore { started_at }
         );
     }
 

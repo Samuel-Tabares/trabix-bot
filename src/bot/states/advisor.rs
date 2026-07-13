@@ -10,10 +10,7 @@ use crate::{
             UserInput,
         },
         states::{checkout, customer_data, data_collect, menu, scheduling},
-        timers::{
-            ADVISOR_AUTO_CANNOT_TIMEOUT, ADVISOR_RESPONSE_TIMEOUT,
-            ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT, ADVISOR_STUCK_TIMEOUT,
-        },
+        timers::{ADVISOR_RESPONSE_TIMEOUT},
     },
     messages::{client_messages, render_template},
     whatsapp::types::{Button, ButtonReplyPayload},
@@ -425,7 +422,7 @@ pub fn handle_advisor_ask_delivery_cost(
                             BotAction::StartTimer {
                                 timer_type: TimerType::AdvisorResponse,
                                 phone: context.phone_number.clone(),
-                                duration: ADVISOR_AUTO_CANNOT_TIMEOUT,
+                                duration: ADVISOR_RESPONSE_TIMEOUT,
                             },
                         ],
                     ))
@@ -578,7 +575,7 @@ pub fn handle_advisor_hour_decision(
                     BotAction::StartTimer {
                         timer_type: TimerType::AdvisorResponse,
                         phone: context.phone_number.clone(),
-                        duration: ADVISOR_STUCK_TIMEOUT,
+                        duration: ADVISOR_RESPONSE_TIMEOUT,
                     },
                 ],
             ))
@@ -982,7 +979,7 @@ fn handle_offer_hour_to_client(
                     BotAction::StartTimer {
                         timer_type: TimerType::AdvisorResponse,
                         phone: context.phone_number.clone(),
-                        duration: ADVISOR_STUCK_TIMEOUT,
+                        duration: ADVISOR_RESPONSE_TIMEOUT,
                     },
                 ],
             ))
@@ -1071,7 +1068,7 @@ fn handle_wait_client_hour(
                         BotAction::StartTimer {
                             timer_type: TimerType::AdvisorResponse,
                             phone: context.phone_number.clone(),
-                            duration: ADVISOR_STUCK_TIMEOUT,
+                            duration: ADVISOR_RESPONSE_TIMEOUT,
                         },
                     ],
                 ))
@@ -1209,9 +1206,9 @@ fn ask_delivery_cost_entry_actions(
 
 fn ask_delivery_cost_timeout(context: &ConversationContext) -> Duration {
     if context.delivery_type.as_deref() == Some("scheduled") {
-        ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT
+        ADVISOR_RESPONSE_TIMEOUT
     } else {
-        ADVISOR_STUCK_TIMEOUT
+        ADVISOR_RESPONSE_TIMEOUT
     }
 }
 
@@ -1242,7 +1239,7 @@ fn wait_advisor_response_entry_actions(
         BotAction::StartTimer {
             timer_type: TimerType::AdvisorResponse,
             phone: context.phone_number.clone(),
-            duration: ADVISOR_AUTO_CANNOT_TIMEOUT,
+            duration: ADVISOR_RESPONSE_TIMEOUT,
         },
     ]
 }
@@ -1522,7 +1519,7 @@ fn transition_immediate_order_to_scheduled(context: &mut ConversationContext) ->
             BotAction::StartTimer {
                 timer_type: TimerType::AdvisorResponse,
                 phone: context.phone_number.clone(),
-                duration: ADVISOR_STUCK_TIMEOUT,
+                duration: ADVISOR_RESPONSE_TIMEOUT,
             },
         ],
     ))
@@ -1963,7 +1960,7 @@ mod tests {
         assert!(actions.iter().any(|action| matches!(
             action,
             crate::bot::state_machine::BotAction::StartTimer { duration, .. }
-                if *duration == crate::bot::timers::ADVISOR_SCHEDULED_DELIVERY_COST_TIMEOUT
+                if *duration == crate::bot::timers::ADVISOR_RESPONSE_TIMEOUT
         )));
     }
 
@@ -2080,7 +2077,7 @@ mod tests {
         assert!(actions.iter().any(|action| matches!(
             action,
             crate::bot::state_machine::BotAction::StartTimer { timer_type: crate::bot::state_machine::TimerType::AdvisorResponse, duration, .. }
-                if *duration == crate::bot::timers::ADVISOR_STUCK_TIMEOUT
+                if *duration == crate::bot::timers::ADVISOR_RESPONSE_TIMEOUT
         )));
     }
 
