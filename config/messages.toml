@@ -3,7 +3,9 @@ main_welcome = """¡Hola! 👋 Bienvenid@ a Trabix Granizados.
 
 Horario de entrega inmediata: {business_hours}
 
-Si nos escribes fuera de ese horario, igual te ayudo a programar tu pedido o a contactar un asesor. Elige una opción para continuar ✨"""
+Recuerda que las entregas pueden ser inmediatas (de ser posible), y programadas ☺️
+
+Si nos escribes fuera de ese horario, igual te ayudo a programar tu pedido. Elige una opción para continuar ✨"""
 main_list_body = "¿Qué te gustaría hacer ahora? 👇"
 main_list_button_text = "Ver opciones"
 main_section_title = "Menú Principal"
