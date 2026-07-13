@@ -131,6 +131,34 @@ pub struct OrderItem {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Customer {
+    pub phone_number_meta: String,
+    pub phone_number_manual: Option<String>,
+    pub customer_name_meta: Option<String>,
+    pub customer_name_manual: Option<String>,
+    pub customer_username: Option<String>,
+    pub delivery_address_last: Option<String>,
+    pub total_spent_cop: i32,
+    pub total_units_purchased: i32,
+    pub first_contact_at: Option<DateTime<Utc>>,
+    pub last_contact_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ReferralCodeAnalytics {
+    pub code: String,
+    pub times_used: i32,
+    pub total_discount_generated_cop: i32,
+    pub total_commission_generated_cop: i32,
+    pub total_units_purchased: i32,
+    pub total_sales_cop: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::ConversationStateData;

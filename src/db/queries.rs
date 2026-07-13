@@ -3,7 +3,7 @@
 use chrono::{NaiveDate, NaiveTime};
 use sqlx::{types::Json, PgPool};
 
-use super::models::{Conversation, ConversationStateData, Order, OrderItem};
+use super::models::{Conversation, ConversationStateData, Customer, Order, OrderItem, ReferralCodeAnalytics};
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ActiveTimerConversation {
@@ -440,6 +440,138 @@ pub async fn reset_conversation(pool: &PgPool, phone_number: &str) -> Result<(),
     .await?;
 
     Ok(())
+}
+
+pub async fn get_customer(pool: &PgPool, phone_number_meta: &str) -> Result<Option<Customer>, sqlx::Error> {
+    sqlx::query_as::<_, Customer>(
+        r#"
+        SELECT phone_number_meta, phone_number_manual, customer_name_meta, customer_name_manual,
+               customer_username, delivery_address_last, total_spent_cop, total_units_purchased,
+               first_contact_at, last_contact_at, created_at, updated_at
+        FROM customers
+        WHERE phone_number_meta = $1
+        "#,
+    )
+    .bind(phone_number_meta)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn create_or_update_customer(
+    pool: &PgPool,
+    phone_number_meta: &str,
+    phone_number_manual: Option<&str>,
+    customer_name_meta: Option<&str>,
+    customer_name_manual: Option<&str>,
+    customer_username: Option<&str>,
+    delivery_address_last: Option<&str>,
+) -> Result<Customer, sqlx::Error> {
+    sqlx::query_as::<_, Customer>(
+        r#"
+        INSERT INTO customers (
+            phone_number_meta, phone_number_manual, customer_name_meta, customer_name_manual,
+            customer_username, delivery_address_last, first_contact_at, last_contact_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        ON CONFLICT (phone_number_meta) DO UPDATE SET
+            phone_number_manual = COALESCE($2, phone_number_manual),
+            customer_name_meta = COALESCE($3, customer_name_meta),
+            customer_name_manual = COALESCE($4, customer_name_manual),
+            customer_username = COALESCE($5, customer_username),
+            delivery_address_last = COALESCE($6, delivery_address_last),
+            last_contact_at = NOW(),
+            updated_at = NOW()
+        RETURNING phone_number_meta, phone_number_manual, customer_name_meta, customer_name_manual,
+                  customer_username, delivery_address_last, total_spent_cop, total_units_purchased,
+                  first_contact_at, last_contact_at, created_at, updated_at
+        "#,
+    )
+    .bind(phone_number_meta)
+    .bind(phone_number_manual)
+    .bind(customer_name_meta)
+    .bind(customer_name_manual)
+    .bind(customer_username)
+    .bind(delivery_address_last)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn update_customer_totals(
+    pool: &PgPool,
+    phone_number_meta: &str,
+    total_spent_cop: i32,
+    total_units_purchased: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE customers
+        SET total_spent_cop = total_spent_cop + $2,
+            total_units_purchased = total_units_purchased + $3,
+            updated_at = NOW()
+        WHERE phone_number_meta = $1
+        "#,
+    )
+    .bind(phone_number_meta)
+    .bind(total_spent_cop)
+    .bind(total_units_purchased)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn get_referral_code_analytics(
+    pool: &PgPool,
+    code: &str,
+) -> Result<Option<ReferralCodeAnalytics>, sqlx::Error> {
+    sqlx::query_as::<_, ReferralCodeAnalytics>(
+        r#"
+        SELECT code, times_used, total_discount_generated_cop, total_commission_generated_cop,
+               total_units_purchased, total_sales_cop, created_at, updated_at
+        FROM referral_code_analytics
+        WHERE code = $1
+        "#,
+    )
+    .bind(code)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn create_or_update_referral_analytics(
+    pool: &PgPool,
+    code: &str,
+    times_used_inc: i32,
+    discount_inc: i32,
+    commission_inc: i32,
+    units_inc: i32,
+    sales_inc: i32,
+) -> Result<ReferralCodeAnalytics, sqlx::Error> {
+    sqlx::query_as::<_, ReferralCodeAnalytics>(
+        r#"
+        INSERT INTO referral_code_analytics (
+            code, times_used, total_discount_generated_cop, total_commission_generated_cop,
+            total_units_purchased, total_sales_cop
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (code) DO UPDATE SET
+            times_used = times_used + $2,
+            total_discount_generated_cop = total_discount_generated_cop + $3,
+            total_commission_generated_cop = total_commission_generated_cop + $4,
+            total_units_purchased = total_units_purchased + $5,
+            total_sales_cop = total_sales_cop + $6,
+            updated_at = NOW()
+        RETURNING code, times_used, total_discount_generated_cop, total_commission_generated_cop,
+                  total_units_purchased, total_sales_cop, created_at, updated_at
+        "#,
+    )
+    .bind(code)
+    .bind(times_used_inc)
+    .bind(discount_inc)
+    .bind(commission_inc)
+    .bind(units_inc)
+    .bind(sales_inc)
+    .fetch_one(pool)
+    .await
 }
 
 #[cfg(test)]
