@@ -1,8 +1,8 @@
 # MASTER PROMPT: Refactorización del Bot de IA (Claude Haiku 4.5)
 
 **Fecha:** 2026-07-13
-**Versión:** 1.2 (FASE 3-4 integradas)
-**Estado:** FASE 4 COMPLETADA (2026-07-13 ~14:00) — Próxima: FASE 5
+**Versión:** 1.3 (FASE 3-5 integradas)
+**Estado:** FASE 5 COMPLETADA (2026-07-13 ~16:30) — Próxima: FASE 6
 
 ---
 
@@ -708,11 +708,14 @@ Escenario C - Cliente desvía totalmente:
   - [x] Cambiar "Segundo" → "Par" en precio ($4.000 → $12.000)
 - [x] Actualizar `render_summary()` en `src/bot/states/checkout.rs` para incluir domicilio automático
 
-### FASE 5: Timers (Día 4)
+### FASE 5: Timers (Día 4) ✅ COMPLETADA
 
-- [ ] Eliminar 5 timers innecesarios de `src/bot/timers.rs`
-- [ ] Actualizar `src/engine.rs` para no crear/restaurar esos timers
-- [ ] Simplificar `sweep_pending_timers()`
+- [x] Eliminar 5 timers innecesarios de `src/bot/timers.rs`
+- [x] Actualizar `src/engine.rs` para no crear/restaurar esos timers
+- [x] Simplificar `sweep_pending_timers()`
+- [x] Consolidar todos los timeouts de AdvisorResponse a 5 minutos
+- [x] Remover TimerRule variants no usadas (AdvisorAutoCannot, AdvisorStuck, RelayInactivity, ConversationReset)
+- [x] Actualizar tests para reflejar nueva lógica (142/149 tests pasando)
 
 ### FASE 6: System Prompt del Agente (Día 4-5)
 
