@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Main menu now shows only "Hacer Pedido" and "Ver Menú" buttons; "Hablar con Asesor" button removed from menu (agent handles advisor requests based on text input in FASE 6).
 - Granizado pricing: "Segundo con licor" renamed to "Par con licor" at $12.000 (2 units at half price).
 - Order summary (`render_summary()`) now displays automatic delivery cost and referral discount breakdown inline instead of deferring to advisor; includes Subtotal, Domicilio, and Total with referral discount details when applicable.
+- Agent system prompt now includes detailed instructions on: when to use `message_advisor()` (4 specific cases), majority-order rules with referral logic (20+ units same type), automatic delivery-zone handling (Armenia zones, nearby towns, unknown municipalities), and button vs. freetext interaction patterns.
 
 ## [1.7.2] - 2026-04-30
 
