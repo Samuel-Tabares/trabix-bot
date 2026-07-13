@@ -1,7 +1,7 @@
 # MASTER PROMPT: Refactorización del Bot de IA (Claude Haiku 4.5)
 
-**Fecha:** 2026-07-13  
-**Versión:** 1.2 (FASE 3-4 integradas)  
+**Fecha:** 2026-07-13
+**Versión:** 1.2 (FASE 3-4 integradas)
 **Estado:** FASE 4 COMPLETADA (2026-07-13 ~14:00) — Próxima: FASE 5
 
 ---
@@ -98,7 +98,7 @@ AL MAYOR (20+ del mismo tipo):
 
 ### 4. Base de Datos: CRM Permanente de Clientes
 
-**Archivos:** 
+**Archivos:**
 - Nueva migración: `migrations/008_create_customers_table.sql`
 - Actualizar: `src/db/models.rs`, `src/db/queries.rs`
 
@@ -150,7 +150,7 @@ En `src/ai/memory.rs`:
 - Eliminar o comentar la llamada a `clear_messages()` en `finalize_checkout()`
 - Ahora `agent_case_messages` persiste indefinidamente por cliente
 
-**Por qué:** 
+**Por qué:**
 - Identificador único: `phone_number_meta` (extraído de Meta, nunca cambia)
 - Historial permanente: El agente siempre recuerda conversaciones previas del cliente
 - Agregados actualizados: `total_spent_cop`, `total_units_purchased` se actualizan con cada pedido confirmado
@@ -202,7 +202,7 @@ CREATE INDEX idx_referral_updated ON referral_code_analytics(updated_at DESC);
 **Cuándo actualizar:**
 - Cada vez que `apply_referral_code()` retorna un resultado exitoso y el pedido se confirma
 
-**Por qué:** 
+**Por qué:**
 - Business intelligence: saber cuáles códigos generan más ventas
 - Comisiones: cálculo automático de lo que debe pagarse a cada embajador
 - Analytics: tendencias de uso por código
@@ -341,7 +341,7 @@ pub fn apply_referral_discount(
 - Propensos a errores si se replican en múltiples lugares
 - Mejor centralizados en tools que el agente simplemente invoca
 
-**Verificación:** 
+**Verificación:**
 1. Revisa `src/bot/pricing.rs` para ver la lógica actual de `calcular_pedido()`
 2. Revisa `src/bot/delivery_zone.rs` para ver cómo se buscan zonas
 3. Revisa `src/ai/agent.rs` → `apply_referral_code()` para ver la lógica actual
@@ -368,7 +368,7 @@ Items:
 
 Total estimado: $96.000
 
-Nota: el domicilio no está incluido. El asesor lo agregará antes 
+Nota: el domicilio no está incluido. El asesor lo agregará antes
 de pasar al pago final...
 ```
 
@@ -432,7 +432,7 @@ Total final: $94.400
 
 **Timers a ELIMINAR:**
 
-1. ❌ `TimerType::AdvisorContact` (2 min) 
+1. ❌ `TimerType::AdvisorContact` (2 min)
    - Razón: No hay más relay. El asesor se contacta directamente con el cliente.
    - Búsqueda: grep -r "AdvisorContact" en src/
 
@@ -574,7 +574,7 @@ El agente maneja automáticamente:
 | Municipio X (desconocido) | ≥20 | ✅ | Manual | Asesor decide |
 | Municipio X (desconocido) | <20 | ❌ | Rechaza | "Mínimo 20 unidades + municipio desconocido" |
 
-**Verificación:** 
+**Verificación:**
 - Revisa `src/bot/delivery_zone.rs` para ver zonas y pueblos conocidos
 - Revisa cómo se valida `MIN_UNITS_OUTSIDE_ARMENIA`
 
@@ -680,12 +680,12 @@ Escenario C - Cliente desvía totalmente:
 
 ### FASE 1: Preparación (Día 1)
 
-- [ ] Revisar y verificar toda la lógica actual en el código
-- [ ] Crear todas las migraciones DB:
+- [x] Revisar y verificar toda la lógica actual en el código
+- [x] Crear todas las migraciones DB:
   - `migrations/008_create_customers_table.sql`
   - `migrations/009_create_referral_analytics.sql`
-- [ ] Actualizar `src/db/models.rs` con nuevos modelos
-- [ ] Actualizar `src/db/queries.rs` con nuevas queries
+- [x] Actualizar `src/db/models.rs` con nuevos modelos
+- [x] Actualizar `src/db/queries.rs` con nuevas queries
 
 ### FASE 2: Tools Deterministas (Día 2) ✅ COMPLETADA
 
@@ -799,8 +799,8 @@ Si durante la implementación encuentras:
 
 ---
 
-**Creado:** 2026-07-13  
-**Por:** Claude Haiku 4.5  
+**Creado:** 2026-07-13
+**Por:** Claude Haiku 4.5
 **Estado:** Listo para implementación
 
 **Próximo paso:** Ejecutar FASE 1 (Preparación)
