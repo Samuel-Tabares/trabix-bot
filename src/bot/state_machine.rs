@@ -56,6 +56,12 @@ pub enum ConversationState {
     WaitAdvisorContact,
     LeaveMessage,
     OrderComplete,
+    /// Estado propietario del agente de IA (Fase 1+): la conversacion vive
+    /// fuera de `transition()` mientras `BOT_ENGINE=agent` la controla. Solo
+    /// se persiste como marcador; `transition()` la trata como `MainMenu` si
+    /// llega a ejecutarse deterministicamente (p. ej. tras revertir
+    /// `BOT_ENGINE`).
+    AgentChat,
 }
 
 impl ConversationState {
@@ -102,6 +108,7 @@ impl ConversationState {
             Self::WaitAdvisorContact => "wait_advisor_contact",
             Self::LeaveMessage => "leave_message",
             Self::OrderComplete => "order_complete",
+            Self::AgentChat => "agent_chat",
         }
     }
 
@@ -179,6 +186,7 @@ impl ConversationState {
             "wait_advisor_contact" => Ok(Self::WaitAdvisorContact),
             "leave_message" => Ok(Self::LeaveMessage),
             "order_complete" => Ok(Self::OrderComplete),
+            "agent_chat" => Ok(Self::AgentChat),
             _ => Err(StateMachineError::InvalidState(key.to_string())),
         }
     }
@@ -248,6 +256,7 @@ impl<'de> Deserialize<'de> for ConversationState {
             "wait_advisor_contact" => Ok(Self::WaitAdvisorContact),
             "leave_message" => Ok(Self::LeaveMessage),
             "order_complete" => Ok(Self::OrderComplete),
+            "agent_chat" => Ok(Self::AgentChat),
             _ => Err(serde::de::Error::custom("invalid conversation state")),
         }
     }
@@ -594,6 +603,11 @@ pub fn transition(
         }
         ConversationState::RelayMode => relay::handle_relay_mode(input, context),
         ConversationState::OrderComplete => checkout::handle_order_complete(context),
+        // Nunca deberia ejecutarse en operacion normal: el engine desvia los
+        // turnos de cliente al agente de IA mientras el estado persistido es
+        // agent_chat. Si BOT_ENGINE vuelve a deterministic a mitad de una
+        // conversacion, degradar sin romper es mejor que un estado invalido.
+        ConversationState::AgentChat => menu::handle_main_menu(input, context),
     }
 }
 

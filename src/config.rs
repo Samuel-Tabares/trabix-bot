@@ -24,6 +24,29 @@ impl BotMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BotEngine {
+    Deterministic,
+    Agent,
+}
+
+impl BotEngine {
+    fn from_env() -> Result<Self, ConfigError> {
+        match env::var("BOT_ENGINE")
+            .unwrap_or_else(|_| "deterministic".to_string())
+            .trim()
+        {
+            "deterministic" => Ok(Self::Deterministic),
+            "agent" => Ok(Self::Agent),
+            value => Err(ConfigError::InvalidEngine(value.to_string())),
+        }
+    }
+
+    pub fn is_agent(&self) -> bool {
+        matches!(self, Self::Agent)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionConfig {
     pub whatsapp_token: String,
     pub whatsapp_phone_id: String,
@@ -47,6 +70,8 @@ pub struct Config {
     pub bind_ip: IpAddr,
     pub production: Option<ProductionConfig>,
     pub simulator: Option<SimulatorConfig>,
+    pub bot_engine: BotEngine,
+    pub anthropic_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +79,8 @@ pub enum ConfigError {
     MissingVar(&'static str),
     InvalidPort(String),
     InvalidMode(String),
+    InvalidEngine(String),
+    AgentEngineRequiresSimulator,
 }
 
 impl fmt::Display for ConfigError {
@@ -62,6 +89,11 @@ impl fmt::Display for ConfigError {
             Self::MissingVar(var) => write!(f, "missing required environment variable {var}"),
             Self::InvalidPort(value) => write!(f, "invalid PORT value: {value}"),
             Self::InvalidMode(value) => write!(f, "invalid BOT_MODE value: {value}"),
+            Self::InvalidEngine(value) => write!(f, "invalid BOT_ENGINE value: {value}"),
+            Self::AgentEngineRequiresSimulator => write!(
+                f,
+                "BOT_ENGINE=agent is only supported with BOT_MODE=simulator for now"
+            ),
         }
     }
 }
@@ -93,6 +125,15 @@ impl Config {
             }),
         };
 
+        let bot_engine = BotEngine::from_env()?;
+        if bot_engine.is_agent() && mode == BotMode::Production {
+            return Err(ConfigError::AgentEngineRequiresSimulator);
+        }
+        let anthropic_api_key = match bot_engine {
+            BotEngine::Agent => Some(read_required("ANTHROPIC_API_KEY")?),
+            BotEngine::Deterministic => read_optional("ANTHROPIC_API_KEY"),
+        };
+
         Ok(Self {
             mode: mode.clone(),
             database_url: read_required("DATABASE_URL")?,
@@ -102,6 +143,8 @@ impl Config {
             bind_ip: read_bind_ip(mode),
             production,
             simulator,
+            bot_engine,
+            anthropic_api_key,
         })
     }
 
@@ -184,6 +227,8 @@ mod tests {
             "MENU_IMAGE_MEDIA_ID",
             "SIMULATOR_UPLOAD_DIR",
             "BIND_IP",
+            "BOT_ENGINE",
+            "ANTHROPIC_API_KEY",
         ] {
             std::env::remove_var(key);
         }
@@ -215,5 +260,53 @@ mod tests {
             config.simulator().upload_dir,
             std::path::PathBuf::from(".simulator_uploads")
         );
+        assert_eq!(config.bot_engine, super::BotEngine::Deterministic);
+        assert_eq!(config.anthropic_api_key, None);
+    }
+
+    #[test]
+    fn agent_engine_requires_anthropic_api_key() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+        std::env::set_var("BOT_MODE", "simulator");
+        std::env::set_var("BOT_ENGINE", "agent");
+        std::env::set_var("DATABASE_URL", "postgres://local");
+        std::env::set_var("ADVISOR_PHONE", "573001234567");
+
+        let err = Config::from_env().expect_err("agent engine should require ANTHROPIC_API_KEY");
+        assert!(matches!(err, ConfigError::MissingVar("ANTHROPIC_API_KEY")));
+    }
+
+    #[test]
+    fn agent_engine_is_rejected_in_production_mode() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+        std::env::set_var("BOT_ENGINE", "agent");
+        std::env::set_var("DATABASE_URL", "postgres://local");
+        std::env::set_var("ADVISOR_PHONE", "573001234567");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test");
+        std::env::set_var("WHATSAPP_TOKEN", "token");
+        std::env::set_var("WHATSAPP_PHONE_ID", "phone-id");
+        std::env::set_var("WHATSAPP_VERIFY_TOKEN", "verify");
+        std::env::set_var("WHATSAPP_APP_SECRET", "secret");
+        std::env::set_var("MENU_IMAGE_MEDIA_ID", "media-id");
+
+        let err = Config::from_env().expect_err("agent engine should be rejected in production");
+        assert_eq!(err, ConfigError::AgentEngineRequiresSimulator);
+    }
+
+    #[test]
+    fn agent_engine_loads_in_simulator_mode_with_api_key() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+        std::env::set_var("BOT_MODE", "simulator");
+        std::env::set_var("BOT_ENGINE", "agent");
+        std::env::set_var("DATABASE_URL", "postgres://local");
+        std::env::set_var("ADVISOR_PHONE", "573001234567");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test");
+
+        let config = Config::from_env().expect("agent engine should load in simulator mode");
+        assert_eq!(config.bot_engine, super::BotEngine::Agent);
+        assert_eq!(config.anthropic_api_key.as_deref(), Some("sk-test"));
     }
 }

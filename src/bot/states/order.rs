@@ -316,7 +316,7 @@ fn flavor_rows(
         .collect()
 }
 
-fn flavor_by_id(id: &str, has_liquor: bool) -> Option<String> {
+pub fn flavor_by_id(id: &str, has_liquor: bool) -> Option<String> {
     let messages = &client_messages().order;
     if has_liquor {
         messages.flavors_with_liquor.get(id)

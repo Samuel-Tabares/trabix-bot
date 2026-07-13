@@ -45,6 +45,8 @@ pub async fn process_customer_input(
     profile_name: Option<String>,
     input: UserInput,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let _case_lock = crate::lock_conversation(&state.conversation_locks, &phone).await;
+
     let conversation = load_or_create_conversation(&state, &phone).await?;
     let (current_state, mut context) = rehydrate_client_conversation(&state, &conversation).await?;
     let seeded = seed_customer_data(&mut context, &phone, profile_name.as_deref());
@@ -57,7 +59,11 @@ pub async fn process_customer_input(
         );
     }
 
-    let (new_state, mut actions) = transition(&current_state, &input, &mut context)?;
+    let (new_state, mut actions) = if should_use_agent(&state, &current_state) {
+        crate::ai::agent::run_customer_turn(&state, &mut context, &current_state, &input).await?
+    } else {
+        transition(&current_state, &input, &mut context)?
+    };
     let transition_resets_conversation = actions
         .iter()
         .any(|action| matches!(action, BotAction::ResetConversation { .. }));
@@ -140,6 +146,8 @@ pub async fn process_advisor_input(
         return Ok(());
     };
 
+    let _case_lock = crate::lock_conversation(&state.conversation_locks, &target_phone).await;
+
     let Some(client_conversation) = get_conversation(&state.pool, &target_phone).await? else {
         tracing::warn!(
             advisor_phone = %mask_phone(&advisor_phone),
@@ -160,7 +168,11 @@ pub async fn process_advisor_input(
 
     let (current_state, mut context) =
         rehydrate_client_conversation(&state, &client_conversation).await?;
-    let (new_state, mut actions) = transition_advisor(&current_state, &input, &mut context)?;
+    let (new_state, mut actions) = if should_use_agent(&state, &current_state) {
+        crate::ai::agent::run_advisor_turn(&state, &mut context, &current_state, &input).await?
+    } else {
+        transition_advisor(&current_state, &input, &mut context)?
+    };
     let transition_resets_conversation = actions
         .iter()
         .any(|action| matches!(action, BotAction::ResetConversation { .. }));
@@ -550,6 +562,49 @@ pub async fn execute_actions(
     }
 
     Ok(ExecutionOutcome { reset_requested })
+}
+
+/// El agente de IA controla la conversacion de autoservicio del cliente
+/// (menu, armar el pedido, datos, checkout) y, desde `AskDeliveryCost` en
+/// adelante, tambien la coordinacion con el asesor (domicilio, pago,
+/// comprobante) — ver `src/ai/agent.rs`. Fuera de esta lista (negociacion de
+/// hora, pedido al por mayor sin tomar, "Hablar con Asesor" sin pedido,
+/// relay) sigue el motor deterministico sin cambios.
+fn is_agent_owned_state(state: &ConversationState) -> bool {
+    matches!(
+        state,
+        ConversationState::MainMenu
+            | ConversationState::AgentChat
+            | ConversationState::ViewMenu
+            | ConversationState::ViewSchedule
+            | ConversationState::WhenDelivery
+            | ConversationState::CheckSchedule
+            | ConversationState::OutOfHours
+            | ConversationState::SelectDate
+            | ConversationState::SelectTime
+            | ConversationState::ConfirmSchedule
+            | ConversationState::CollectName
+            | ConversationState::CollectPhone
+            | ConversationState::CollectAddress
+            | ConversationState::SelectType
+            | ConversationState::SelectFlavor { .. }
+            | ConversationState::SelectQuantity { .. }
+            | ConversationState::AddMore
+            | ConversationState::ConfirmRestartOrder
+            | ConversationState::ConfirmCustomerData
+            | ConversationState::SelectCustomerDataField
+            | ConversationState::EditCustomerName
+            | ConversationState::EditCustomerPhone
+            | ConversationState::EditCustomerAddress
+            | ConversationState::ReviewCheckout
+            | ConversationState::AskDeliveryCost
+            | ConversationState::SelectPaymentMethod
+            | ConversationState::WaitReceipt
+    )
+}
+
+fn should_use_agent(state: &AppState, current_state: &ConversationState) -> bool {
+    state.config.bot_engine.is_agent() && is_agent_owned_state(current_state)
 }
 
 async fn load_or_create_conversation(

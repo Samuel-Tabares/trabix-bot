@@ -29,6 +29,17 @@ const PAY_NOW: &str = "pay_now";
 const CANCEL_ORDER: &str = "cancel_order";
 const CHANGE_PAYMENT_METHOD: &str = "change_payment_method";
 
+/// Handoff hacia el flujo de asesor, identico al que dispara el boton
+/// `Continuar` en `review_checkout`. Expuesto para que el agente de IA
+/// (Fase 1+) pueda finalizar un checkout construido por conversacion libre
+/// reutilizando la misma logica, sin duplicarla.
+pub fn confirm_checkout(context: &mut ConversationContext) -> TransitionResult {
+    handle_review_checkout(
+        &UserInput::ButtonPress(REVIEW_CONTINUE.to_string()),
+        context,
+    )
+}
+
 pub fn handle_review_checkout(
     input: &UserInput,
     context: &mut ConversationContext,

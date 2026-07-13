@@ -55,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         transport,
         timers: new_timer_map(),
         timer_overrides: new_timer_overrides(),
+        conversation_locks: granizado_bot::new_conversation_locks(),
     };
 
     restore_pending_timers(app_state.clone()).await?;
