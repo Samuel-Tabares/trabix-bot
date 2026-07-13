@@ -380,6 +380,26 @@ pub fn render_summary(context: &ConversationContext, pedido: &PedidoCalculado) -
         None => messages.summary_delivery_pending.clone(),
     };
 
+    let subtotal = pedido.total_estimado;
+    let delivery_cost = context.delivery_cost.unwrap_or(0);
+    let total = u32::try_from(i32::try_from(subtotal).unwrap_or(0).saturating_add(delivery_cost)).unwrap_or(0);
+
+    let delivery_line = if delivery_cost > 0 {
+        format!("Domicilio: {}\n", format_currency(u32::try_from(delivery_cost).unwrap_or(0)))
+    } else {
+        String::new()
+    };
+
+    let referral_section = if let Some(referral) = referral_from_context(context, pedido) {
+        format!(
+            "\n\nCódigo referral: {}\nDescuento: -{}\n",
+            referral.code,
+            format_currency(referral.total_client_discount)
+        )
+    } else {
+        String::new()
+    };
+
     render_template(
         &messages.summary_template,
         &[
@@ -397,7 +417,10 @@ pub fn render_summary(context: &ConversationContext, pedido: &PedidoCalculado) -
             ),
             ("delivery", &entrega),
             ("items", &render_items(&pedido.items_detalle)),
-            ("total_estimated", &format_currency(pedido.total_estimado)),
+            ("subtotal", &format_currency(subtotal)),
+            ("delivery_line", &delivery_line),
+            ("referral_section", &referral_section),
+            ("total", &format_currency(total)),
         ],
     )
 }

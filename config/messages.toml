@@ -15,15 +15,13 @@ make_order_title = "Hacer Pedido"
 make_order_description = "Arma tu pedido paso a paso"
 view_menu_title = "Ver Menú"
 view_menu_description = "Consulta sabores y precios"
-contact_advisor_title = "Hablar con Asesor"
-contact_advisor_description = "Recibe ayuda personalizada"
 retry_main_menu = "Para continuar, elige una opción del menú principal 👇"
 menu_image_caption = "📋 Menú general de granizados"
 menu_text = """🍧PRECIOS
 
 DETAL:
 Con licor: $8.000
-Segundo con licor: $4.000
+Par con licor: $12.000
 Sin licor: $7.000 c/u
 
 AL MAYOR (20+ del mismo tipo):
@@ -147,9 +145,8 @@ Entrega: {delivery}
 Items:
 {items}
 
-Total estimado: {total_estimated}
-
-Nota: el domicilio no está incluido. El asesor lo agregará antes de pasar al pago final. Si tu pedido aplica al por mayor y tienes código de descuento, podrás usarlo justo antes de elegir el pago."""
+Subtotal: {subtotal}
+{delivery_line}{referral_section}Total: {total}"""
 summary_delivery_immediate = "Inmediata"
 summary_delivery_scheduled_template = """Programada
 Fecha: {date}

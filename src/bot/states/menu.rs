@@ -6,11 +6,10 @@ use crate::{
     whatsapp::types::{Button, ButtonReplyPayload},
 };
 
-use super::{advisor, scheduling};
+use super::scheduling;
 
 const MAKE_ORDER: &str = "make_order";
 const VIEW_MENU: &str = "view_menu";
-const CONTACT_ADVISOR: &str = "contact_advisor";
 const BACK_MAIN_MENU: &str = "back_main_menu";
 
 pub fn handle_main_menu(input: &UserInput, context: &mut ConversationContext) -> TransitionResult {
@@ -25,10 +24,6 @@ pub fn handle_main_menu(input: &UserInput, context: &mut ConversationContext) ->
             ConversationState::ViewMenu,
             view_menu_actions(&context.phone_number),
         )),
-        Some(CONTACT_ADVISOR) => {
-            let (state, actions) = advisor::start_contact_advisor(context);
-            Ok((state, actions))
-        }
         _ => Ok((
             ConversationState::MainMenu,
             main_menu_actions(&context.phone_number),
@@ -100,7 +95,6 @@ pub fn main_menu_actions(phone: &str) -> Vec<BotAction> {
             buttons: vec![
                 reply_button(MAKE_ORDER, &messages.make_order_title),
                 reply_button(VIEW_MENU, &messages.view_menu_title),
-                reply_button(CONTACT_ADVISOR, &messages.contact_advisor_title),
             ],
         },
     ]

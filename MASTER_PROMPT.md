@@ -1,8 +1,8 @@
 # MASTER PROMPT: Refactorización del Bot de IA (Claude Haiku 4.5)
 
 **Fecha:** 2026-07-13  
-**Versión:** 1.2 (FASE 3 integrada)  
-**Estado:** FASE 3 COMPLETADA (2026-07-13 ~11:30) — Próxima: FASE 4
+**Versión:** 1.2 (FASE 3-4 integradas)  
+**Estado:** FASE 4 COMPLETADA (2026-07-13 ~14:00) — Próxima: FASE 5
 
 ---
 
@@ -701,12 +701,12 @@ Escenario C - Cliente desvía totalmente:
 - [x] Integrar captura automática en tabla `customers`
 - [x] Eliminar llamadas a `clear_messages()` en `src/ai/memory.rs`
 
-### FASE 4: UI/UX (Día 3)
+### FASE 4: UI/UX (Día 3) ✅ COMPLETADA
 
-- [ ] Actualizar `config/messages.toml`:
-  - Eliminar botón "Hablar con Asesor"
-  - Cambiar "Segundo" → "Par" en precio
-- [ ] Actualizar `render_summary()` en `src/bot/states/checkout.rs`
+- [x] Actualizar `config/messages.toml`:
+  - [x] Eliminar botón "Hablar con Asesor"
+  - [x] Cambiar "Segundo" → "Par" en precio ($4.000 → $12.000)
+- [x] Actualizar `render_summary()` en `src/bot/states/checkout.rs` para incluir domicilio automático
 
 ### FASE 5: Timers (Día 4)
 
