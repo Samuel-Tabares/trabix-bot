@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- Wire up `confirm_advisor_availability()` to update `customers.total_spent_cop`/`total_units_purchased` and `referral_code_analytics` (upsert) when the advisor confirms availability for an order with an active `current_order_id`. New `BotAction::UpdateCustomerAndAnalytics` executed in `engine.rs`. Integration tests in `tests/customer_analytics.rs` cover cumulative updates for both tables.
+- Customer totals and referral analytics now update when an order actually reaches `confirmed` (cash on delivery selected, or transfer receipt received), in both the AI-agent flow and the deterministic flow, via shared `checkout::order_confirmation_analytics_action()`. New `BotAction::UpdateCustomerAndAnalytics` executed in `engine.rs`. Integration tests in `tests/customer_analytics.rs` cover cumulative updates for both tables; unit tests in `checkout.rs` cover both confirmation paths.
 - New `crm-web/` Next.js dashboard (separate app, shares the bot's PostgreSQL database via direct `pg` connection, no Supabase involved): customer search/sort, customer detail view with conversation transcript (parsed from `agent_case_messages`), order history, and referral-code usage per customer.
 - Automatic capture of Meta WhatsApp username in webhook and persistent storage in `customers` table to enable customer identification by username as backup if phone changes.
 - Permanent conversation memory: agent conversation history now persists indefinitely by customer instead of clearing after checkout, enabling full CRM view of all previous interactions.
@@ -22,6 +22,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - Customer inactivity timer reset conversations after 2 minutes without ever sending the reminder: the FASE 5 consolidation replaced the 35-minute reset window with the 2-minute reminder window in the expiration guard, making the reminder branch unreachable at natural expiration. The timer now sends the reminder exactly once and never resets the conversation (runtime, sweep, and boot reconciliation), matching the documented FASE 5 behavior. Dead 35-minute reset code (`CONVERSATION_RESET_TIMEOUT`, `reset_notice_actions`) removed.
+- `confirm_advisor_availability()` recomputed `total_final` without subtracting an already-applied referral discount, overwriting the discounted total in the order and the customer-facing summary. The recomputation now includes the referral discount.
+- Customer/referral analytics were recorded when the advisor confirmed availability (order still at `draft_payment`), so orders canceled at the payment or receipt step inflated `customers` totals and `referral_code_analytics`, referral codes applied after advisor confirmation were never counted, and the deterministic production flow never recorded analytics at all. The update now fires only on the two real confirmation transitions (cash on delivery, transfer receipt) in both engines.
 - `create_or_update_customer()` and `create_or_update_referral_analytics()` used unqualified column references inside `ON CONFLICT DO UPDATE SET`, which Postgres treats as ambiguous between the target table and the implicit `excluded` row — every upsert attempt failed with a `42702` error. Both queries now qualify the target-table column explicitly. This had shipped in the same day's earlier commit and was never exercised against a live database until this session.
 
 ## [1.7.2] - 2026-04-30

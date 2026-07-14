@@ -187,6 +187,7 @@ pub fn handle_select_payment_method(
             let mut actions = vec![BotAction::UpsertDraftOrder {
                 status: "confirmed".to_string(),
             }];
+            actions.extend(order_confirmation_analytics_action(context));
             actions.extend(advisor::final_order_packet_actions(context, None));
 
             Ok(complete_order_transition(context, "confirmed", actions))
@@ -249,6 +250,7 @@ pub fn handle_wait_receipt(
                     status: "confirmed".to_string(),
                 },
             ];
+            actions.extend(order_confirmation_analytics_action(context));
             actions.extend(advisor::final_order_packet_actions(context, Some(media_id)));
             actions.extend(final_confirmation_actions(context));
 
@@ -262,6 +264,35 @@ pub fn handle_wait_receipt(
             }],
         )),
     }
+}
+
+/// Acción de actualización de CRM/analytics que debe acompañar toda
+/// transición del pedido a estado "confirmed" (contra entrega o comprobante
+/// recibido). Solo aquí se tocan `customers` y `referral_code_analytics`,
+/// para no inflar totales con pedidos que se cancelan antes de pagar.
+pub fn order_confirmation_analytics_action(context: &ConversationContext) -> Option<BotAction> {
+    context.current_order_id?;
+    let pedido = calcular_pedido(&context.items);
+    let delivery_cost = context.delivery_cost.unwrap_or(0);
+    let computed_total = i32::try_from(pedido.total_estimado)
+        .unwrap_or(i32::MAX)
+        .saturating_sub(context.referral_discount_total.unwrap_or(0))
+        .saturating_add(delivery_cost);
+    let total_spent_cop = context.total_final.unwrap_or(computed_total);
+    let total_units_purchased: i32 = context
+        .items
+        .iter()
+        .map(|item| i32::try_from(item.quantity).unwrap_or(0))
+        .sum();
+
+    Some(BotAction::UpdateCustomerAndAnalytics {
+        phone_number_meta: context.phone_number.clone(),
+        total_spent_cop,
+        total_units_purchased,
+        referral_code: context.referral_code.clone(),
+        referral_discount_cop: context.referral_discount_total,
+        ambassador_commission_cop: context.ambassador_commission_total,
+    })
 }
 
 pub fn handle_wait_advisor_response(
@@ -822,6 +853,71 @@ mod tests {
         assert!(actions.iter().any(|action| matches!(
             action,
             crate::bot::state_machine::BotAction::StartTimer { .. }
+        )));
+    }
+
+    #[test]
+    fn cash_on_delivery_confirmation_updates_customer_and_analytics() {
+        let mut context = wholesale_context();
+        context.referral_code = Some("trabix-prueba15".to_string());
+        context.referral_discount_total = Some(9600);
+        context.ambassador_commission_total = Some(14400);
+        context.total_final = Some(91400);
+
+        let (_, actions) = handle_select_payment_method(
+            &UserInput::ButtonPress("cash_on_delivery".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        let analytics = actions.iter().find_map(|action| match action {
+            BotAction::UpdateCustomerAndAnalytics {
+                total_spent_cop,
+                total_units_purchased,
+                referral_code,
+                referral_discount_cop,
+                ambassador_commission_cop,
+                ..
+            } => Some((
+                *total_spent_cop,
+                *total_units_purchased,
+                referral_code.clone(),
+                *referral_discount_cop,
+                *ambassador_commission_cop,
+            )),
+            _ => None,
+        });
+
+        assert_eq!(
+            analytics,
+            Some((
+                91400,
+                20,
+                Some("trabix-prueba15".to_string()),
+                Some(9600),
+                Some(14400),
+            ))
+        );
+    }
+
+    #[test]
+    fn receipt_confirmation_updates_customer_and_analytics() {
+        let mut context = context();
+
+        let (_, actions) = handle_wait_receipt(
+            &UserInput::ImageMessage("media-123".to_string()),
+            &mut context,
+        )
+        .expect("transition");
+
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::UpdateCustomerAndAnalytics {
+                total_spent_cop: 17000,
+                total_units_purchased: 3,
+                referral_code: None,
+                ..
+            }
         )));
     }
 

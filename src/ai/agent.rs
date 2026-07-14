@@ -306,7 +306,7 @@ fn try_handle_receipt_shortcut(
     context.receipt_timer_expired = false;
 
     let summary = advisor_case_summary(context);
-    let actions = vec![
+    let mut actions = vec![
         BotAction::CancelTimer {
             timer_type: TimerType::ReceiptUpload,
             phone: context.phone_number.clone(),
@@ -314,6 +314,9 @@ fn try_handle_receipt_shortcut(
         BotAction::UpsertDraftOrder {
             status: "confirmed".to_string(),
         },
+    ];
+    actions.extend(checkout::order_confirmation_analytics_action(context));
+    actions.extend([
         BotAction::SendText {
             to: context.advisor_phone.clone(),
             body: format!("Pedido confirmado (pago por transferencia):\n\n{summary}"),
@@ -330,7 +333,7 @@ fn try_handle_receipt_shortcut(
         BotAction::ResetConversation {
             phone: context.phone_number.clone(),
         },
-    ];
+    ]);
 
     Some((ConversationState::MainMenu, actions))
 }
@@ -949,12 +952,13 @@ fn confirm_advisor_availability(
     };
 
     let pedido = tools::calculate_order(&context.items);
-    let total_final = i32::try_from(pedido.total_estimado).unwrap_or(i32::MAX) + delivery_cost;
+    let total_final = i32::try_from(pedido.total_estimado)
+        .unwrap_or(i32::MAX)
+        .saturating_sub(context.referral_discount_total.unwrap_or(0))
+        .saturating_add(delivery_cost);
     context.total_final = Some(total_final);
 
-    let total_units_purchased: i32 = context.items.iter().map(|item| item.quantity as i32).sum();
-
-    let mut actions = vec![
+    let actions = vec![
         BotAction::UpdateCurrentOrderDeliveryCost {
             delivery_cost,
             total_final,
@@ -968,18 +972,6 @@ fn confirm_advisor_availability(
             advisor_phone: context.advisor_phone.clone(),
         },
     ];
-
-    // Actualizar totales de cliente y analytics de referral si aplica
-    if context.current_order_id.is_some() {
-        actions.push(BotAction::UpdateCustomerAndAnalytics {
-            phone_number_meta: context.phone_number.clone(),
-            total_spent_cop: total_final,
-            total_units_purchased,
-            referral_code: context.referral_code.clone(),
-            referral_discount_cop: context.referral_discount_total,
-            ambassador_commission_cop: context.ambassador_commission_total,
-        });
-    }
 
     ToolOutcome::ResultWithStateChange(
         ok_result(id, "Disponibilidad confirmada, listo para pago."),
@@ -996,10 +988,11 @@ fn set_payment_method(id: &str, input: &Value, context: &mut ConversationContext
             context.payment_method = Some("cash_on_delivery".to_string());
             context.receipt_media_id = None;
             let summary = advisor_case_summary(context);
-            let actions = vec![
-                BotAction::UpsertDraftOrder {
-                    status: "confirmed".to_string(),
-                },
+            let mut actions = vec![BotAction::UpsertDraftOrder {
+                status: "confirmed".to_string(),
+            }];
+            actions.extend(checkout::order_confirmation_analytics_action(context));
+            actions.extend([
                 BotAction::SendText {
                     to: context.advisor_phone.clone(),
                     body: format!("Pedido confirmado (contra entrega):\n\n{summary}"),
@@ -1007,7 +1000,7 @@ fn set_payment_method(id: &str, input: &Value, context: &mut ConversationContext
                 BotAction::ResetConversation {
                     phone: context.phone_number.clone(),
                 },
-            ];
+            ]);
             ToolOutcome::ResultWithStateChange(
                 ok_result(id, "Pago contra entrega registrado."),
                 ConversationState::MainMenu,
