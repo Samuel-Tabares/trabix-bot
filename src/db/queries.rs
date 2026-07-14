@@ -474,11 +474,11 @@ pub async fn create_or_update_customer(
         )
         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
         ON CONFLICT (phone_number_meta) DO UPDATE SET
-            phone_number_manual = COALESCE($2, phone_number_manual),
-            customer_name_meta = COALESCE($3, customer_name_meta),
-            customer_name_manual = COALESCE($4, customer_name_manual),
-            customer_username = COALESCE($5, customer_username),
-            delivery_address_last = COALESCE($6, delivery_address_last),
+            phone_number_manual = COALESCE($2, customers.phone_number_manual),
+            customer_name_meta = COALESCE($3, customers.customer_name_meta),
+            customer_name_manual = COALESCE($4, customers.customer_name_manual),
+            customer_username = COALESCE($5, customers.customer_username),
+            delivery_address_last = COALESCE($6, customers.delivery_address_last),
             last_contact_at = NOW(),
             updated_at = NOW()
         RETURNING phone_number_meta, phone_number_manual, customer_name_meta, customer_name_manual,
@@ -554,11 +554,11 @@ pub async fn create_or_update_referral_analytics(
         )
         VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (code) DO UPDATE SET
-            times_used = times_used + $2,
-            total_discount_generated_cop = total_discount_generated_cop + $3,
-            total_commission_generated_cop = total_commission_generated_cop + $4,
-            total_units_purchased = total_units_purchased + $5,
-            total_sales_cop = total_sales_cop + $6,
+            times_used = referral_code_analytics.times_used + $2,
+            total_discount_generated_cop = referral_code_analytics.total_discount_generated_cop + $3,
+            total_commission_generated_cop = referral_code_analytics.total_commission_generated_cop + $4,
+            total_units_purchased = referral_code_analytics.total_units_purchased + $5,
+            total_sales_cop = referral_code_analytics.total_sales_cop + $6,
             updated_at = NOW()
         RETURNING code, times_used, total_discount_generated_cop, total_commission_generated_cop,
                   total_units_purchased, total_sales_cop, created_at, updated_at
