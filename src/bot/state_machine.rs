@@ -371,6 +371,14 @@ pub enum BotAction {
         to: String,
         body: String,
     },
+    UpdateCustomerAndAnalytics {
+        phone_number_meta: String,
+        total_spent_cop: i32,
+        total_units_purchased: i32,
+        referral_code: Option<String>,
+        referral_discount_cop: Option<i32>,
+        ambassador_commission_cop: Option<i32>,
+    },
     NoOp,
 }
 

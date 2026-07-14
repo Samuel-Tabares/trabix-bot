@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Wire up `confirm_advisor_availability()` to update `customers.total_spent_cop`/`total_units_purchased` and `referral_code_analytics` (upsert) when the advisor confirms availability for an order with an active `current_order_id`. New `BotAction::UpdateCustomerAndAnalytics` executed in `engine.rs`. Integration tests in `tests/customer_analytics.rs` cover cumulative updates for both tables.
+- New `crm-web/` Next.js dashboard (separate app, shares the bot's PostgreSQL database via direct `pg` connection, no Supabase involved): customer search/sort, customer detail view with conversation transcript (parsed from `agent_case_messages`), order history, and referral-code usage per customer.
 - Automatic capture of Meta WhatsApp username in webhook and persistent storage in `customers` table to enable customer identification by username as backup if phone changes.
 - Permanent conversation memory: agent conversation history now persists indefinitely by customer instead of clearing after checkout, enabling full CRM view of all previous interactions.
 - Persistent customer CRM data via new `customers` table (migration 008): tracks unique customer by `phone_number_meta` from Meta, with optional manual phone/name, username, last delivery address, and cumulative totals (spend and units). Supports cross-conversation history without limits.
@@ -17,6 +19,9 @@ All notable changes to this project will be documented in this file.
 - Granizado pricing: "Segundo con licor" renamed to "Par con licor" at $12.000 (2 units at half price).
 - Order summary (`render_summary()`) now displays automatic delivery cost and referral discount breakdown inline instead of deferring to advisor; includes Subtotal, Domicilio, and Total with referral discount details when applicable.
 - Agent system prompt now includes detailed instructions on: when to use `message_advisor()` (4 specific cases), majority-order rules with referral logic (20+ units same type), automatic delivery-zone handling (Armenia zones, nearby towns, unknown municipalities), and button vs. freetext interaction patterns.
+
+### Fixed
+- `create_or_update_customer()` and `create_or_update_referral_analytics()` used unqualified column references inside `ON CONFLICT DO UPDATE SET`, which Postgres treats as ambiguous between the target table and the implicit `excluded` row — every upsert attempt failed with a `42702` error. Both queries now qualify the target-table column explicitly. This had shipped in the same day's earlier commit and was never exercised against a live database until this session.
 
 ## [1.7.2] - 2026-04-30
 

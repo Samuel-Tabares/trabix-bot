@@ -58,6 +58,7 @@ pub fn action_kind(action: &BotAction) -> &'static str {
         BotAction::ClearAdvisorSession { .. } => "clear_advisor_session",
         BotAction::ResetConversation { .. } => "reset_conversation",
         BotAction::RelayMessage { .. } => "relay_message",
+        BotAction::UpdateCustomerAndAnalytics { .. } => "update_customer_and_analytics",
         BotAction::NoOp => "no_op",
     }
 }
@@ -208,6 +209,22 @@ pub fn log_bot_action(action: &BotAction) {
                 recipient = %mask_phone(to),
                 action = "relay_message",
                 preview = %preview_text(body),
+                "dispatching bot action"
+            );
+        }
+        BotAction::UpdateCustomerAndAnalytics {
+            phone_number_meta,
+            total_spent_cop,
+            total_units_purchased,
+            referral_code,
+            ..
+        } => {
+            tracing::info!(
+                phone = %mask_phone(phone_number_meta),
+                action = "update_customer_and_analytics",
+                total_spent_cop = *total_spent_cop,
+                total_units_purchased = *total_units_purchased,
+                has_referral_code = referral_code.is_some(),
                 "dispatching bot action"
             );
         }

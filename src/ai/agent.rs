@@ -952,7 +952,9 @@ fn confirm_advisor_availability(
     let total_final = i32::try_from(pedido.total_estimado).unwrap_or(i32::MAX) + delivery_cost;
     context.total_final = Some(total_final);
 
-    let actions = vec![
+    let total_units_purchased: i32 = context.items.iter().map(|item| item.quantity as i32).sum();
+
+    let mut actions = vec![
         BotAction::UpdateCurrentOrderDeliveryCost {
             delivery_cost,
             total_final,
@@ -966,6 +968,18 @@ fn confirm_advisor_availability(
             advisor_phone: context.advisor_phone.clone(),
         },
     ];
+
+    // Actualizar totales de cliente y analytics de referral si aplica
+    if context.current_order_id.is_some() {
+        actions.push(BotAction::UpdateCustomerAndAnalytics {
+            phone_number_meta: context.phone_number.clone(),
+            total_spent_cop: total_final,
+            total_units_purchased,
+            referral_code: context.referral_code.clone(),
+            referral_discount_cop: context.referral_discount_total,
+            ambassador_commission_cop: context.ambassador_commission_total,
+        });
+    }
 
     ToolOutcome::ResultWithStateChange(
         ok_result(id, "Disponibilidad confirmada, listo para pago."),

@@ -23,8 +23,8 @@ use crate::{
     db::{
         models::{Conversation, ConversationStateData},
         queries::{
-            create_conversation, create_order, create_or_update_customer, get_conversation, replace_order_items,
-            reset_conversation, update_customer_data, update_last_message, update_order,
+            create_conversation, create_order, create_or_update_customer, create_or_update_referral_analytics, get_conversation, replace_order_items,
+            reset_conversation, update_customer_data, update_customer_totals, update_last_message, update_order,
             update_order_delivery_cost, update_order_status, update_state,
         },
     },
@@ -569,6 +569,40 @@ pub async fn execute_actions(
                     message_id,
                 )
                 .await?;
+            }
+            BotAction::UpdateCustomerAndAnalytics {
+                phone_number_meta,
+                total_spent_cop,
+                total_units_purchased,
+                referral_code,
+                referral_discount_cop,
+                ambassador_commission_cop,
+            } => {
+                update_customer_totals(&state.pool, phone_number_meta, *total_spent_cop, *total_units_purchased)
+                    .await?;
+
+                if let Some(code) = referral_code {
+                    let discount_inc = referral_discount_cop.unwrap_or(0);
+                    let commission_inc = ambassador_commission_cop.unwrap_or(0);
+                    create_or_update_referral_analytics(
+                        &state.pool,
+                        code,
+                        1,
+                        discount_inc,
+                        commission_inc,
+                        *total_units_purchased,
+                        *total_spent_cop,
+                    )
+                    .await?;
+                }
+
+                tracing::info!(
+                    phone = %mask_phone(phone_number_meta),
+                    total_spent_cop = *total_spent_cop,
+                    total_units_purchased = *total_units_purchased,
+                    has_referral_code = referral_code.is_some(),
+                    "updated customer totals and referral analytics"
+                );
             }
         }
     }
