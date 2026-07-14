@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     bot::{
         inactivity::{
-            reminder_actions, reset_notice_actions, CONVERSATION_REMINDER_TIMEOUT,
+            reminder_actions, CONVERSATION_REMINDER_TIMEOUT,
         },
         state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
         states::advisor,
@@ -354,9 +354,7 @@ enum BootExpirationAction {
         clear_advisor_session: bool,
         mark_manual_followup: bool,
     },
-    MarkInactivityReminderAndRestore {
-        started_at: DateTime<Utc>,
-    },
+    MarkInactivityReminderSilently,
     None,
 }
 
@@ -438,9 +436,8 @@ async fn reconcile_boot_expired_timer(
             )
             .await;
         }
-        BootExpirationAction::MarkInactivityReminderAndRestore { started_at } => {
+        BootExpirationAction::MarkInactivityReminderSilently => {
             let mut state_data = conversation.state_data.0.clone();
-            state_data.conversation_abandon_started_at = Some(started_at);
             state_data.conversation_abandon_reminder_sent = true;
             update_state(
                 &state.pool,
@@ -449,21 +446,13 @@ async fn reconcile_boot_expired_timer(
                 &state_data,
             )
             .await?;
-            restore_timer(
-                state.clone(),
-                conversation.phone_number.clone(),
-                TimerType::ConversationAbandon,
-                effective_duration(&state, TimerRule::ConversationReminder),
-                started_at,
-            )
-            .await;
             record_simulator_timer_notice(
                 &state,
                 &conversation.phone_number,
                 TimerType::ConversationAbandon,
                 TimerSource::BootReconcile,
                 &conversation.state,
-                "restored_after_silent_reminder",
+                "marked_reminder_silently",
                 false,
             )
             .await;
@@ -676,11 +665,11 @@ fn boot_expiration_action(
 }
 
 fn boot_expiration_action_with_overrides(
-    is_simulator: bool,
-    overrides: &SimulatorTimerOverrides,
+    _is_simulator: bool,
+    _overrides: &SimulatorTimerOverrides,
     conversation: &crate::db::queries::ActiveTimerConversation,
     timer_type: TimerType,
-    now: DateTime<Utc>,
+    _now: DateTime<Utc>,
 ) -> BootExpirationAction {
     let state_data = &conversation.state_data.0;
 
@@ -726,22 +715,16 @@ fn boot_expiration_action_with_overrides(
                 return BootExpirationAction::None;
             }
 
-            let Some(started_at) = state_data.conversation_abandon_started_at else {
-                return BootExpirationAction::None;
-            };
-
-            let elapsed = elapsed_since(started_at, now);
-            if !state_data.conversation_abandon_reminder_sent
-                && elapsed
-                    < duration_from_overrides(is_simulator, overrides, TimerRule::ConversationReminder)
+            if state_data.conversation_abandon_started_at.is_none()
+                || state_data.conversation_abandon_reminder_sent
             {
-                BootExpirationAction::MarkInactivityReminderAndRestore { started_at }
-            } else {
-                BootExpirationAction::ResetConversation {
-                    clear_advisor_session: false,
-                    mark_manual_followup: false,
-                }
+                return BootExpirationAction::None;
             }
+
+            // La ventana del recordatorio venció mientras el bot estaba
+            // apagado: se marca en silencio (en boot no se envían mensajes)
+            // y no hay reset por inactividad.
+            BootExpirationAction::MarkInactivityReminderSilently
         }
     }
 }
@@ -1140,12 +1123,10 @@ async fn expire_conversation_abandon_with_source(
     let Some(started_at) = state_data.conversation_abandon_started_at else {
         return Ok(());
     };
-    let now = Utc::now();
-    let elapsed = elapsed_since(started_at, now);
 
-    if !state_data.conversation_abandon_reminder_sent
-        && elapsed < effective_duration(&state, TimerRule::ConversationReminder)
-    {
+    // Recordatorio una sola vez; después el bot sigue esperando input sin
+    // resetear la conversación (FASE 5: no existe reset por inactividad).
+    if !state_data.conversation_abandon_reminder_sent {
         let context = ConversationContext::from_persisted(
             conversation.phone_number.clone(),
             state.config.advisor_phone.clone(),
@@ -1192,35 +1173,7 @@ async fn expire_conversation_abandon_with_source(
         state_data.conversation_abandon_started_at = Some(started_at);
         state_data.conversation_abandon_reminder_sent = true;
         update_state(&state.pool, &phone_number, &conversation.state, &state_data).await?;
-
-        return Ok(());
     }
-
-    dispatch_timer_actions(
-        &state,
-        &reset_notice_actions(&phone_number),
-        Some(&phone_number),
-    )
-    .await?;
-    reset_conversation(&state.pool, &phone_number).await?;
-    clear_advisor_threads_for_target(&state, &phone_number).await?;
-    tracing::info!(
-        phone = %mask_phone(&phone_number),
-        timer_type = %TimerType::ConversationAbandon.as_str(),
-        state = %conversation.state,
-        source = %source.as_str(),
-        "reset conversation after inactivity timeout"
-    );
-    record_simulator_timer_notice(
-        &state,
-        &phone_number,
-        TimerType::ConversationAbandon,
-        source,
-        &conversation.state,
-        "reset_main_menu",
-        true,
-    )
-    .await;
 
     Ok(())
 }
@@ -1942,7 +1895,7 @@ mod tests {
     }
 
     #[test]
-    fn boot_expiration_resets_customer_after_full_inactivity_window() {
+    fn boot_expiration_ignores_customer_after_reminder_sent() {
         let now = chrono::Utc::now();
         let conversation = active_timer_conversation(
             "collect_phone",
@@ -1962,13 +1915,31 @@ mod tests {
             now,
         );
 
-        assert_eq!(
-            action,
-            BootExpirationAction::ResetConversation {
-                clear_advisor_session: false,
-                mark_manual_followup: false,
-            }
+        assert_eq!(action, BootExpirationAction::None);
+    }
+
+    #[test]
+    fn boot_expiration_marks_pending_reminder_silently() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "collect_phone",
+            ConversationStateData {
+                conversation_abandon_started_at: Some(now - ChronoDuration::minutes(10)),
+                conversation_abandon_reminder_sent: false,
+                ..Default::default()
+            },
+            now,
         );
+
+        let action = boot_expiration_action_with_overrides(
+            false,
+            &production_overrides(),
+            &conversation,
+            TimerType::ConversationAbandon,
+            now,
+        );
+
+        assert_eq!(action, BootExpirationAction::MarkInactivityReminderSilently);
     }
 
     #[test]

@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - Agent system prompt now includes detailed instructions on: when to use `message_advisor()` (4 specific cases), majority-order rules with referral logic (20+ units same type), automatic delivery-zone handling (Armenia zones, nearby towns, unknown municipalities), and button vs. freetext interaction patterns.
 
 ### Fixed
+- Customer inactivity timer reset conversations after 2 minutes without ever sending the reminder: the FASE 5 consolidation replaced the 35-minute reset window with the 2-minute reminder window in the expiration guard, making the reminder branch unreachable at natural expiration. The timer now sends the reminder exactly once and never resets the conversation (runtime, sweep, and boot reconciliation), matching the documented FASE 5 behavior. Dead 35-minute reset code (`CONVERSATION_RESET_TIMEOUT`, `reset_notice_actions`) removed.
 - `create_or_update_customer()` and `create_or_update_referral_analytics()` used unqualified column references inside `ON CONFLICT DO UPDATE SET`, which Postgres treats as ambiguous between the target table and the implicit `excluded` row — every upsert attempt failed with a `42702` error. Both queries now qualify the target-table column explicitly. This had shipped in the same day's earlier commit and was never exercised against a live database until this session.
 
 ## [1.7.2] - 2026-04-30

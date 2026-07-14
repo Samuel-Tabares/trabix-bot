@@ -2,16 +2,12 @@ use std::time::Duration;
 
 use chrono::Utc;
 
-use crate::{
-    bot::{
-        state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
-        states::{advisor, checkout, customer_data, data_collect, menu, order, scheduling},
-    },
-    messages::client_messages,
+use crate::bot::{
+    state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
+    states::{advisor, checkout, customer_data, data_collect, menu, order, scheduling},
 };
 
 pub const CONVERSATION_REMINDER_TIMEOUT: Duration = Duration::from_secs(2 * 60);
-pub const CONVERSATION_RESET_TIMEOUT: Duration = Duration::from_secs(35 * 60);
 
 pub fn sync_customer_inactivity_timer(
     state: &ConversationState,
@@ -146,16 +142,6 @@ pub fn reminder_actions(
         }
         _ => Vec::new(),
     }
-}
-
-pub fn reset_notice_actions(phone: &str) -> Vec<BotAction> {
-    vec![BotAction::SendText {
-        to: phone.to_string(),
-        body: client_messages()
-            .timers_customer
-            .conversation_inactivity_reset_text
-            .clone(),
-    }]
 }
 
 #[cfg(test)]
