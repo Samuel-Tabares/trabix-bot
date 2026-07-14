@@ -495,16 +495,17 @@ Comportamiento actual:
 
 ## Timers Activos
 
-Timers de runtime:
+Timers de runtime (consolidados en FASE 5):
 
 - comprobante: `10 minutos`
-- espera de asesor para `Hablar con Asesor`: `2 minutos`
-- espera de asesor para confirmacion de pedido inmediato: `5 minutos`
-- estados detallados del asesor atascados: `30 minutos`
-- relay: `30 minutos`
+- espera de asesor (todos los estados de espera de asesor, incluidos
+  `wait_advisor_response`, `wait_advisor_contact` y los waits detallados como
+  `ask_delivery_cost`): `5 minutos` unificados
+- relay: `30 minutos` (solo aplica al flujo determinista legado; el modo
+  agente no usa relay)
 - inactividad generica del cliente:
-  - recordatorio a los `2 minutos`
-  - reinicio a los `35 minutos`
+  - recordatorio a los `2 minutos`, una sola vez
+  - no hay reinicio automatico por inactividad; el bot queda esperando input
 
 ### Inactividad Generica Del Cliente
 
@@ -537,8 +538,8 @@ Comportamiento actual:
 
 - se arma solo por una interaccion real del cliente
 - a los `2 minutos` reenvia el prompt actual una sola vez
-- a los `35 minutos` envia mensaje de reinicio y resetea a `main_menu`
-- despues de ese reinicio no debe volver a dispararse nada hasta que el cliente escriba de nuevo
+- despues del recordatorio no hay reset: la conversacion queda esperando al
+  cliente indefinidamente y no se dispara nada mas hasta que escriba de nuevo
 
 ### Reinicio Del Servicio
 
@@ -557,11 +558,11 @@ Catch-up silencioso actual:
 - `wait_receipt`: marca timeout pendiente sin enviar mensajes en boot
 - `wait_advisor_response`: marca el timeout del pedido inmediato sin fanout en boot
 - `wait_advisor_contact`: marca timeout del asesor sin fanout en boot
-- `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, `wait_advisor_confirm_hour`: puede resetear y mover orden a `manual_followup` sin enviar mensajes en boot; `ask_delivery_cost` usa `23 horas` para programados y `30 minutos` para inmediatos
+- `ask_delivery_cost`, `negotiate_hour`, `wait_advisor_hour_decision`, `wait_advisor_confirm_hour`: puede resetear y mover orden a `manual_followup` sin enviar mensajes en boot; todos usan el timeout unificado de `5 minutos`
 - `relay_mode`: cierra silenciosamente si ya estaba vencido
 - inactividad generica:
-  - si ya debia mandar recordatorio, marca el recordatorio como consumido y solo conserva el deadline de reset
-  - si ya debia resetear, resetea silenciosamente
+  - si el recordatorio ya debia salir, lo marca como consumido en silencio
+  - no hay reset por inactividad en boot ni en runtime
 
 ## Persistencia Real
 
@@ -713,7 +714,7 @@ Timers y reinicio:
 - comprobar timeout de `Hablar con Asesor`
 - comprobar hard reset de waits detallados del asesor
 - comprobar timeout de relay
-- comprobar recordatorio y reset de inactividad del cliente
+- comprobar recordatorio unico de inactividad del cliente (sin reset posterior)
 - reiniciar el servicio con timers activos y verificar restauracion
 - redeployar o reiniciar con timers ya vencidos y verificar que no se envien mensajes salientes por boot
 

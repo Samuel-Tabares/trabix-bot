@@ -828,6 +828,24 @@ Si durante la implementación encuentras:
 
 ---
 
-**Creado:** 2026-07-13 (Audit: 2026-07-13 ~18:00)
-**Por:** Claude Haiku 4.5
-**Estado:** ✅ LISTO PARA RAILWAY DEPLOYMENT
+## 🔎 AUDIT DE VERIFICACIÓN INDEPENDIENTE (2026-07-13, posterior)
+
+**Método:** Verificación de código real + compilación + 145 unit tests + 7 tests de BD contra PostgreSQL real (migraciones aplicadas desde cero).
+
+**Confirmado como correcto:** migraciones 008/009, fix de upsert (42702), 3 tools deterministas (FASE 2), captura de username (FASE 3), memoria permanente sin `clear_messages`, cambios UI (FASE 4: 2 botones, "Par con licor" $12.000, resumen con domicilio/referral), system prompt (FASE 6), crm-web (typecheck OK).
+
+**Errores encontrados y corregidos en este audit:**
+
+1. **Timer de inactividad roto (FASE 5):** la consolidación reemplazó la ventana de reset (35 min) por la del recordatorio (2 min) en el guard de expiración → a los 2 minutos el bot **reseteaba la conversación sin enviar nunca el recordatorio**. Corregido: recordatorio una sola vez, sin reset (runtime, sweep y boot).
+2. **`confirm_advisor_availability` pisaba el descuento referral:** recalculaba `total_final` sin restar el descuento ya aplicado. Corregido.
+3. **Analytics en el momento equivocado:** se actualizaban al confirmar disponibilidad del asesor (`draft_payment`), inflando totales con pedidos cancelados en pago/comprobante y perdiendo códigos aplicados después. Además, **el flujo determinista (el único permitido en producción) nunca actualizaba analytics**. Corregido: la actualización ocurre solo en las dos transiciones reales a `confirmed` (contra entrega y comprobante recibido), en ambos motores.
+
+**Aclaraciones sobre afirmaciones de sesiones previas:**
+- El relay y `TimerType::RelayInactivity` NO fueron eliminados del código: siguen activos en el flujo determinista legado (necesarios en producción). El modo agente no los usa.
+- `BOT_ENGINE=agent` solo es válido con `BOT_MODE=simulator` (config lo rechaza en producción). "Listo para Railway" aplica al motor determinista; el agente IA aún no puede desplegarse a producción sin quitar ese gate.
+
+---
+
+**Creado:** 2026-07-13 (Audit: 2026-07-13 ~18:00; Audit de verificación: 2026-07-13 posterior)
+**Por:** Claude Haiku 4.5 (implementación) / Claude Fable 5 (audit de verificación)
+**Estado:** ✅ Motor determinista listo para Railway; modo agente listo solo para simulador

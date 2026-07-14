@@ -18,10 +18,10 @@ Horario de entrega inmediata: 8:00 AM a 11:00 PM
 Si nos escribes fuera de ese horario, igual te ayudo a programar tu pedido o a contactar un asesor. Elige una opción para continuar ✨
 ```
 
-Luego el bot ofrece 3 botones en el menú principal:
+Luego el bot ofrece 2 botones en el menú principal (el botón `Hablar con
+Asesor` se eliminó en FASE 4; el agente detecta esa intención por texto libre):
 - `Hacer Pedido`
 - `Ver Menú`
-- `Hablar con Asesor`
 
 **Ubicación del código:** `config/messages.toml` (sección `[menu]`)
 
@@ -53,7 +53,7 @@ Luego el bot ofrece 3 botones en el menú principal:
 
 ### DETAL:
 - **Con licor:** $8.000
-- **Segundo con licor:** $4.000
+- **Par con licor:** $12.000 (2 unidades, la segunda a mitad de precio)
 - **Sin licor:** $7.000 c/u
 
 ### AL MAYOR (20+ del mismo tipo):
@@ -83,7 +83,7 @@ El bot incluye también un mensaje invitativo: "Si quieres, te acompaño a armar
 ### A. Tabla `agent_case_messages` (Nuevo con AI agent)
 - **Qué persiste:** Historial completo de mensajes JSON entre cliente/asesor y Claude Haiku
 - **Estructura:** `phone_number` (PK), `messages` (JSONB), `updated_at`
-- **Cuándo se limpia:** Solo cuando `finalize_checkout()` se ejecuta (al cerrar un pedido), para que el siguiente pedido empiece sin arrastrar contexto viejo
+- **Cuándo se limpia:** Nunca (desde FASE 3 el historial es permanente por cliente; es la base del CRM)
 - **Cómo acceder:** 
   - Directamente en PostgreSQL: `SELECT * FROM agent_case_messages WHERE phone_number = '+57...'`
   - Desde el simulator: Inspector de BD en `/simulator` → tabla `agent_case_messages`
@@ -338,18 +338,16 @@ Los estados que NO están bajo el AI agent aún **sí usan botones**:
 
 **¿El bot tiene timers? ¿Cómo de inactividad por parte del cliente, 2 o 5 minutos? ¿Otros timers? ¿Cómo funcionan actualmente y qué hacen?**
 
-**Respuesta:** Sí, varios timers activos. Aquí el catálogo completo:
+**Respuesta:** Sí, sistema consolidado en FASE 5. Catálogo actual:
 
 | Nombre | Duración | Disparador | Qué pasa | Estado(s) |
 |--------|----------|-----------|---------|-----------|
 | **Comprobante** | 10 min | Cliente debe subir foto de transferencia | Si vence: ofrece "Cambiar pago" o "Cancelar" | `wait_receipt` |
-| **Asesor - Contacto** | 2 min | Cliente intenta "Hablar con Asesor" | Si vence: cliente puede dejar mensaje o volver al menú | `wait_advisor_contact` |
-| **Asesor - Inmediato** | 5 min | Pedido inmediato en espera de asesor | Si vence: automáticamente pasa a negociación de hora o `manual_followup` | `wait_advisor_response` |
-| **Asesor - Stuck (inmediato)** | 30 min | Pedido inmediato en `ask_delivery_cost` sin respuesta | Si vence: resetea orden a `manual_followup` sin enviar mensaje | `ask_delivery_cost` |
-| **Asesor - Stuck (programado)** | 23 horas | Pedido programado en `ask_delivery_cost` sin respuesta | Si vence: resetea orden a `manual_followup` sin enviar mensaje | `ask_delivery_cost` |
-| **Relay** | 30 min | Cliente y asesor en conversación directa | Si vence: cierra relay, conversación vuelve a `main_menu` | `relay_mode` |
-| **Inactividad - Recordatorio** | 2 min | Cliente inactivo en un estado de entrada | Reenvía el prompt actual **una sola vez** | Múltiples (no aplica a wait_*) |
-| **Inactividad - Reset** | 35 min | Cliente inactivo después del recordatorio | Resetea a `main_menu` + mensaje de reinicio | Múltiples |
+| **Asesor (unificado)** | 5 min | Cualquier espera de asesor (disponibilidad, domicilio, hora) | Si vence: fallback según estado (negociación de hora o `manual_followup`) | `wait_advisor_response`, `ask_delivery_cost`, etc. |
+| **Inactividad - Recordatorio** | 2 min | Cliente inactivo en un estado de entrada | Reenvía el prompt actual **una sola vez**; después NO hay reset, el bot queda esperando | Múltiples (no aplica a wait_*) |
+| **Relay (solo flujo determinista legado)** | 30 min | Cliente y asesor en conversación directa | Si vence: cierra relay, vuelve a `main_menu` | `relay_mode` |
+
+Los timers eliminados en FASE 5: contacto de asesor (2 min), stuck inmediato (30 min), stuck programado (23 h) y reset por inactividad (35 min).
 
 ### Cómo funcionan:
 
