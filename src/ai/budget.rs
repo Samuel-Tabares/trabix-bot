@@ -11,7 +11,7 @@ use std::sync::Arc;
 use chrono::{FixedOffset, NaiveDate, Utc};
 use tokio::sync::Mutex;
 
-pub const PER_PHONE_DAILY_LIMIT: u32 = 60;
+pub const PER_PHONE_DAILY_LIMIT: u32 = 30;
 
 pub type LlmBudgetHandle = Arc<Mutex<LlmBudget>>;
 

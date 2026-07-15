@@ -55,6 +55,7 @@ All notable changes to this project will be documented in this file.
 - Granizado pricing: "Segundo con licor" renamed to "Par con licor" at $12.000 (2 units at half price).
 - Order summary (`render_summary()`) now displays automatic delivery cost and referral discount breakdown inline instead of deferring to advisor; includes Subtotal, Domicilio, and Total with referral discount details when applicable.
 - Agent system prompt now includes detailed instructions on: when to use `message_advisor()` (4 specific cases), majority-order rules with referral logic (20+ units same type), automatic delivery-zone handling (Armenia zones, nearby towns, unknown municipalities), and button vs. freetext interaction patterns.
+- Lowered the per-phone daily LLM call budget from 60 to 30 (`PER_PHONE_DAILY_LIMIT` in `src/ai/budget.rs`) — 30 comfortably covers a full order conversation with headroom, while tightening the anti-abuse ceiling for the production canary.
 
 ### Fixed
 - Customer inactivity timer reset conversations after 2 minutes without ever sending the reminder: the FASE 5 consolidation replaced the 35-minute reset window with the 2-minute reminder window in the expiration guard, making the reminder branch unreachable at natural expiration. The timer now sends the reminder exactly once and never resets the conversation (runtime, sweep, and boot reconciliation), matching the documented FASE 5 behavior. Dead 35-minute reset code (`CONVERSATION_RESET_TIMEOUT`, `reset_notice_actions`) removed.

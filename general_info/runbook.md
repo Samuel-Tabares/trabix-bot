@@ -47,7 +47,7 @@ Copiar el `media_id` impreso a la variable `MENU_IMAGE_MEDIA_ID` en Railway y re
 
 ## Control de gasto LLM
 
-- Límite por cliente: 60 llamadas/día (constante `PER_PHONE_DAILY_LIMIT` en `src/ai/budget.rs`).
+- Límite por cliente: 30 llamadas/día (constante `PER_PHONE_DAILY_LIMIT` en `src/ai/budget.rs`).
 - Kill-switch global: variable `AGENT_DAILY_LLM_CALL_LIMIT` en Railway (sin definir = sin límite
   global). Al alcanzarlo, todos los casos degradan a mensaje fijo + aviso al asesor.
 - Gasto real: consola de Anthropic → Usage. Cada turno de cliente consume 1–8 llamadas Haiku

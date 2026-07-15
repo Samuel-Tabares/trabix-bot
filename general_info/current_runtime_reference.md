@@ -73,7 +73,7 @@ Protecciones activas en modo agente:
 - degradacion segura: si la llamada al LLM falla (timeout 60s del cliente HTTP, 5xx, saldo), el
   cliente recibe `[agent].llm_failure_customer` de `config/messages.toml`, el asesor recibe el
   contexto del caso (cliente, numero, ultimo mensaje, estado) y el estado NO cambia.
-- presupuesto diario: 60 llamadas LLM por telefono por dia (Bogota) + kill-switch global opcional
+- presupuesto diario: 30 llamadas LLM por telefono por dia (Bogota) + kill-switch global opcional
   `AGENT_DAILY_LLM_CALL_LIMIT`. Al agotarse: mensaje fijo `[agent].daily_limit_customer` al
   cliente y aviso al asesor una vez por dia por caso. Contadores en memoria (reset al redeploy).
 - ventana de memoria: `agent_case_messages` guarda todo el historial (CRM), pero al LLM solo van
