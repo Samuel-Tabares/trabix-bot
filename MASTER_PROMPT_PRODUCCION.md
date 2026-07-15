@@ -1,8 +1,18 @@
 # MASTER PROMPT: Agente IA en Producción (WhatsApp real, todo el público)
 
 **Fecha:** 2026-07-14
-**Versión:** 1.0
-**Estado:** 📋 PENDIENTE DE EJECUCIÓN
+**Versión:** 1.1
+**Estado:** 🟡 FASES 0-5 y 8 EJECUTADAS (2026-07-15, ver SESSION-014). Quedan FASE 6-7 (checklist Meta + canario, requieren a Samuel) y el cierre de release de FASE 9.
+
+**Registro de ejecución 2026-07-15:**
+- FASE 0 ✅ (backup de Railway pendiente — no hay credenciales de producción locales; hacerlo antes del primer deploy)
+- FASE 1 ✅ gate eliminado; `BOT_ENGINE` sin definir sigue siendo determinista
+- FASE 2 ✅ degradación segura + timeouts HTTP + test de integración (`tests/agent_degradation.rs`)
+- FASE 3 ✅ ventana de 40 mensajes, truncado a 1.500 chars, 60 llamadas/cliente/día, `AGENT_DAILY_LLM_CALL_LIMIT` (`src/ai/budget.rs`)
+- FASE 4 ✅ dedup de webhook, anti prompt-injection, guards verificados, auditoría de relay: sin camino alcanzable en modo agente
+- FASE 5 ✅ tests 152/152 + 3 de BD; simulador cazó 2 bugs reales (totales alucinados, checkout narrado sin ejecutar) — corregidos con salvaguardas deterministas y flujo re-verificado hasta `confirmed` + analytics. Smoke live pendiente (credenciales)
+- FASE 8 ✅ runbook en `general_info/runbook.md`, referencia de runtime actualizada. crm-web sigue sin decisión
+- FASE 9 🟡 CHANGELOG y docs listos; release vX.Y.Z + tag quedan para después del canario
 **Prerequisito:** MASTER_PROMPT.md (FASES 1-8) completado y auditado (ver sección "Audit de verificación independiente" en ese documento).
 
 ---

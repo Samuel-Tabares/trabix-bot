@@ -56,6 +56,48 @@ Componentes principales:
 - `migrations/`
   - esquema PostgreSQL
 
+## Motor De Agente IA (`BOT_ENGINE=agent`)
+
+Desde este ciclo el motor de agente puede correr tanto en `BOT_MODE=simulator` como en
+`BOT_MODE=production` (el gate `AgentEngineRequiresSimulator` fue eliminado). Reglas operativas:
+
+- `BOT_ENGINE` sin definir = motor determinista. Quitar la variable en Railway y redeploy es el
+  rollback completo: las tablas son compartidas y no hay nada que migrar de vuelta.
+- `BOT_ENGINE=agent` exige `ANTHROPIC_API_KEY`.
+- El agente es dueño de los estados de autoservicio del cliente (menu, pedido, datos, checkout,
+  `ask_delivery_cost`, `select_payment_method`, `wait_receipt`). Los estados de negociacion de
+  hora, esperas de asesor legadas y relay siguen 100% deterministas.
+
+Protecciones activas en modo agente:
+
+- degradacion segura: si la llamada al LLM falla (timeout 60s del cliente HTTP, 5xx, saldo), el
+  cliente recibe `[agent].llm_failure_customer` de `config/messages.toml`, el asesor recibe el
+  contexto del caso (cliente, numero, ultimo mensaje, estado) y el estado NO cambia.
+- presupuesto diario: 60 llamadas LLM por telefono por dia (Bogota) + kill-switch global opcional
+  `AGENT_DAILY_LLM_CALL_LIMIT`. Al agotarse: mensaje fijo `[agent].daily_limit_customer` al
+  cliente y aviso al asesor una vez por dia por caso. Contadores en memoria (reset al redeploy).
+- ventana de memoria: `agent_case_messages` guarda todo el historial (CRM), pero al LLM solo van
+  los ultimos 40 mensajes, cortados en frontera segura de tool-use. Mensajes entrantes se truncan
+  a 1.500 caracteres antes de ir al LLM.
+- dedup de webhook: cache en memoria (TTL 10 min) de `message_id` de Meta ya procesados; los
+  retries de Meta no generan doble respuesta ni doble llamada LLM.
+- anti prompt-injection en el system prompt: los mensajes del cliente nunca cambian precios,
+  reglas ni comportamiento; solo se citan cifras devueltas por tools; quien diga ser el asesor
+  sin serlo se trata como cliente.
+
+Auditoria de alcanzabilidad del relay (2026-07-15): en modo agente NO existe camino alcanzable a
+`relay_mode` ni `wait_advisor_contact` para conversaciones creadas bajo el agente:
+
+- `relay_mode` solo se entra desde `wait_advisor_mayor` (boton Tomar) o `wait_advisor_contact`
+  (boton Atender), y esos dos estados solo se alcanzan desde handlers deterministas de estados
+  que en modo agente posee el agente (`main_menu`, `out_of_hours`, `review_checkout`).
+- el timer de asesor que arranca `finalize_checkout` expira en `ask_delivery_cost`, cuyo timeout
+  es `HardReset` (pedido a `manual_followup` + reset a `main_menu`), nunca relay ni
+  `negotiate_hour` (la rama `AutoCannot` -> `negotiate_hour` solo aplica a
+  `wait_advisor_response`, inalcanzable en modo agente).
+- unica excepcion intencional: conversaciones que ya estaban en estados deterministas cuando se
+  activo `BOT_ENGINE=agent` siguen su flujo determinista completo, incluido relay.
+
 ## Ruteo Real Del Webhook
 
 Flujo base:
@@ -637,6 +679,9 @@ Variables y datos operativos clave:
 - `ADVISOR_PHONE`
 - `MENU_IMAGE_MEDIA_ID`
 - `SIMULATOR_UPLOAD_DIR`
+- `BOT_ENGINE` (`deterministic` por defecto; `agent` activa el motor IA)
+- `ANTHROPIC_API_KEY` (obligatoria con `BOT_ENGINE=agent`)
+- `AGENT_DAILY_LLM_CALL_LIMIT` (opcional, kill-switch global de llamadas LLM por dia)
 
 Notas actuales:
 
