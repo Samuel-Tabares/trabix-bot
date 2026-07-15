@@ -11,10 +11,46 @@ All notable changes to this project will be documented in this file.
 - Permanent conversation memory: agent conversation history now persists indefinitely by customer instead of clearing after checkout, enabling full CRM view of all previous interactions.
 - Persistent customer CRM data via new `customers` table (migration 008): tracks unique customer by `phone_number_meta` from Meta, with optional manual phone/name, username, last delivery address, and cumulative totals (spend and units). Supports cross-conversation history without limits.
 - Referral code analytics via new `referral_code_analytics` table (migration 009): tracks usage count, total discounts generated, ambassador commissions, units purchased, and gross sales per code for business intelligence and commission reporting.
-- Claude Haiku 4.5 AI agent mode (BOT_ENGINE=agent) for customer conversations: orchestrates menu selection, data collection (name, phone, address), order assembly, delivery-zone detection, and checkout with tool-calling. Agent handles customer/advisor message routing, confirms availability and payment method, and bridges to advisor. Deterministic pricing, delivery zones, referrals, and validation remain unchanged. Conversation locks prevent race conditions on concurrent messages from customer and advisor. Conversation memory persists agent history between turns in `agent_case_messages` table. New migration: `007_create_agent_case_messages.sql`. Configuration: `BOT_ENGINE` env var selects engine; agent mode currently enabled only with `BOT_MODE=simulator`. New files: `src/ai/{client.rs,agent.rs,tools.rs,memory.rs}`, `src/bot/delivery_zone.rs`.
+- Claude Haiku 4.5 AI agent mode (BOT_ENGINE=agent) for customer conversations: orchestrates menu selection, data collection (name, phone, address), order assembly, delivery-zone detection, and checkout with tool-calling. Agent handles customer/advisor message routing, confirms availability and payment method, and bridges to advisor. Deterministic pricing, delivery zones, referrals, and validation remain unchanged. Conversation locks prevent race conditions on concurrent messages from customer and advisor. Conversation memory persists agent history between turns in `agent_case_messages` table. New migration: `007_create_agent_case_messages.sql`. Configuration: `BOT_ENGINE` env var selects engine; agent mode works in both `simulator` and `production` modes (the initial simulator-only gate was removed in this release). New files: `src/ai/{client.rs,agent.rs,tools.rs,memory.rs}`, `src/bot/delivery_zone.rs`.
 - Three deterministic calculation tools for agent (FASE 2): `get_delivery_cost()` resolves delivery zones (Armenia norte/centro/sur, nearby towns, or manual unknown), `apply_referral_discount()` applies referral codes with boost detection, and `calculate_order_with_delivery()` computes complete order summary (items + delivery + referral discount + ambassador commission) in one step. All tools delegate to existing pricing and delivery-zone logic; no rule changes.
 
+### Added
+- Safe degradation when the agent LLM call fails (timeout, 5xx, exhausted credit): the customer
+  receives a fixed message from the new `[agent].llm_failure_customer` entry in
+  `config/messages.toml`, the advisor receives the case context (customer, phone, last message,
+  state), and the conversation state is left untouched so the case resumes when the API recovers.
+  The Anthropic HTTP client now has explicit timeouts (60s request / 10s connect) so a hung call
+  can no longer hold a conversation lock indefinitely. Integration test in
+  `tests/agent_degradation.rs`.
+- LLM cost controls: (1) the full per-customer history in `agent_case_messages` is still persisted
+  (CRM view unchanged) but only the last 40 messages are sent to the LLM per turn, cut at a safe
+  tool-use boundary; (2) inbound text is truncated at 1,500 characters before reaching the LLM;
+  (3) per-customer daily budget of 60 LLM calls — when exhausted the customer gets the fixed
+  `[agent].daily_limit_customer` message and the advisor is notified once per day per case;
+  (4) optional global daily kill-switch via `AGENT_DAILY_LLM_CALL_LIMIT` env var. Counters live in
+  memory (reset on redeploy) keyed to the Bogotá calendar day. New module `src/ai/budget.rs`.
+- Webhook deduplication by Meta `message_id` with an in-memory 10-minute TTL cache: a Meta retry
+  of an already-processed webhook no longer produces duplicate replies or duplicate LLM calls.
+- Anti prompt-injection section in the agent system prompt: customer messages can never change
+  prices, discounts, zones, or business rules; only tool-returned figures may be quoted; customers
+  claiming to be the advisor/owner are treated as customers. Prices were already deterministic —
+  this protects tone and promises.
+- `set_payment_method` (cash on delivery) now returns the authoritative final total in its tool
+  result so the model's closing message quotes the exact figure instead of recalculating it
+  (observed hallucinated total in simulator testing).
+- Flow-integrity hardening from simulator testing of the agent engine: (1) `message_advisor` now
+  also binds the advisor session to the case, so an advisor reply always routes back even if the
+  model messaged the advisor without having called `finalize_checkout` (observed: stranded case
+  with no order row and an unroutable advisor confirmation); (2) tool state-guards now evaluate
+  the in-turn effective state, so a `finalize_checkout` → `confirm_advisor_availability` chain
+  within a single turn is accepted; (3) the system prompt now carries a per-state flow hint
+  (`ask_delivery_cost` / `select_payment_method` / `wait_receipt`) plus explicit rules that the
+  order is not confirmed until `set_payment_method` succeeds and that availability questions to
+  the advisor require `finalize_checkout` first; `confirm_advisor_availability` returns the
+  authoritative total and error texts teach the model the correct recovery sequence.
+
 ### Changed
+- Removed the `AgentEngineRequiresSimulator` config gate: `BOT_ENGINE=agent` now boots with `BOT_MODE=production` (Meta webhook runtime). `BOT_ENGINE` unset still defaults to `deterministic`, so removing the variable in Railway remains an instant rollback.
 - Main menu now shows only "Hacer Pedido" and "Ver Menú" buttons; "Hablar con Asesor" button removed from menu (agent handles advisor requests based on text input in FASE 6).
 - Granizado pricing: "Segundo con licor" renamed to "Par con licor" at $12.000 (2 units at half price).
 - Order summary (`render_summary()`) now displays automatic delivery cost and referral discount breakdown inline instead of deferring to advisor; includes Subtotal, Domicilio, and Total with referral discount details when applicable.

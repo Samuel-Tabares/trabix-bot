@@ -276,3 +276,7 @@ contact_timeout_leave_message_button = "Dejar mensaje"
 contact_timeout_menu_button = "Menú"
 relay_timeout_text = "La conversación con el asesor se cerró por inactividad ⏳"
 conversation_inactivity_reset_text = "Reinicié la conversación por inactividad ⏳ Cuando quieras continuar, escríbeme de nuevo y retomamos desde el menú principal."
+
+[agent]
+llm_failure_customer = "Estamos teniendo un problema técnico en este momento 🙏 Un asesor revisará tu caso y te contactará en breve. También puedes volver a escribirme en unos minutos."
+daily_limit_customer = "Por hoy no puedo seguir atendiéndote por este chat 🙏 Un asesor revisará tu caso y te contactará directamente."

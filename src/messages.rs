@@ -73,6 +73,13 @@ pub struct ClientMessages {
     pub advisor_customer: AdvisorCustomerMessages,
     pub relay_customer: RelayCustomerMessages,
     pub timers_customer: TimerCustomerMessages,
+    pub agent: AgentMessages,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentMessages {
+    pub llm_failure_customer: String,
+    pub daily_limit_customer: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

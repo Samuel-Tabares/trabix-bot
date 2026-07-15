@@ -61,7 +61,23 @@ pub async fn process_customer_input(
     }
 
     let (new_state, mut actions) = if should_use_agent(&state, &current_state) {
-        crate::ai::agent::run_customer_turn(&state, &mut context, &current_state, &input).await?
+        match crate::ai::agent::run_customer_turn(&state, &mut context, &current_state, &input)
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                return degrade_agent_failure(
+                    &state,
+                    &phone,
+                    &context,
+                    &current_state,
+                    &input,
+                    "customer",
+                    err,
+                )
+                .await;
+            }
+        }
     } else {
         transition(&current_state, &input, &mut context)?
     };
@@ -181,7 +197,23 @@ pub async fn process_advisor_input(
     let (current_state, mut context) =
         rehydrate_client_conversation(&state, &client_conversation).await?;
     let (new_state, mut actions) = if should_use_agent(&state, &current_state) {
-        crate::ai::agent::run_advisor_turn(&state, &mut context, &current_state, &input).await?
+        match crate::ai::agent::run_advisor_turn(&state, &mut context, &current_state, &input)
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                return degrade_agent_failure(
+                    &state,
+                    &target_phone,
+                    &context,
+                    &current_state,
+                    &input,
+                    "advisor",
+                    err,
+                )
+                .await;
+            }
+        }
     } else {
         transition_advisor(&current_state, &input, &mut context)?
     };
@@ -236,6 +268,76 @@ pub async fn process_advisor_input(
 
     update_last_message(&state.pool, &advisor_phone).await?;
     update_last_message(&state.pool, &target_phone).await?;
+    Ok(())
+}
+
+/// Degradación segura cuando el motor de agente falla (timeout/5xx/saldo de
+/// Anthropic, error de red, etc.): el cliente NUNCA queda en silencio y el
+/// asesor SIEMPRE recibe el contexto del caso. El estado de la conversación
+/// no se toca: el cliente puede reintentar y el caso queda donde estaba.
+async fn degrade_agent_failure(
+    state: &AppState,
+    customer_phone: &str,
+    context: &ConversationContext,
+    current_state: &ConversationState,
+    input: &UserInput,
+    turn_actor: &str,
+    err: Box<dyn Error + Send + Sync>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    tracing::error!(
+        actor = %turn_actor,
+        phone = %mask_phone(customer_phone),
+        state = %current_state.as_storage_key(),
+        error = %err,
+        "agent turn failed, degrading to fixed message"
+    );
+
+    if turn_actor == "customer" {
+        let body = client_messages().agent.llm_failure_customer.clone();
+        if let Err(send_err) = send_text(state, customer_phone, &body, Some(customer_phone)).await
+        {
+            tracing::error!(
+                phone = %mask_phone(customer_phone),
+                error = %send_err,
+                "failed to send LLM-failure fallback message to customer"
+            );
+        }
+    }
+
+    let last_message = match input {
+        UserInput::TextMessage(text) => {
+            let preview: String = text.chars().take(200).collect();
+            preview
+        }
+        UserInput::ButtonPress(id) | UserInput::ListSelection(id) => format!("[botón: {id}]"),
+        UserInput::ImageMessage(_) => "[imagen]".to_string(),
+    };
+    let advisor_body = format!(
+        "⚠️ Error técnico del bot IA (mensaje de {} sin procesar).\nCliente: {} ({})\nÚltimo \
+         mensaje: {}\nEstado del caso: {}\n\nEl caso quedó donde estaba; cuando el sistema se \
+         recupere, el bot retoma solo. Si es urgente, contacta al cliente directamente.",
+        if turn_actor == "customer" { "cliente" } else { "asesor" },
+        context.customer_name.as_deref().unwrap_or("sin nombre"),
+        customer_phone,
+        last_message,
+        current_state.as_storage_key(),
+    );
+    if let Err(send_err) = send_text(
+        state,
+        &state.config.advisor_phone,
+        &advisor_body,
+        Some(customer_phone),
+    )
+    .await
+    {
+        tracing::error!(
+            phone = %mask_phone(customer_phone),
+            error = %send_err,
+            "failed to notify advisor about agent failure"
+        );
+    }
+
+    update_last_message(&state.pool, customer_phone).await?;
     Ok(())
 }
 

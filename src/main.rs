@@ -50,6 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let app_state = AppState {
+        llm_budget: granizado_bot::ai::budget::new_llm_budget_handle(
+            config.agent_daily_llm_call_limit,
+        ),
+        webhook_dedup: granizado_bot::new_webhook_dedup_cache(),
         config: config.clone(),
         pool,
         transport,

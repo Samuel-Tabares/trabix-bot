@@ -148,6 +148,16 @@ async fn process_incoming_message(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let from = message.from.clone();
     let message_id = message.id.clone();
+
+    if crate::is_duplicate_message(&state.webhook_dedup, &message_id).await {
+        tracing::info!(
+            phone = %mask_phone(&from),
+            message_id = %message_id,
+            "ignoring duplicate webhook delivery for already-processed message"
+        );
+        return Ok(());
+    }
+
     let extracted = extract_input(&message);
     let (message_type, content) = describe_input(&extracted.input);
     let actor = if from == state.config.advisor_phone {

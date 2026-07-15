@@ -10,6 +10,11 @@ pub const DEFAULT_MODEL: &str = "claude-haiku-4-5-20251001";
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: u32 = 1024;
+// Sin timeout, una llamada colgada a Anthropic retiene el lock de esa
+// conversacion indefinidamente y el caso queda congelado para cliente y
+// asesor. 60s cubre el peor caso razonable de un turno con tools.
+const REQUEST_TIMEOUT_SECS: u64 = 60;
+const CONNECT_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug, Clone)]
 pub struct AnthropicClient {
@@ -68,8 +73,13 @@ pub struct MessagesResponse {
 
 impl AnthropicClient {
     pub fn new(api_key: String) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
-            http: reqwest::Client::new(),
+            http,
             api_key,
             model: DEFAULT_MODEL.to_string(),
         }

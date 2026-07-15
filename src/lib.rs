@@ -11,7 +11,11 @@ pub mod simulator;
 pub mod transport;
 pub mod whatsapp;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use tokio::sync::Mutex;
 
@@ -45,6 +49,28 @@ pub async fn lock_conversation(
     per_phone.lock_owned().await
 }
 
+/// Cache en memoria de `message_id` de Meta ya procesados. Meta reintenta
+/// webhooks en ventanas de minutos cuando cree que el delivery falló; sin
+/// esto, un retry procesa el mismo mensaje dos veces (doble respuesta al
+/// cliente y, en modo agente, doble llamada al LLM). TTL corto porque los
+/// retries de Meta no llegan horas después.
+pub type WebhookDedupCache = Arc<Mutex<HashMap<String, Instant>>>;
+
+pub const WEBHOOK_DEDUP_TTL: Duration = Duration::from_secs(10 * 60);
+
+pub fn new_webhook_dedup_cache() -> WebhookDedupCache {
+    Arc::new(Mutex::new(HashMap::new()))
+}
+
+/// Devuelve `true` si el `message_id` ya fue visto dentro del TTL (y por lo
+/// tanto debe ignorarse). Registra el id y poda entradas vencidas de paso.
+pub async fn is_duplicate_message(cache: &WebhookDedupCache, message_id: &str) -> bool {
+    let now = Instant::now();
+    let mut seen = cache.lock().await;
+    seen.retain(|_, inserted| now.duration_since(*inserted) < WEBHOOK_DEDUP_TTL);
+    seen.insert(message_id.to_string(), now).is_some()
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: config::Config,
@@ -53,4 +79,6 @@ pub struct AppState {
     pub timers: bot::timers::TimerMap,
     pub timer_overrides: bot::timers::TimerOverridesHandle,
     pub conversation_locks: ConversationLocks,
+    pub llm_budget: ai::budget::LlmBudgetHandle,
+    pub webhook_dedup: WebhookDedupCache,
 }
