@@ -72,6 +72,7 @@ pub struct Config {
     pub simulator: Option<SimulatorConfig>,
     pub bot_engine: BotEngine,
     pub anthropic_api_key: Option<String>,
+    pub agent_daily_llm_call_limit: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,7 +81,7 @@ pub enum ConfigError {
     InvalidPort(String),
     InvalidMode(String),
     InvalidEngine(String),
-    AgentEngineRequiresSimulator,
+    InvalidLlmCallLimit(String),
 }
 
 impl fmt::Display for ConfigError {
@@ -90,10 +91,9 @@ impl fmt::Display for ConfigError {
             Self::InvalidPort(value) => write!(f, "invalid PORT value: {value}"),
             Self::InvalidMode(value) => write!(f, "invalid BOT_MODE value: {value}"),
             Self::InvalidEngine(value) => write!(f, "invalid BOT_ENGINE value: {value}"),
-            Self::AgentEngineRequiresSimulator => write!(
-                f,
-                "BOT_ENGINE=agent is only supported with BOT_MODE=simulator for now"
-            ),
+            Self::InvalidLlmCallLimit(value) => {
+                write!(f, "invalid AGENT_DAILY_LLM_CALL_LIMIT value: {value}")
+            }
         }
     }
 }
@@ -126,9 +126,6 @@ impl Config {
         };
 
         let bot_engine = BotEngine::from_env()?;
-        if bot_engine.is_agent() && mode == BotMode::Production {
-            return Err(ConfigError::AgentEngineRequiresSimulator);
-        }
         let anthropic_api_key = match bot_engine {
             BotEngine::Agent => Some(read_required("ANTHROPIC_API_KEY")?),
             BotEngine::Deterministic => read_optional("ANTHROPIC_API_KEY"),
@@ -145,6 +142,7 @@ impl Config {
             simulator,
             bot_engine,
             anthropic_api_key,
+            agent_daily_llm_call_limit: read_llm_call_limit()?,
         })
     }
 
@@ -175,6 +173,17 @@ fn read_required(name: &'static str) -> Result<String, ConfigError> {
 
 fn read_optional(name: &'static str) -> Option<String> {
     env::var(name).ok()
+}
+
+fn read_llm_call_limit() -> Result<Option<u64>, ConfigError> {
+    match env::var("AGENT_DAILY_LLM_CALL_LIMIT") {
+        Ok(value) => value
+            .trim()
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|_| ConfigError::InvalidLlmCallLimit(value)),
+        Err(_) => Ok(None),
+    }
 }
 
 fn read_port() -> Result<u16, ConfigError> {
@@ -278,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_engine_is_rejected_in_production_mode() {
+    fn agent_engine_loads_in_production_mode_with_api_key() {
         let _guard = env_lock().lock().expect("env lock");
         clear_env();
         std::env::set_var("BOT_ENGINE", "agent");
@@ -291,8 +300,10 @@ mod tests {
         std::env::set_var("WHATSAPP_APP_SECRET", "secret");
         std::env::set_var("MENU_IMAGE_MEDIA_ID", "media-id");
 
-        let err = Config::from_env().expect_err("agent engine should be rejected in production");
-        assert_eq!(err, ConfigError::AgentEngineRequiresSimulator);
+        let config = Config::from_env().expect("agent engine should load in production mode");
+        assert_eq!(config.mode, BotMode::Production);
+        assert_eq!(config.bot_engine, super::BotEngine::Agent);
+        assert_eq!(config.anthropic_api_key.as_deref(), Some("sk-test"));
     }
 
     #[test]
