@@ -4,3 +4,4 @@ target/
 .simulator_uploads/
 *.pdb
 .DS_Store
+backups/
