@@ -7,12 +7,21 @@ webhooks) · Docker → Railway.
 
 ## Purpose
 
-Deterministic (non-LLM) state-machine WhatsApp bot that takes granizado orders for Trabix
-Granizados, with referral/embajador code support. Two runtimes selected via `BOT_MODE`:
+State-machine WhatsApp bot that takes granizado orders for Trabix Granizados, with
+referral/embajador code support. Two runtimes selected via `BOT_MODE`:
 
 - `production` (default): real Meta webhook runtime.
 - `simulator`: local web chat at `http://127.0.0.1:8080/simulator` running the same bot brain,
   no calls to Meta — launch with `./scripts/run_simulator.sh`.
+
+Two engines selected via `BOT_ENGINE` (independent of `BOT_MODE`; both work in production):
+
+- `deterministic` (default when unset): the original non-LLM state machine. Removing
+  `BOT_ENGINE` in Railway + redeploy is the instant rollback path.
+- `agent`: Claude Haiku tool-calling engine (`src/ai/`) for customer self-service states;
+  requires `ANTHROPIC_API_KEY`. Pricing/zones/referrals stay deterministic via tools. Guards,
+  cost budget, failure degradation, and the relay reachability audit are documented in
+  `general_info/current_runtime_reference.md` and `general_info/runbook.md`.
 
 ## Source of truth by concern
 
