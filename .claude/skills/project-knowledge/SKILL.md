@@ -1,6 +1,6 @@
 ---
 name: project-knowledge
-description: Preserve project knowledge as business-facing documentation, never code explanations. Session Mode MUST auto-fire the moment the user signals a work session is ending — "cerramos sesión", "cerremos la sesión", "eso es todo por hoy", "terminamos por hoy", "wrap up the session", "that's it for today", "let's close out", "end of session" — producing SESSION-XXX.md without being asked explicitly. Master Mode reads every SESSION-XXX.md plus project docs to produce MASTER_PROJECT_ANALYSIS.md; it is normally invoked manually via the `/project-knowledge` command, not automatically. Do not trigger for code review, technical documentation (READMEs, API docs), or commit messages.
+description: Preserve project knowledge as business-facing documentation, never code explanations. Session Mode MUST auto-fire the moment the user signals a work session is ending — "cerramos sesión", "cerremos la sesión", "eso es todo por hoy", "terminamos por hoy", "wrap up the session", "that's it for today", "let's close out", "end of session" — producing SESSION-XXX.md without being asked explicitly. If the project is a git repository, Session Mode also commits every pending change from the session (not just the SESSION-XXX.md file) once the doc is written — local commit only, never push. Master Mode reads every SESSION-XXX.md plus project docs to produce MASTER_PROJECT_ANALYSIS.md; it is normally invoked manually via the `/project-knowledge` command, not automatically. Do not trigger for code review, technical documentation (READMEs, API docs), or commit messages.
 ---
 
 # Project Knowledge
@@ -64,7 +64,37 @@ docs/project-knowledge/
 4. Usar `assets/session-template.md` como estructura de secciones — no inventar ni quitar secciones.
 5. Redactar para audiencia no técnica (ver `references/good-practices.md` para tono y nivel de detalle, `references/examples.md` para un ejemplo completo).
 6. Guardar como `SESSION-XXX.md`.
-7. Confirmar al usuario en una línea: qué se guardó y dónde — no reimprimir el documento completo en el chat salvo que lo pidan.
+7. **Commit automático (si aplica) — ver "Commit al cerrar sesión" abajo.**
+8. Confirmar al usuario en una línea: qué se guardó, dónde, y si se hizo commit (y de qué) o por qué no aplicó — no reimprimir el documento completo en el chat salvo que lo pidan.
+
+### Commit al cerrar sesión
+
+Tras guardar `SESSION-XXX.md`, si el proyecto es un repositorio git, commitea **todos** los
+cambios pendientes de la sesión — no solo el archivo de sesión — antes de dar por cerrado el
+modo. Esto es parte de Session Mode, no un paso opcional.
+
+1. Comprueba si estás dentro de un repositorio git (`git rev-parse --is-inside-work-tree`).
+   Si no lo es, no hay nada que hacer aquí — sáltalo sin tratarlo como error.
+2. Si es un repo pero no hay ningún cambio pendiente (ni siquiera el `SESSION-XXX.md` recién
+   creado, porque ya se guardó fuera del árbol versionado o algo similar), tampoco hay nada
+   que commitear — sáltalo.
+3. Si hay cambios pendientes: revisa primero si el proyecto tiene sus propias convenciones de
+   commit (un `CLAUDE.md`/`AGENTS.md` con una sección de commits, o un skill `commit` local en
+   `.claude/skills/`) y síguelas al pie de la letra — tipo de commit, si permite commitear
+   directo a `main`/`master` o exige crear rama primero, formato de mensaje, si hay que tocar
+   `CHANGELOG.md`. Si el proyecto no define nada propio, usa el skill `commit` genérico de este
+   entorno (Conventional Commits, crea rama si estás en `main`/`master` salvo que la convención
+   propia del repo diga lo contrario).
+4. Agrupa el commit de forma sensata: si el trabajo de la sesión mezcla un cambio de código y
+   la documentación, sigue el criterio de granularidad del skill de commit que estés usando
+   (normalmente separa código de docs en commits distintos) — no lo fuerces todo a un único
+   commit gigante solo por conveniencia, pero tampoco fragmentes artificialmente.
+5. **Nunca hagas `git push`, nunca `--force`, nunca `--no-verify`.** El commit queda local; si
+   el usuario quiere publicarlo, lo pide aparte — esto es explícitamente fuera del alcance de
+   este paso.
+6. Si el árbol de trabajo ya tenía cambios sin relación aparente con esta sesión desde ANTES
+   de que la sesión empezara, no los mezcles en silencio dentro del mismo commit — coméntalo
+   en la confirmación final en vez de asumir que son parte del trabajo de hoy.
 
 ## Master Mode — pasos
 
@@ -86,6 +116,7 @@ docs/project-knowledge/
 - [ ] Idioma consistente con los documentos previos del proyecto (o confirmado con el usuario si es el primero).
 - [ ] Nombre de archivo y carpeta siguen la convención de esta sección — no un esquema improvisado.
 - [ ] Si se detectó una convención de carpeta/nombre distinta ya existente en el proyecto, se respetó esa convención en vez de imponer la propia (ver `references/existing-project-integration.md`).
+- [ ] Session Mode en un repositorio git: se commiteó (sin `push`) todo el trabajo pendiente de la sesión, siguiendo la convención de commits propia del proyecto si existe; si no era un repo git o no había nada pendiente, no se intentó nada.
 
 ## References
 
