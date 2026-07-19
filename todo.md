@@ -24,9 +24,46 @@ into the system prompt every turn), item 7 (mandatory final recap — prompt rei
 table already had the columns). Docs updated: CHANGELOG.md, general_info/current_runtime_reference.md,
 docs/canary-fixes-2026-07-19.md. Committed locally this session; NOT pushed/deployed yet.
 
-STILL OPEN: decide whether to remove the dead `calculate_order_with_delivery` helper (unused in
-`tools.rs`); validate SESSION-017 in the simulator (BOT_ENGINE=agent) before Railway, especially
-the reopen (A) and welcome/timers (3) flows; then push + redeploy.
+2026-07-20 (later): SESSION-016 + SESSION-017 pushed to production (origin/master ->
+fb0a421..27aafda), Railway auto-deploys from master. Simulator validation was skipped — shipped
+straight to prod per Samuel's call (and the simulator is being removed anyway, see below).
+
+================================================================================
+NEXT SESSION — DEAD-CODE PURGE + REMOVE THE SIMULATOR (Samuel's directive, 2026-07-20)
+================================================================================
+
+GOAL: the only code that stays is code that has a real function in the system AND actually runs
+in production. Everything else goes. First fully understand how the system works end to end, then
+cut aggressively so the codebase is smaller and easier to optimize.
+
+Scope (to be executed next session, not done yet):
+
+1. REMOVE THE SIMULATOR ENTIRELY. We don't need it. Delete everything related to it:
+   - `BOT_MODE=simulator` runtime and the whole mode split (bot becomes production-only).
+   - `src/simulator/` (local sessions/transcripts/media persistence), the simulator route mount,
+     and the simulator branch of outbound transport (recording instead of sending).
+   - `scripts/run_simulator.sh`, the simulator UI/assets, simulator timer-override plumbing.
+   - All simulator references in docs (CLAUDE.md, current_runtime_reference.md, runbook.md,
+     README/testing notes) and any simulator-only config.
+   - After removal there is no local-chat harness — validation is via `cargo test` + the
+     deterministic-engine fallback + live testing. Accept that tradeoff (Samuel confirmed).
+
+2. REMOVE THE KNOWN DEAD HELPER: the unused `calculate_order_with_delivery` super-tool in
+   `src/ai/tools.rs` (never wired into dispatch).
+
+3. FULL DEAD-CODE SWEEP: hunt down and delete every unused path — functions, branches, config
+   fields, messages, states, tools, DB columns/queries never read, `#[allow(dead_code)]` cover-ups,
+   leftover FASE-x scaffolding. Anything not reachable/executed in the production agent + advisor
+   flow. Understand each before deleting (don't remove something that only looks unused but is
+   reached via a timer, webhook, or restore path).
+
+4. Keep `cargo test` green throughout; document what was removed and why. Consider a version bump
+   + release/tag once the codebase is trimmed.
+
+CAUTION for whoever does this: the deterministic engine is the instant rollback for the agent, so
+do NOT delete the deterministic flow even though agent mode is live — it must keep working. Only
+the SIMULATOR goes, not the deterministic ENGINE. Verify each candidate is truly unreachable
+(timers, boot restore, sweep, webhook verify, advisor routing) before cutting.
 
 Done:
 1. ✅ Pushed to GitHub
