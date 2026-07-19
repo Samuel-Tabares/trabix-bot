@@ -1,5 +1,24 @@
 Status as of 2026-07-15: agent engine is LIVE on the real WhatsApp number.
 
+2026-07-19: canary testing found real bugs, logged in docs/canary-fixes-2026-07-19.md.
+
+2026-07-19 (later same day, see SESSION-016): worked through the list one item at a time with
+confirmation before each fix. RESOLVED + tested (cargo test 177 passed): item 2 (LLM narrating
+totals — added a deterministic guard that blocks any $ amount not backed by a real tool-result),
+item 8 (delivery fee missing from "final" totals — now clearly labeled subtotal until delivery
+is known), item 4 + finding D (scheduled orders wrongly required advisor availability
+confirmation — now auto-accept correctly, transfer+scheduled flow fixed), item 5 (flavor
+disambiguation — Maracumango/Manzana verde/Bonbonbum/Blueberry now require the customer's
+wording to distinguish the liquor/non-liquor variant instead of guessing). NOT committed or
+deployed yet — pending Samuel's decision on when to ship.
+
+NEXT SESSION: read docs/canary-fixes-2026-07-19.md's updated status section and continue with
+the remaining items — suggested order: finding A (duplicate confirmed orders in DB), item 9
+(mandatory referral-code prompt on bulk orders), then item 1 (business hours), item 7 (final
+confirmation recap), item 3 (remove interactive buttons), item 6 (WhatsApp bold formatting),
+finding C (Meta vs. custom customer fields). Also decide whether to remove the dead
+`calculate_order_with_delivery` helper found unused in `tools.rs` during this session.
+
 Done:
 1. ✅ Pushed to GitHub
 2. ✅ Backed up Railway DB (local, gitignored: backups/trabix_backup_2026-07-15.dump)
