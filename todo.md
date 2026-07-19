@@ -12,12 +12,21 @@ disambiguation — Maracumango/Manzana verde/Bonbonbum/Blueberry now require the
 wording to distinguish the liquor/non-liquor variant instead of guessing). NOT committed or
 deployed yet — pending Samuel's decision on when to ship.
 
-NEXT SESSION: read docs/canary-fixes-2026-07-19.md's updated status section and continue with
-the remaining items — suggested order: finding A (duplicate confirmed orders in DB), item 9
-(mandatory referral-code prompt on bulk orders), then item 1 (business hours), item 7 (final
-confirmation recap), item 3 (remove interactive buttons), item 6 (WhatsApp bold formatting),
-finding C (Meta vs. custom customer fields). Also decide whether to remove the dead
-`calculate_order_with_delivery` helper found unused in `tools.rs` during this session.
+2026-07-20 (SESSION-017): closed the ENTIRE remaining canary backlog, one item at a time with
+confirmation before each fix. RESOLVED + tested (cargo test 187 passed): finding A (duplicate
+confirmed orders — no reset on confirm, order_confirmed guard, modify_confirmed_order /
+start_new_order tools, delta analytics; confirmed with Samuel: reopen & replace same order),
+item 9 (mandatory referral prompt on wholesale via finalize_checkout guard + skip_referral_code
+tool; confirmed: code only applies to wholesale), item 1 (business hours + Bogotá clock injected
+into the system prompt every turn), item 7 (mandatory final recap — prompt reinforcement), item 3
+(fixed no-LLM welcome + timers to plain text in agent mode; confirmed both), item 6 (deterministic
+**x**→*x* normalization), finding C (Meta vs. custom customer fields — no migration, customers
+table already had the columns). Docs updated: CHANGELOG.md, general_info/current_runtime_reference.md,
+docs/canary-fixes-2026-07-19.md. Committed locally this session; NOT pushed/deployed yet.
+
+STILL OPEN: decide whether to remove the dead `calculate_order_with_delivery` helper (unused in
+`tools.rs`); validate SESSION-017 in the simulator (BOT_ENGINE=agent) before Railway, especially
+the reopen (A) and welcome/timers (3) flows; then push + redeploy.
 
 Done:
 1. ✅ Pushed to GitHub

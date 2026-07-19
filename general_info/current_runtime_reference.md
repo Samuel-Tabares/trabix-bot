@@ -115,6 +115,40 @@ Correcciones del canary 2026-07-19 (`docs/canary-fixes-2026-07-19.md`):
   `tools::check_flavor_disambiguation`. Sabores que solo existen en una variante (Uva Vodka,
   Smirnoff de lulo) no requieren ninguna palabra extra.
 
+Correcciones del canary 2026-07-20 (resto del backlog de `docs/canary-fixes-2026-07-19.md`):
+
+- CICLO DE VIDA DEL PEDIDO CONFIRMADO (hallazgo A): al confirmar (efectivo o comprobante) el motor
+  agente YA NO emite `ResetConversation` — el contexto persiste con `current_order_id` intacto y un
+  flag `order_confirmed=true`. Un pedido confirmado no se puede re-confirmar: `finalize_checkout`
+  lo rechaza. Para cambiarlo, el LLM llama `modify_confirmed_order` (reabre la MISMA orden → el
+  checkout hace UPDATE, no crea otra); para un pedido aparte llama `start_new_order` (suelta el
+  binding). Analytics es por DELTA: `confirmed_order_snapshot` guarda lo ya acumulado y la
+  re-confirmacion suma solo la diferencia sin re-contar `times_used` (`referral_times_used_inc` en
+  `UpdateCustomerAndAnalytics`). El motor determinista sigue reseteando y nunca setea snapshot, asi
+  que su comportamiento no cambia.
+- CODIGO DE REFERIDO OBLIGATORIO EN MAYORISTA (item 9): `finalize_checkout` bloquea la confirmacion
+  de un pedido con bucket mayorista hasta que el tema del codigo este resuelto — se aplica un codigo
+  valido (`apply_referral_code`) o el cliente dice que no tiene (nuevo tool `skip_referral_code`);
+  flag `referral_prompt_resolved`. En retail el codigo no aplica (pricing ya lo rechaza), no se
+  pregunta.
+- HORARIO INYECTADO (item 1): el bloque "ESTADO ACTUAL DEL CASO" del system prompt incluye la hora
+  y dia actuales de Bogota y si esta ABIERTO/CERRADO para entrega inmediata, en cada turno. El LLM
+  no responde de memoria ni depende de llamar `check_business_hours`.
+- RECAP OBLIGATORIA (item 7): antes de confirmar cualquier pedido (o de mandar datos de
+  transferencia) el prompt exige recapitular productos+variante+cantidad, fecha/hora absolutas,
+  direccion y total con domicilio, y esperar OK explicito. Refuerzo de prompt.
+- CERO BOTONES EN MODO AGENTE (item 3): el primer contacto responde un saludo fijo `[agent].welcome`
+  SIN llamar al LLM (flag `has_greeted`); el resto es texto LLM. Los timers que emitian botones
+  (receipt/contact/advisor timeout) mandan solo texto plano en modo agente — los estados ya son
+  agent-owned, asi que la respuesta del cliente la interpreta el LLM. El motor determinista conserva
+  sus botones.
+- FORMATO WhatsApp (item 6): `normalize_whatsapp_markdown` colapsa `**x**`→`*x*` y `__x__`→`_x_` en
+  cada `SendText` saliente del agente.
+- DATOS META VS PERSONALIZADOS (hallazgo C): `meta_customer_name`/`meta_customer_phone` (base
+  inmutable de Meta) se separan del nombre/celular personalizado; `set_customer_field` guarda los
+  personalizados sin validacion; el paquete al asesor muestra ambos ("personalizado (Meta: real)").
+  Sin migracion: la tabla `customers` ya tenia columnas meta/manual.
+
 Auditoria de alcanzabilidad del relay (2026-07-15): en modo agente NO existe camino alcanzable a
 `relay_mode` ni `wait_advisor_contact` para conversaciones creadas bajo el agente:
 

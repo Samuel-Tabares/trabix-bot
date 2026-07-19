@@ -5,11 +5,15 @@ Backlog de correcciones del motor agente (`BOT_ENGINE=agent`, live en producció
 logs de Railway del 2026-07-19 (~07:00–07:45 AM Bogotá / 12:00–12:45Z).
 
 **Estado (sesión de fixes 2026-07-19, ver SESSION-016):** ítems **2, 8, 4, 5** y el hallazgo
-**D** quedaron resueltos y con tests (`cargo test`: 177 passed, 0 failed). Todavía sin
-commitear. Pendientes para la próxima sesión: ítems **1, 3, 6, 7, 9**, hallazgo **A** y **C**
-(marcados `⏳ PENDIENTE` abajo). En varios ítems resueltos, la causa real terminó siendo
-distinta de la hipótesis original de este documento — cada sección resuelta trae una nota
-"Resuelto" con la causa real encontrada.
+**D** quedaron resueltos y con tests (`cargo test`: 177 passed, 0 failed).
+
+**Estado (sesión de fixes 2026-07-20, ver SESSION-017):** se cerró TODO el backlog restante —
+ítems **1, 3, 6, 7, 9**, hallazgo **A** y **C** — con tests (`cargo test`: 187 passed, 0
+failed). Cada sección trae su nota "Resuelto" con la causa real y el fix. Hallazgo **A** necesitó
+confirmación de negocio de Samuel (reabrir y reemplazar la misma orden); ítem **9** confirmó que
+el código de descuento SOLO aplica a mayorista; ítem **3** confirmó saludo fijo sin LLM + timers
+sin botones. Hallazgo **C** NO necesitó migración: la tabla `customers` ya tenía columnas
+meta/manual.
 
 Contexto técnico para la sesión que corrija:
 
@@ -27,7 +31,16 @@ Contexto técnico para la sesión que corrija:
 
 ---
 
-## 1. No respeta el horario de atención (reportado) — ⏳ PENDIENTE
+## 1. No respeta el horario de atención (reportado) — ✅ RESUELTO
+
+> **Resuelto (SESSION-017):** se inyecta el estado de horario como dato determinista en el
+> bloque "ESTADO ACTUAL DEL CASO" del system prompt en CADA turno (`build_system_prompt` en
+> `agent.rs`): "Hora actual en Armenia/Bogotá: {día HH:MM} — entrega inmediata AHORA MISMO:
+> ABIERTO/CERRADO (horario ...)". El LLM ya no depende de llamar `check_business_hours` ni
+> responde de memoria; la regla del prompt lo obliga a usar ese dato. `check_business_hours` se
+> mantiene para preguntas explícitas. Bonus: la hora/día inyectada también ayuda al ítem 7
+> (resolver "mañana"/"hoy" en programados sin equivocar la fecha).
+
 
 **Síntoma:** a las ~7:00 AM el bot dijo que SÍ había domicilios disponibles. Solo al
 volverle a preguntar explícitamente rectificó el horario real (8:00 AM – 11:00 PM).
@@ -76,7 +89,17 @@ por medio. Después el total real en DB fue $900.000 subtotal + $32.000 domicili
 > `calculate_order_with_delivery` en `tools.rs` que nunca se usa (código muerto, no conectada
 > en `dispatch_tool`) — reportado, no eliminado, decisión pendiente de Samuel.
 
-## 3. Quitar todos los botones — todo por LLM (nuevo comportamiento) — ⏳ PENDIENTE
+## 3. Quitar todos los botones — todo por LLM (nuevo comportamiento) — ✅ RESUELTO
+
+> **Resuelto (SESSION-017):** dos partes. (1) SALUDO FIJO: nuevo campo `has_greeted` en
+> `state_data`; en `process_customer_input`, el primer contacto en motor agente responde con un
+> texto fijo (`config/messages.toml` → `[agent] welcome`) SIN llamar al LLM, y de ahí en adelante
+> todo lo maneja el LLM. Prompt reforzado para que el LLM no vuelva a saludar. (2) TIMERS SIN
+> BOTONES: los 3 sitios de `timers.rs` que emitían botones (receipt/contact/advisor timeout) ahora
+> mandan solo texto plano cuando `bot_engine.is_agent()` — los estados ya son agent-owned, así que
+> la respuesta en texto del cliente la interpreta el LLM. En motor determinista siguen con botones.
+> Confirmado con Samuel: saludo fijo sin LLM + timers a texto plano.
+
 
 **Spec (confirmado por Samuel):** al primer mensaje el bot manda un mensaje genérico de
 bienvenida **sin botones** — texto plano que lista las opciones de lo que la persona puede
@@ -153,7 +176,13 @@ licor)" sin preguntar.
 > rechaza el intento si es ambiguo y esa frase no distingue la variante. Sabores inequívocos
 > (Uva Vodka, Smirnoff de lulo) no requieren palabra extra.
 
-## 6. Formato WhatsApp: un solo asterisco + listas (reportado) — ⏳ PENDIENTE
+## 6. Formato WhatsApp: un solo asterisco + listas (reportado) — ✅ RESUELTO
+
+> **Resuelto (SESSION-017):** post-proceso determinista `normalize_whatsapp_markdown` en
+> `agent.rs`, aplicado a cada `SendText` saliente del agente (antes del sanitizador de montos):
+> colapsa `**x**` → `*x*` y `__x__` → `_x_`. Además regla de formato en el system prompt (un solo
+> asterisco + preferir listas con guiones). No se confía solo en el prompt.
+
 
 - Hoy el bot escribe `**negrilla**` (se ve literal en WhatsApp). Debe usar `*negrilla*`
   (un asterisco = negrilla en WhatsApp). Evidencia: prácticamente todos los mensajes en
@@ -162,7 +191,16 @@ licor)" sin preguntar.
 - Fix: regla de formato en el system prompt + idealmente post-proceso determinista que
   convierta `**x**` → `*x*` antes de enviar (no confiar solo en el prompt).
 
-## 7. Confusión de fechas en programados + confirmación final obligatoria (reportado) — ⏳ PENDIENTE
+## 7. Confusión de fechas en programados + confirmación final obligatoria (reportado) — ✅ RESUELTO
+
+> **Resuelto (SESSION-017):** regla de RECAPITULACIÓN OBLIGATORIA en el system prompt: antes de
+> `finalize_checkout` (o, si es transferencia, antes de mandar los datos) el bot debe recapitular
+> productos+variante+cantidad, fecha/hora EXACTAS (fecha absoluta, no "mañana"), dirección y total
+> con domicilio, y esperar el "sí" explícito. Para las fechas se apoya en la hora/día inyectados
+> del ítem 1 (resolver "mañana"/"hoy" sin equivocar). Es refuerzo de prompt: no hay forma
+> determinista de comprobar que el LLM recapituló, pero el dato de fecha inyectado elimina la
+> causa raíz de la confusión.
+
 
 **Síntoma:** a veces confunde fechas de pedidos programados (reporte de Samuel; el cambio
 "mañana 8 AM" → "HOY 8 AM" visto en logs a las 12:29Z/12:38Z NO es evidencia de bug — fue
@@ -197,7 +235,16 @@ catálogo).
 > `{total}` → `{total_line}` en `config/messages.toml` y validador en `messages.rs`. Prompt
 > reforzado para preguntar la zona antes de cotizar.
 
-## 9. Pedidos al por mayor: preguntar y aplicar código de descuento (reportado) — ⏳ PENDIENTE
+## 9. Pedidos al por mayor: preguntar y aplicar código de descuento (reportado) — ✅ RESUELTO
+
+> **Resuelto (SESSION-017):** guard determinista en `finalize_checkout` — si el pedido tiene
+> bucket mayorista (`has_wholesale_bucket`) y el tema del código no está resuelto, se rechaza la
+> confirmación pidiéndole al LLM que pregunte. Nuevo flag `referral_prompt_resolved` (state_data)
+> que se marca al aplicar un código válido o al llamar el nuevo tool `skip_referral_code` (cliente
+> sin código). Confirmado con Samuel: el código SOLO aplica a mayorista, no a retail — y
+> `apply_referral_code` ya rechazaba retail, así que en pedidos retail no se pregunta. Prompt
+> actualizado.
+
 
 **Síntoma:** en pedidos con bucket mayorista el bot no pregunta por código de referido.
 
@@ -214,7 +261,20 @@ LLM: si hay bucket mayor y no se preguntó, bloquear la confirmación).
 
 ## Hallazgos adicionales en logs (no reportados por Samuel)
 
-### A. Pedido duplicado en DB al ajustar un pedido ya confirmado (CRÍTICO) — ⏳ PENDIENTE
+### A. Pedido duplicado en DB al ajustar un pedido ya confirmado (CRÍTICO) — ✅ RESUELTO
+
+> **Resuelto (SESSION-017):** causa raíz — al confirmar, se disparaba `ResetConversation`, que en
+> `engine.rs` hace que se OMITA persistir `context.to_state_data()`, borrando `current_order_id`.
+> Entonces un ajuste posterior caía en la rama `None` de la persistencia y CREABA otra orden.
+> Fix (confirmado con Samuel: "reabrir y reemplazar la misma orden"): los dos puntos de
+> confirmación del agente (efectivo y comprobante) ya NO resetean — el contexto persiste con
+> `current_order_id` intacto. Nuevo flag `order_confirmed` + guard en `finalize_checkout` que
+> rechaza re-confirmar; nuevos tools `modify_confirmed_order` (reabre la MISMA orden → UPDATE) y
+> `start_new_order` (suelta el binding para un pedido aparte). Analytics pasó a DELTA: nuevo campo
+> `confirmed_order_snapshot` + `referral_times_used_inc` en la acción; al re-confirmar suma solo la
+> diferencia (nuevo − viejo) y no re-cuenta `times_used`. El motor determinista no setea snapshot →
+> comportamiento idéntico. Al asesor le llega "✏️ Pedido MODIFICADO".
+
 
 Secuencia 12:37–12:39Z: la orden **31** quedó `confirmed` ($957.000) → el cliente ajustó la
 variante de un item → el agente creó la orden **32** y también la confirmó ($932.000). Dos
@@ -227,7 +287,18 @@ conversación, cancelar/reemplazar la orden previa, no crear otra; corregir anal
 Los dos "LLM daily budget exhausted" (12:22Z y 12:42Z) fueron porque Samuel probó con 2
 celulares el mismo día. Comportamiento esperado del guard. No requiere cambio por ahora.
 
-### C. Datos del cliente: separar datos de Meta vs. personalizados (spec de Samuel) — ⏳ PENDIENTE
+### C. Datos del cliente: separar datos de Meta vs. personalizados (spec de Samuel) — ✅ RESUELTO
+
+> **Resuelto (SESSION-017):** SIN migración — la tabla `customers` ya tenía columnas
+> meta/manual. Nuevos campos `meta_customer_name`/`meta_customer_phone` en el contexto (base de
+> Meta, seteados en `seed_customer_data` desde `profile.name` y el número de la conversación,
+> inmutables). `set_customer_field` ahora guarda nombre/celular PERSONALIZADOS sin validación (solo
+> rechaza vacío); la dirección se sigue validando. El paquete al asesor (`advisor_case_summary`)
+> muestra ambos vía `customer_identity_line`: "personalizado (Meta: real)" si difieren. La
+> persistencia mapea correcto: `customer_name_meta`/`phone_meta` = Meta, `_manual` solo cuando el
+> personalizado difiere (helper `manual_override`). Un dato inventado ("2222222222") nunca
+> reemplaza el real de Meta.
+
 
 El agente aceptó "2222222222" como teléfono del cliente y se lo pasó al asesor (12:41Z).
 Decisión de Samuel — en vez de validar el input:
@@ -264,11 +335,12 @@ solo recibe el paquete informativo final).
 4. ⏳ Todo pendiente: ítem 1 (horario en system prompt), ítem 7 (confirmación final), ítem 3
    (sin botones), ítem 6 (formato), C (campos Meta vs. personalizados).
 
-**Próxima sesión — arrancar por:** hallazgo A (duplicado, integridad de datos) e ítem 9
-(referido obligatorio en mayorista, dinero/comisiones), luego el bloque 4 restante.
+**Estado final (2026-07-20, SESSION-017):** backlog COMPLETO. Los 9 ítems + hallazgos A, C, D
+resueltos con `cargo test` en verde (187 passed). Hallazgo B era comportamiento esperado (sin
+acción).
 
 Tras corregir: validar en simulator (`./scripts/run_simulator.sh` + `BOT_ENGINE=agent`),
-correr `cargo check && cargo test`, actualizar `general_info/current_runtime_reference.md`
-si cambia comportamiento, y redeploy a Railway. **Nota:** los fixes de esta sesión (2, 8, 4,
-D, 5) están hechos y con `cargo test` en verde, pero **todavía no se han commiteado ni
+correr `cargo check && cargo test` (hecho: 187 passed), actualizar
+`general_info/current_runtime_reference.md`, y redeploy a Railway. **Nota:** los fixes de ambas
+sesiones (2,8,4,D,5 de la 016 y 1,3,6,7,9,A,C de la 017) **aún no se han commiteado ni
 desplegado** — pendiente de decisión de Samuel sobre cuándo commitear/desplegar.
