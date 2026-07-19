@@ -60,6 +60,29 @@ pub async fn process_customer_input(
         );
     }
 
+    // Primer contacto en motor agente: se responde con un saludo de bienvenida
+    // FIJO (sin gastar una llamada al LLM). De ahí en adelante todo lo maneja
+    // el LLM (ver docs/canary-fixes-2026-07-19.md item 3).
+    if should_use_agent(&state, &current_state) && !context.has_greeted {
+        context.has_greeted = true;
+        send_text(
+            &state,
+            &phone,
+            &client_messages().agent.welcome,
+            Some(phone.as_str()),
+        )
+        .await?;
+        update_state(
+            &state.pool,
+            &phone,
+            current_state.as_storage_key(),
+            &context.to_state_data(),
+        )
+        .await?;
+        update_last_message(&state.pool, &phone).await?;
+        return Ok(());
+    }
+
     let (new_state, mut actions) = if should_use_agent(&state, &current_state) {
         match crate::ai::agent::run_customer_turn(&state, &mut context, &current_state, &input)
             .await
@@ -109,12 +132,17 @@ pub async fn process_customer_input(
     )
     .await?;
 
+    // Meta vs personalizado (hallazgo C): el nombre/celular manual solo se
+    // guarda como "_manual" cuando el cliente puso uno DISTINTO al de Meta; así
+    // el registro conserva el dato real de Meta aparte del personalizado.
+    let manual_name = manual_override(context.customer_name.as_deref(), context.meta_customer_name.as_deref());
+    let manual_phone = manual_override(context.customer_phone.as_deref(), context.meta_customer_phone.as_deref());
     create_or_update_customer(
         &state.pool,
         &phone,
-        context.customer_phone.as_deref(),
-        context.customer_name.as_deref(),
-        None,
+        manual_phone,
+        context.meta_customer_name.as_deref(),
+        manual_name,
         username.as_deref(),
         context.delivery_address.as_deref(),
     )
@@ -679,6 +707,7 @@ pub async fn execute_actions(
                 referral_code,
                 referral_discount_cop,
                 ambassador_commission_cop,
+                referral_times_used_inc,
             } => {
                 update_customer_totals(&state.pool, phone_number_meta, *total_spent_cop, *total_units_purchased)
                     .await?;
@@ -689,7 +718,7 @@ pub async fn execute_actions(
                     create_or_update_referral_analytics(
                         &state.pool,
                         code,
-                        1,
+                        *referral_times_used_inc,
                         discount_inc,
                         commission_inc,
                         *total_units_purchased,
@@ -808,12 +837,35 @@ struct SeededCustomerData {
     seeded_name: bool,
 }
 
+/// Devuelve el valor personalizado solo si difiere del de Meta; si coinciden
+/// (o no hay personalizado) devuelve None para no duplicar el dato de Meta en
+/// la columna manual (hallazgo C).
+fn manual_override<'a>(custom: Option<&'a str>, meta: Option<&str>) -> Option<&'a str> {
+    match (custom, meta) {
+        (Some(c), Some(m)) if c.trim() == m.trim() => None,
+        (Some(c), _) => Some(c),
+        (None, _) => None,
+    }
+}
+
 fn seed_customer_data(
     context: &mut ConversationContext,
     phone: &str,
     profile_name: Option<&str>,
 ) -> SeededCustomerData {
     let mut seeded = SeededCustomerData::default();
+
+    // Datos base de Meta (inmutables, siempre visibles para el asesor). El
+    // celular de Meta es el número de la conversación; el nombre viene del
+    // perfil de WhatsApp (ver docs/canary-fixes-2026-07-19.md hallazgo C).
+    context.meta_customer_phone = Some(phone.to_string());
+    if let Some(profile_name) = profile_name {
+        let trimmed = profile_name.trim();
+        if !trimmed.is_empty() {
+            context.meta_customer_name = Some(trimmed.to_string());
+        }
+    }
+
     if context.customer_phone.is_none() {
         context.customer_phone = Some(phone.to_string());
         seeded.seeded_phone = true;

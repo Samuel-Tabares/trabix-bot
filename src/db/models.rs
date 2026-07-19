@@ -39,6 +39,40 @@ pub struct ConversationStateData {
     pub pending_flavor: Option<String>,
     pub conversation_abandon_started_at: Option<DateTime<Utc>>,
     pub conversation_abandon_reminder_sent: bool,
+    /// True una vez que el pedido `current_order_id` quedó CONFIRMADO. Bloquea
+    /// crear una orden duplicada: para tocarlo de nuevo hay que reabrirlo con
+    /// `modify_confirmed_order`, y para un pedido aparte hay que limpiar con
+    /// `start_new_order` (ver docs/canary-fixes-2026-07-19.md hallazgo A).
+    pub order_confirmed: bool,
+    /// Cifras ya acumuladas en analytics para `current_order_id`. Permite, al
+    /// reabrir y re-confirmar, mandar el DELTA (nuevo − viejo) en vez de sumar
+    /// de nuevo el total completo (analytics es incremental).
+    pub confirmed_order_snapshot: Option<ConfirmedOrderSnapshot>,
+    /// True cuando el tema del código de referido ya se resolvió en un pedido
+    /// mayorista: se aplicó un código válido o el cliente dijo que no tiene.
+    /// `finalize_checkout` lo exige antes de confirmar un pedido mayorista
+    /// (ver docs/canary-fixes-2026-07-19.md item 9).
+    pub referral_prompt_resolved: bool,
+    /// True una vez que se envió el saludo de bienvenida fijo (motor agente).
+    /// El primer mensaje del cliente recibe un texto fijo sin LLM; de ahí en
+    /// adelante todo lo maneja el LLM (ver docs/canary-fixes-2026-07-19.md item 3).
+    pub has_greeted: bool,
+    /// Nombre/celular que entregó Meta por webhook (contacts[].profile.name y
+    /// messages[].from). Base inmutable: el cliente NO los edita. Los campos
+    /// `customer_name`/`customer_phone` guardan lo personalizado (editable sin
+    /// validación) y el paquete al asesor muestra ambos si difieren
+    /// (ver docs/canary-fixes-2026-07-19.md hallazgo C).
+    pub meta_customer_name: Option<String>,
+    pub meta_customer_phone: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConfirmedOrderSnapshot {
+    pub total_spent_cop: i32,
+    pub total_units_purchased: i32,
+    pub referral_discount_cop: i32,
+    pub ambassador_commission_cop: i32,
+    pub referral_code: Option<String>,
 }
 
 impl Default for ConversationStateData {
@@ -74,6 +108,12 @@ impl Default for ConversationStateData {
             pending_flavor: None,
             conversation_abandon_started_at: None,
             conversation_abandon_reminder_sent: false,
+            order_confirmed: false,
+            confirmed_order_snapshot: None,
+            referral_prompt_resolved: false,
+            has_greeted: false,
+            meta_customer_name: None,
+            meta_customer_phone: None,
         }
     }
 }

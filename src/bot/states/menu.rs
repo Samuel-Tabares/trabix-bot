@@ -208,6 +208,12 @@ mod tests {
             pending_flavor: None,
             conversation_abandon_started_at: None,
             conversation_abandon_reminder_sent: false,
+            order_confirmed: false,
+            confirmed_order_snapshot: None,
+            referral_prompt_resolved: false,
+            has_greeted: false,
+            meta_customer_name: None,
+            meta_customer_phone: None,
         }
     }
 

@@ -270,28 +270,82 @@ pub fn handle_wait_receipt(
 /// transición del pedido a estado "confirmed" (contra entrega o comprobante
 /// recibido). Solo aquí se tocan `customers` y `referral_code_analytics`,
 /// para no inflar totales con pedidos que se cancelan antes de pagar.
-pub fn order_confirmation_analytics_action(context: &ConversationContext) -> Option<BotAction> {
-    context.current_order_id?;
+/// Cifras absolutas ya calculadas del pedido actual (antes de aplicar delta).
+pub struct OrderTotals {
+    pub total_spent_cop: i32,
+    pub total_units_purchased: i32,
+    pub referral_discount_cop: i32,
+    pub ambassador_commission_cop: i32,
+}
+
+pub fn current_order_totals(context: &ConversationContext) -> OrderTotals {
     let pedido = calcular_pedido(&context.items);
     let delivery_cost = context.delivery_cost.unwrap_or(0);
     let computed_total = i32::try_from(pedido.total_estimado)
         .unwrap_or(i32::MAX)
         .saturating_sub(context.referral_discount_total.unwrap_or(0))
         .saturating_add(delivery_cost);
-    let total_spent_cop = context.total_final.unwrap_or(computed_total);
-    let total_units_purchased: i32 = context
-        .items
-        .iter()
-        .map(|item| i32::try_from(item.quantity).unwrap_or(0))
-        .sum();
+    OrderTotals {
+        total_spent_cop: context.total_final.unwrap_or(computed_total),
+        total_units_purchased: context
+            .items
+            .iter()
+            .map(|item| i32::try_from(item.quantity).unwrap_or(0))
+            .sum(),
+        referral_discount_cop: context.referral_discount_total.unwrap_or(0),
+        ambassador_commission_cop: context.ambassador_commission_total.unwrap_or(0),
+    }
+}
+
+/// Snapshot de lo que se acaba de acumular en analytics para el pedido actual,
+/// para poder calcular el delta si el pedido se reabre y re-confirma.
+pub fn snapshot_from_totals(
+    context: &ConversationContext,
+    totals: &OrderTotals,
+) -> crate::db::models::ConfirmedOrderSnapshot {
+    crate::db::models::ConfirmedOrderSnapshot {
+        total_spent_cop: totals.total_spent_cop,
+        total_units_purchased: totals.total_units_purchased,
+        referral_discount_cop: totals.referral_discount_cop,
+        ambassador_commission_cop: totals.ambassador_commission_cop,
+        referral_code: context.referral_code.clone(),
+    }
+}
+
+/// Acción de analytics para una confirmación. Si el pedido ya tenía un snapshot
+/// (se está re-confirmando tras una modificación), envía el DELTA respecto a lo
+/// ya acumulado y no vuelve a contar `times_used`; si es la primera vez, envía
+/// el total completo (ver docs/canary-fixes-2026-07-19.md hallazgo A).
+pub fn order_confirmation_analytics_action(context: &ConversationContext) -> Option<BotAction> {
+    context.current_order_id?;
+    let totals = current_order_totals(context);
+
+    let (total_spent_cop, total_units_purchased, discount_delta, commission_delta, times_used_inc) =
+        match &context.confirmed_order_snapshot {
+            None => (
+                totals.total_spent_cop,
+                totals.total_units_purchased,
+                totals.referral_discount_cop,
+                totals.ambassador_commission_cop,
+                if context.referral_code.is_some() { 1 } else { 0 },
+            ),
+            Some(snap) => (
+                totals.total_spent_cop - snap.total_spent_cop,
+                totals.total_units_purchased - snap.total_units_purchased,
+                totals.referral_discount_cop - snap.referral_discount_cop,
+                totals.ambassador_commission_cop - snap.ambassador_commission_cop,
+                0,
+            ),
+        };
 
     Some(BotAction::UpdateCustomerAndAnalytics {
         phone_number_meta: context.phone_number.clone(),
         total_spent_cop,
         total_units_purchased,
         referral_code: context.referral_code.clone(),
-        referral_discount_cop: context.referral_discount_total,
-        ambassador_commission_cop: context.ambassador_commission_total,
+        referral_discount_cop: Some(discount_delta),
+        ambassador_commission_cop: Some(commission_delta),
+        referral_times_used_inc: times_used_inc,
     })
 }
 
@@ -821,6 +875,12 @@ mod tests {
             pending_flavor: None,
             conversation_abandon_started_at: None,
             conversation_abandon_reminder_sent: false,
+            order_confirmed: false,
+            confirmed_order_snapshot: None,
+            referral_prompt_resolved: false,
+            has_greeted: false,
+            meta_customer_name: None,
+            meta_customer_phone: None,
         }
     }
 

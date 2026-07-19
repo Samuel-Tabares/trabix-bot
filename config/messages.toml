@@ -278,5 +278,15 @@ relay_timeout_text = "La conversación con el asesor se cerró por inactividad �
 conversation_inactivity_reset_text = "Reinicié la conversación por inactividad ⏳ Cuando quieras continuar, escríbeme de nuevo y retomamos desde el menú principal."
 
 [agent]
+welcome = """¡Hola! 👋 Soy el asistente de Trabix Granizados 🍧
+
+Cuéntame qué necesitas y te ayudo con todo por aquí mismo:
+• Hacer un pedido (con o sin licor)
+• Ver el menú y precios
+• Pedidos al por mayor
+• Programar tu pedido para después
+• Hablar con un asesor
+
+Escríbeme con tus palabras, no necesitas botones. ¿Qué se te antoja hoy? 😄"""
 llm_failure_customer = "Estamos teniendo un problema técnico en este momento 🙏 Un asesor revisará tu caso y te contactará en breve. También puedes volver a escribirme en unos minutos."
 daily_limit_customer = "Por hoy no puedo seguir atendiéndote por este chat 🙏 Un asesor revisará tu caso y te contactará directamente."

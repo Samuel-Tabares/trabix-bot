@@ -78,6 +78,7 @@ pub struct ClientMessages {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentMessages {
+    pub welcome: String,
     pub llm_failure_customer: String,
     pub daily_limit_customer: String,
 }

@@ -373,11 +373,16 @@ pub enum BotAction {
     },
     UpdateCustomerAndAnalytics {
         phone_number_meta: String,
+        /// Delta a sumar (puede ser negativo al reabrir/modificar un pedido ya
+        /// confirmado). En la primera confirmación el delta es el total completo.
         total_spent_cop: i32,
         total_units_purchased: i32,
         referral_code: Option<String>,
         referral_discount_cop: Option<i32>,
         ambassador_commission_cop: Option<i32>,
+        /// Cuánto incrementar `times_used` del código: 1 en la primera
+        /// confirmación con código, 0 al re-confirmar una modificación.
+        referral_times_used_inc: i32,
     },
     NoOp,
 }
@@ -418,6 +423,12 @@ pub struct ConversationContext {
     pub pending_flavor: Option<String>,
     pub conversation_abandon_started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub conversation_abandon_reminder_sent: bool,
+    pub order_confirmed: bool,
+    pub confirmed_order_snapshot: Option<crate::db::models::ConfirmedOrderSnapshot>,
+    pub referral_prompt_resolved: bool,
+    pub has_greeted: bool,
+    pub meta_customer_name: Option<String>,
+    pub meta_customer_phone: Option<String>,
 }
 
 impl ConversationContext {
@@ -464,6 +475,12 @@ impl ConversationContext {
             pending_flavor: state_data.pending_flavor.clone(),
             conversation_abandon_started_at: state_data.conversation_abandon_started_at,
             conversation_abandon_reminder_sent: state_data.conversation_abandon_reminder_sent,
+            order_confirmed: state_data.order_confirmed,
+            confirmed_order_snapshot: state_data.confirmed_order_snapshot.clone(),
+            referral_prompt_resolved: state_data.referral_prompt_resolved,
+            has_greeted: state_data.has_greeted,
+            meta_customer_name: state_data.meta_customer_name.clone(),
+            meta_customer_phone: state_data.meta_customer_phone.clone(),
         }
     }
 
@@ -499,6 +516,12 @@ impl ConversationContext {
             pending_flavor: self.pending_flavor.clone(),
             conversation_abandon_started_at: self.conversation_abandon_started_at,
             conversation_abandon_reminder_sent: self.conversation_abandon_reminder_sent,
+            order_confirmed: self.order_confirmed,
+            confirmed_order_snapshot: self.confirmed_order_snapshot.clone(),
+            referral_prompt_resolved: self.referral_prompt_resolved,
+            has_greeted: self.has_greeted,
+            meta_customer_name: self.meta_customer_name.clone(),
+            meta_customer_phone: self.meta_customer_phone.clone(),
         }
     }
 
@@ -512,6 +535,28 @@ impl ConversationContext {
         self.referral_has_boost = false;
         self.referral_discount_total = None;
         self.ambassador_commission_total = None;
+    }
+
+    /// Deja la conversación lista para un pedido NUEVO y separado: suelta el
+    /// binding con la orden confirmada anterior para que el checkout cree una
+    /// orden distinta (ver docs/canary-fixes-2026-07-19.md hallazgo A).
+    pub fn start_new_order(&mut self) {
+        self.items.clear();
+        self.clear_pending_selection();
+        self.clear_referral_data();
+        self.delivery_type = None;
+        self.scheduled_date = None;
+        self.scheduled_time = None;
+        self.delivery_cost = None;
+        self.total_final = None;
+        self.payment_method = None;
+        self.receipt_media_id = None;
+        self.receipt_timer_started_at = None;
+        self.receipt_timer_expired = false;
+        self.current_order_id = None;
+        self.order_confirmed = false;
+        self.confirmed_order_snapshot = None;
+        self.referral_prompt_resolved = false;
     }
 }
 

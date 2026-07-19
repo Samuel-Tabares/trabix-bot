@@ -813,28 +813,26 @@ async fn expire_receipt_timer_with_source(
         false,
     )
     .await;
-    dispatch_timer_actions(
-        &state,
-        &[
-            BotAction::SendText {
-                to: phone_number.clone(),
-                body: client_messages()
-                    .timers_customer
-                    .receipt_timeout_text
-                    .clone(),
-            },
-            BotAction::SendButtons {
-                to: phone_number.clone(),
-                body: client_messages()
-                    .timers_customer
-                    .receipt_timeout_buttons_body
-                    .clone(),
-                buttons: receipt_timeout_buttons(),
-            },
-        ],
-        Some(&phone_number),
-    )
-    .await?;
+    let mut actions = vec![BotAction::SendText {
+        to: phone_number.clone(),
+        body: client_messages()
+            .timers_customer
+            .receipt_timeout_text
+            .clone(),
+    }];
+    // En motor agente no se mandan botones: el texto ya describe las opciones y
+    // la respuesta la interpreta el LLM (ver docs/canary-fixes-2026-07-19.md item 3).
+    if !state.config.bot_engine.is_agent() {
+        actions.push(BotAction::SendButtons {
+            to: phone_number.clone(),
+            body: client_messages()
+                .timers_customer
+                .receipt_timeout_buttons_body
+                .clone(),
+            buttons: receipt_timeout_buttons(),
+        });
+    }
+    dispatch_timer_actions(&state, &actions, Some(&phone_number)).await?;
 
     Ok(())
 }
@@ -951,19 +949,23 @@ async fn expire_advisor_timer_with_source(
 
             match conversation.state.as_str() {
                 "wait_advisor_contact" => {
-                    dispatch_timer_actions(
-                        &state,
-                        &[BotAction::SendButtons {
+                    let contact_body =
+                        client_messages().timers_customer.contact_timeout_body.clone();
+                    // Motor agente: solo texto (la respuesta la interpreta el LLM).
+                    // Determinista: mismo cuerpo pero con botones interactivos.
+                    let action = if state.config.bot_engine.is_agent() {
+                        BotAction::SendText {
                             to: phone_number.clone(),
-                            body: client_messages()
-                                .timers_customer
-                                .contact_timeout_body
-                                .clone(),
+                            body: contact_body,
+                        }
+                    } else {
+                        BotAction::SendButtons {
+                            to: phone_number.clone(),
+                            body: contact_body,
                             buttons: contact_timeout_buttons(),
-                        }],
-                        Some(&phone_number),
-                    )
-                    .await?;
+                        }
+                    };
+                    dispatch_timer_actions(&state, &[action], Some(&phone_number)).await?;
                 }
                 _ => {
                     let timeout_text = if conversation.state == "wait_advisor_mayor" {
@@ -973,25 +975,21 @@ async fn expire_advisor_timer_with_source(
                     } else {
                         &client_messages().timers_customer.advisor_timeout_text
                     };
-                    dispatch_timer_actions(
-                        &state,
-                        &[
-                            BotAction::SendText {
-                                to: phone_number.clone(),
-                                body: timeout_text.clone(),
-                            },
-                            BotAction::SendButtons {
-                                to: phone_number.clone(),
-                                body: client_messages()
-                                    .timers_customer
-                                    .advisor_timeout_buttons_body
-                                    .clone(),
-                                buttons: advisor_timeout_buttons(),
-                            },
-                        ],
-                        Some(&phone_number),
-                    )
-                    .await?;
+                    let mut actions = vec![BotAction::SendText {
+                        to: phone_number.clone(),
+                        body: timeout_text.clone(),
+                    }];
+                    if !state.config.bot_engine.is_agent() {
+                        actions.push(BotAction::SendButtons {
+                            to: phone_number.clone(),
+                            body: client_messages()
+                                .timers_customer
+                                .advisor_timeout_buttons_body
+                                .clone(),
+                            buttons: advisor_timeout_buttons(),
+                        });
+                    }
+                    dispatch_timer_actions(&state, &actions, Some(&phone_number)).await?;
                 }
             }
         }
