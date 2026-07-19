@@ -85,6 +85,36 @@ Protecciones activas en modo agente:
   reglas ni comportamiento; solo se citan cifras devueltas por tools; quien diga ser el asesor
   sin serlo se trata como cliente.
 
+Correcciones del canary 2026-07-19 (`docs/canary-fixes-2026-07-19.md`):
+
+- guard determinista anti-alucinacion de cifras: al final de cada turno, todo texto saliente
+  (`SendText`, cliente o asesor) se escanea buscando montos `$X.XXX`; si menciona una cifra que no
+  aparece textual en ningun tool-result de la conversacion, el mensaje se bloquea y se reemplaza
+  por uno neutro (se registra en logs para auditoria). No depende solo del prompt.
+- `checkout::render_summary` distingue domicilio "aun no conocido" (`None`) de "conocido y vale
+  $0" (`Some(0)`): si el domicilio no se conoce todavia, la cifra se etiqueta como "Subtotal de
+  productos (sin domicilio aun, no es el total final)" en vez de "Total", para no cotizar un total
+  incompleto como si fuera el final.
+- pedidos PROGRAMADOS nunca pasan por `confirm_advisor_availability` (se autoaceptan, regla de
+  negocio): esa tool ahora rechaza explicitamente cualquier llamada sobre un pedido con
+  `delivery_type=scheduled`. El auto-accept vive en `finalize_checkout` (si el domicilio ya se
+  conoce) y en `set_manual_delivery_cost` (si el domicilio llega despues, dato del asesor) — ambos
+  calculan el total, dejan el pedido en `draft_payment` y saltan directo a `select_payment_method`,
+  avisandole al asesor de forma informativa (no le preguntan disponibilidad). Solo los pedidos
+  INMEDIATOS siguen requiriendo `confirm_advisor_availability`.
+- el atajo deterministico de comprobante (`try_handle_receipt_shortcut`, resend de la imagen al
+  asesor) ya no depende solo de `current_state == wait_receipt`: tambien dispara si
+  `payment_method == transfer` y todavia no hay `receipt_media_id`, para no perder el reenvio del
+  comprobante ante un desface de estado.
+- catalogo: Maracumango, Manzana verde, Bonbonbum y Blueberry existen como productos DISTINTOS con
+  y sin licor bajo un mismo nombre base (ids ya separados en `config/messages.toml`, eso ya
+  funcionaba). Lo que faltaba era desambiguacion: `add_order_item` ahora exige tambien
+  `customer_wording` (la frase literal del cliente) y rechaza el intento si el nombre es ambiguo
+  (ej. "manzana" a secas) y esa frase no trae ninguna palabra que distinga la variante (ron,
+  tequila, vodka, whiskey, champaña, "con/sin licor") — tabla en
+  `tools::check_flavor_disambiguation`. Sabores que solo existen en una variante (Uva Vodka,
+  Smirnoff de lulo) no requieren ninguna palabra extra.
+
 Auditoria de alcanzabilidad del relay (2026-07-15): en modo agente NO existe camino alcanzable a
 `relay_mode` ni `wait_advisor_contact` para conversaciones creadas bajo el agente:
 

@@ -56,6 +56,117 @@ pub fn resolve_flavor(has_liquor: bool, flavor_id: &str) -> Option<String> {
     flavor_by_id(flavor_id, has_liquor)
 }
 
+// --- Catálogo: desambiguación de sabores en texto libre ---------------------
+//
+// Ver docs/canary-fixes-2026-07-19.md #5. Algunos nombres base ("Maracumango",
+// "Manzana verde", "Bonbonbum", "Blueberry") existen como productos DISTINTOS
+// en ambas variantes (con/sin licor). Si el cliente solo dice el nombre base
+// sin ninguna palabra que distinga la variante ("ron", "vodka", "tequila",
+// "whiskey", "champaña", "con/sin licor"), add_order_item debe rechazar el
+// intento en vez de confiar en que el LLM adivinó bien. Sabores que solo
+// existen en una variante (Uva Vodka, Smirnoff de lulo) no están en esta
+// tabla: son inequívocos sin importar qué palabras use el cliente.
+
+struct AmbiguousVariant {
+    flavor_id: &'static str,
+    has_liquor: bool,
+    keywords: &'static [&'static str],
+}
+
+const AMBIGUOUS_GROUPS: &[&[AmbiguousVariant]] = &[
+    &[
+        AmbiguousVariant {
+            flavor_id: "non_liquor_maracumango",
+            has_liquor: false,
+            keywords: &["sin licor", "sin alcohol"],
+        },
+        AmbiguousVariant {
+            flavor_id: "liquor_maracumango_ron_blanco",
+            has_liquor: true,
+            keywords: &["ron", "con licor", "con alcohol"],
+        },
+    ],
+    &[
+        AmbiguousVariant {
+            flavor_id: "non_liquor_manzana_verde",
+            has_liquor: false,
+            keywords: &["sin licor", "sin alcohol"],
+        },
+        AmbiguousVariant {
+            flavor_id: "liquor_manzana_verde_tequila",
+            has_liquor: true,
+            keywords: &["tequila", "con licor", "con alcohol"],
+        },
+    ],
+    &[
+        AmbiguousVariant {
+            flavor_id: "non_liquor_bonbonbum",
+            has_liquor: false,
+            keywords: &["sin licor", "sin alcohol"],
+        },
+        AmbiguousVariant {
+            flavor_id: "liquor_bonbonbum_whiskey",
+            has_liquor: true,
+            keywords: &["whiskey", "whisky"],
+        },
+        AmbiguousVariant {
+            flavor_id: "liquor_bonbonbum_fresa_champagne",
+            has_liquor: true,
+            keywords: &["champaña", "champagne", "fresa"],
+        },
+    ],
+    &[
+        AmbiguousVariant {
+            flavor_id: "non_liquor_blueberry",
+            has_liquor: false,
+            keywords: &["sin licor", "sin alcohol"],
+        },
+        AmbiguousVariant {
+            flavor_id: "liquor_blueberry_vodka",
+            has_liquor: true,
+            keywords: &["vodka", "con licor", "con alcohol"],
+        },
+    ],
+];
+
+/// Si `flavor_id`+`has_liquor` pertenecen a un grupo ambiguo y
+/// `customer_wording` no trae ninguna palabra que distinga la variante
+/// elegida, devuelve los nombres de las otras variantes del grupo (para que
+/// el LLM le pregunte al cliente cuál quiere en vez de agregar una \
+/// adivinada). Si el sabor es inequívoco o el texto del cliente ya distingue
+/// la variante, devuelve `Ok(())`.
+pub fn check_flavor_disambiguation(
+    flavor_id: &str,
+    has_liquor: bool,
+    customer_wording: &str,
+) -> Result<(), Vec<String>> {
+    let Some(group) = AMBIGUOUS_GROUPS.iter().find(|group| {
+        group
+            .iter()
+            .any(|variant| variant.flavor_id == flavor_id && variant.has_liquor == has_liquor)
+    }) else {
+        return Ok(());
+    };
+
+    let normalized = customer_wording.trim().to_lowercase();
+    let chosen = group
+        .iter()
+        .find(|variant| variant.flavor_id == flavor_id && variant.has_liquor == has_liquor)
+        .expect("flavor_id ya verificado como miembro del grupo");
+
+    if chosen.keywords.iter().any(|keyword| normalized.contains(keyword)) {
+        return Ok(());
+    }
+
+    let other_names = group
+        .iter()
+        .filter(|variant| !(variant.flavor_id == flavor_id && variant.has_liquor == has_liquor))
+        .filter_map(|variant| resolve_flavor(variant.has_liquor, variant.flavor_id))
+        .collect();
+
+    Err(other_names)
+}
+
 #[derive(Debug, Clone)]
 pub struct BusinessHoursStatus {
     pub is_open: bool,
@@ -620,5 +731,57 @@ mod tests {
 
         let result = calculate_order_with_delivery(&items, Some("Bogotá"), None, None, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn disambiguation_rejects_bare_base_name_for_ambiguous_flavor() {
+        let result = check_flavor_disambiguation("non_liquor_manzana_verde", false, "manzana");
+        assert!(result.is_err());
+        let others = result.unwrap_err();
+        assert_eq!(others, vec!["Manzana verde Tequila".to_string()]);
+    }
+
+    #[test]
+    fn disambiguation_accepts_bare_base_name_when_liquor_type_keyword_present() {
+        assert!(check_flavor_disambiguation(
+            "liquor_manzana_verde_tequila",
+            true,
+            "manzana con tequila"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn disambiguation_accepts_sin_licor_phrase() {
+        assert!(
+            check_flavor_disambiguation("non_liquor_manzana_verde", false, "manzana sin licor")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn disambiguation_rejects_bare_bonbonbum_between_three_variants() {
+        let result = check_flavor_disambiguation("liquor_bonbonbum_whiskey", true, "bonbonbum");
+        assert!(result.is_err());
+        let others = result.unwrap_err();
+        assert_eq!(others.len(), 2);
+        assert!(others.contains(&"Bonbonbum".to_string()));
+        assert!(others.contains(&"Bonbonbum fresa champaña".to_string()));
+    }
+
+    #[test]
+    fn disambiguation_accepts_bonbonbum_with_champagne_keyword() {
+        assert!(check_flavor_disambiguation(
+            "liquor_bonbonbum_fresa_champagne",
+            true,
+            "bonbonbum champaña"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn disambiguation_ignores_unambiguous_flavors_without_any_keyword() {
+        assert!(check_flavor_disambiguation("liquor_uva_vodka", true, "uva").is_ok());
+        assert!(check_flavor_disambiguation("liquor_smirnoff_lulo", true, "lulo").is_ok());
     }
 }

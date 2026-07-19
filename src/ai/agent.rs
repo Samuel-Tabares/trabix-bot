@@ -93,6 +93,11 @@ DOMICILIO AUTOMÁTICO (no pidas al asesor si puedes resolverlo):
   set_delivery_nearby_town → costo automático ✓
 - Pueblo cercano pero <20 unidades: rechaza con "Mínimo 20 unidades para ese destino" ✓
 - Municipio desconocido: message_advisor pidiendo costo → set_manual_delivery_cost ✓
+- Si el cliente pregunta "¿cuánto sería en total?" y el domicilio todavía no se conoce, PRIMERO \
+  pregúntale la zona/barrio o municipio antes de cotizar. get_order_summary/add_order_item van a \
+  devolver esa cifra etiquetada como "Subtotal de productos (sin domicilio aún)", nunca como \
+  "Total": no la llames "total" tú mismo ni le digas al cliente que esa cifra ya es lo que debe \
+  pagar — dile que falta sumarle el domicilio y pregunta la zona.
 
 Reglas que no puedes romper:
 - Cuando alguien te da varios datos en un solo mensaje (nombre, teléfono, dirección, sabor, \
@@ -103,28 +108,46 @@ Reglas que no puedes romper:
   el bloque "ESTADO ACTUAL DEL CASO" ya muestra como conocido.
 - Nunca inventes precios, sabores, horarios, zonas ni disponibilidad: siempre usa una herramienta \
   para obtener esos datos antes de afirmarlos.
-- Cuando menciones un total o una cifra al cliente, copia EXACTAMENTE la cifra que devolvió la \
-  última herramienta que la calculó. Nunca sumes ni recalcules cifras tú mismo; si no tienes una \
-  cifra de una herramienta en este turno, no menciones cifras.
+- Prohibido enunciar cualquier cifra en pesos (unitario, subtotal, domicilio, total, descuento, \
+  comisión) que no venga copiada TEXTUALMENTE de un tool-result real (get_order_summary, \
+  add_order_item, etc.). Nunca sumes, restes ni calcules cifras tú mismo, ni "adelantes" un total \
+  para un ítem que aún no agregaste con add_order_item. Si no tienes la cifra exacta de una \
+  herramienta, dile al cliente que ya la confirmas y llama la herramienta correspondiente — no \
+  inventes un número mientras tanto. Un filtro automático bloquea y reemplaza cualquier mensaje \
+  que mencione una cifra no respaldada por una herramienta, así que inventar una nunca ayuda.
 - El horario de entrega inmediata es el que te diga check_business_hours, nunca asumas uno.
 - Antes de agregar un producto usa get_menu para conocer los flavor_id validos; no inventes ids.
+- Maracumango, Manzana verde, Bonbonbum y Blueberry existen como productos DISTINTOS con y sin \
+  licor (no son la misma bebida con/sin licor, son productos distintos). Si el cliente solo dice \
+  el nombre base sin ninguna palabra que distinga la variante (ron, tequila, vodka, whiskey, \
+  champaña, "con licor", "sin licor"), NO adivines cuál quiere: pregúntale. Siempre manda en \
+  customer_wording la frase literal que usó el cliente para el sabor — add_order_item rechaza el \
+  intento si es ambiguo y esa frase no distingue la variante.
 - Antes de borrar el pedido con restart_order o cancelarlo con cancel_order, confirma \
   explicitamente con el cliente.
 - Solo llama finalize_checkout cuando el cliente ya confirmo que quiere enviar el pedido tal cual \
   esta, con productos, nombre, telefono, direccion y tipo de entrega completos. En ese mismo turno, \
-  ademas de llamar finalize_checkout, escribele al cliente confirmandole que el pedido fue enviado, \
-  y usa message_advisor para contactar al asesor — no dejes ese aviso para un turno futuro.
-- NUNCA le preguntes al asesor si puede atender un pedido sin haber llamado finalize_checkout \
-  ANTES en ese mismo turno: sin finalize_checkout el pedido no existe en el sistema y la \
-  respuesta del asesor no se puede registrar. La secuencia obligatoria es: cliente confirma -> \
-  finalize_checkout -> message_advisor preguntando disponibilidad.
-- Despues de finalize_checkout, si el domicilio ya se conoce (zona o pueblo cercano), solo \
-  pregunta al asesor con message_advisor si puede enviar el pedido (no le pidas el precio, ya lo \
-  sabes). Si el domicilio no se conoce todavia (municipio fuera de la lista), pidele el valor.
-- Cuando el asesor te responda que si puede, usa confirm_advisor_availability con available=true. \
-  Si te dice que no puede, usa confirm_advisor_availability con available=false.
+  ademas de llamar finalize_checkout, escribele al cliente confirmandole que el pedido fue enviado.
+- PEDIDO INMEDIATO: NUNCA le preguntes al asesor si puede atender un pedido sin haber llamado \
+  finalize_checkout ANTES en ese mismo turno: sin finalize_checkout el pedido no existe en el \
+  sistema y la respuesta del asesor no se puede registrar. La secuencia obligatoria es: cliente \
+  confirma -> finalize_checkout -> message_advisor preguntando disponibilidad. Si el domicilio ya \
+  se conoce, solo pregunta si puede enviar el pedido (no le pidas el precio, ya lo sabes); si el \
+  domicilio no se conoce todavia (municipio fuera de la lista), pidele el valor. Cuando el asesor \
+  te responda que si puede, usa confirm_advisor_availability con available=true; si dice que no \
+  puede, usa confirm_advisor_availability con available=false.
+- PEDIDO PROGRAMADO: un pedido programado NUNCA se confirma con el asesor — se autoacepta. NO uses \
+  confirm_advisor_availability para un pedido programado, esa herramienta la rechaza. Si al llamar \
+  finalize_checkout el domicilio ya se conoce, la herramienta autoacepta el pedido sola y te dice \
+  el total: ya puedes preguntarle al cliente el método de pago. Si el domicilio todavía no se \
+  conoce (municipio fuera de la lista), finalize_checkout te lo dice: pídele el VALOR del \
+  domicilio al asesor con message_advisor (no le preguntes disponibilidad) y cuando responda usa \
+  set_manual_delivery_cost — esa llamada autoacepta el pedido automáticamente, sin pasos extra.
 - Cuando el cliente elija metodo de pago, usa set_payment_method. Si elige pago por transferencia, \
-  las instrucciones de transferencia las envia automaticamente esa herramienta.
+  las instrucciones de transferencia (cuenta, llaves, banco) las envia automaticamente esa \
+  herramienta en un mensaje aparte. NUNCA escribas tú los datos de cuenta/llaves/banco en tu \
+  propia respuesta — no los tienes, cualquier intento de recordarlos o inventarlos sale mal. \
+  Solo confirma brevemente que ya le llegaron y que quedas atent@ al comprobante.
 - El pedido NO queda confirmado hasta que set_payment_method retorne exito. Nunca le digas al \
   cliente que su pedido esta "confirmado", "listo" o "en camino" si todavia no llamaste \
   set_payment_method con exito en este caso. Si el cliente ya te habia dicho el metodo de pago \
@@ -343,6 +366,13 @@ async fn run_case_turn(
         .map(|(next_state, _)| next_state)
         .unwrap_or_else(|| current_state.clone());
 
+    let known_amounts = known_tool_amounts(&history);
+    for action in actions.iter_mut() {
+        if let BotAction::SendText { to, body } = action {
+            *body = sanitize_hallucinated_amounts(body, &known_amounts, to);
+        }
+    }
+
     if actions.is_empty() {
         actions.push(BotAction::SendText {
             to: phone.clone(),
@@ -362,12 +392,23 @@ fn try_handle_receipt_shortcut(
     actor: Actor,
     input: &UserInput,
 ) -> Option<(ConversationState, Vec<BotAction>)> {
-    if actor != Actor::Customer || *current_state != ConversationState::WaitReceipt {
+    if actor != Actor::Customer {
         return None;
     }
     let UserInput::ImageMessage(media_id) = input else {
         return None;
     };
+    // Ademas del estado esperado, nos apoyamos en el contexto (metodo de
+    // pago=transfer y sin comprobante todavia) como señal mas confiable de
+    // "estamos esperando el comprobante": un desface de estado no debe
+    // hacer que la imagen se pierda sin reenviarse al asesor (ver
+    // docs/canary-fixes-2026-07-19.md #4, sintoma 3).
+    let waiting_for_receipt = *current_state == ConversationState::WaitReceipt
+        || (context.payment_method.as_deref() == Some("transfer")
+            && context.receipt_media_id.is_none());
+    if !waiting_for_receipt {
+        return None;
+    }
 
     context.receipt_media_id = Some(media_id.clone());
     context.receipt_timer_started_at = None;
@@ -484,21 +525,33 @@ fn build_system_prompt(
     actor: Actor,
     current_state: &ConversationState,
 ) -> String {
+    let is_scheduled = context.delivery_type.as_deref() == Some("scheduled");
     let flow_hint = match current_state {
+        ConversationState::AskDeliveryCost if is_scheduled => {
+            "\nFase del flujo: pedido PROGRAMADO esperando el costo de domicilio (municipio/zona \
+             desconocida) — NUNCA uses confirm_advisor_availability aquí, los programados se \
+             autoaceptan. Pídele el valor al asesor y usa set_manual_delivery_cost cuando \
+             responda; eso autoacepta el pedido y avanza solo. El pedido NO está confirmado."
+                .to_string()
+        }
         ConversationState::AskDeliveryCost => {
-            "\nFase del flujo: esperando que el ASESOR confirme disponibilidad \
+            "\nFase del flujo: pedido INMEDIATO esperando que el ASESOR confirme disponibilidad \
              (confirm_advisor_availability). El pedido NO está confirmado."
+                .to_string()
         }
         ConversationState::SelectPaymentMethod => {
-            "\nFase del flujo: el asesor ya confirmó disponibilidad pero el CLIENTE aún no tiene \
-             método de pago registrado. El pedido NO está confirmado: cuando el cliente indique \
-             el método, llama set_payment_method."
+            "\nFase del flujo: el pedido ya fue aceptado (confirmación del asesor si era \
+             inmediato, o autoaceptado si era programado) pero el CLIENTE aún no tiene método de \
+             pago registrado. El pedido NO está confirmado: cuando el cliente indique el método, \
+             llama set_payment_method."
+                .to_string()
         }
         ConversationState::WaitReceipt => {
             "\nFase del flujo: esperando el comprobante de transferencia del cliente. El pedido \
              NO está confirmado hasta recibirlo."
+                .to_string()
         }
-        _ => "",
+        _ => String::new(),
     };
     let items_summary = if context.items.is_empty() {
         "vacío".to_string()
@@ -628,7 +681,7 @@ fn dispatch_tool(
                     "set_manual_delivery_cost solo se puede usar interpretando un mensaje real del asesor.",
                 ));
             }
-            wrap(id, set_manual_delivery_cost(input, context))
+            set_manual_delivery_cost(id, input, context)
         }
         "apply_referral_code" => wrap(id, apply_referral_code(input, context)),
         "message_customer" => {
@@ -815,6 +868,10 @@ fn add_order_item(input: &Value, context: &mut ConversationContext) -> (String, 
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let flavor_id = input.get("flavor_id").and_then(Value::as_str).unwrap_or("");
+    let customer_wording = input
+        .get("customer_wording")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let quantity_text = input
         .get("quantity")
         .map(|value| {
@@ -831,6 +888,22 @@ fn add_order_item(input: &Value, context: &mut ConversationContext) -> (String, 
             true,
         );
     };
+
+    // Algunos nombres base (Maracumango, Manzana verde, Bonbonbum, Blueberry)
+    // existen como productos DISTINTOS en ambas variantes. Si lo que dijo el
+    // cliente no trae ninguna palabra que distinga la variante, no confiamos
+    // en que el LLM adivinó bien (ver docs/canary-fixes-2026-07-19.md #5).
+    if let Err(other_names) = tools::check_flavor_disambiguation(flavor_id, has_liquor, customer_wording)
+    {
+        return (
+            format!(
+                "'{customer_wording}' es ambiguo entre {flavor} y {}. Pregúntale al cliente cuál \
+                 quiere antes de agregarlo, no lo adivines.",
+                other_names.join(" / ")
+            ),
+            true,
+        );
+    }
 
     let quantity = match tools::validate_order_quantity(&quantity_text) {
         Ok(quantity) => quantity,
@@ -940,17 +1013,34 @@ fn set_delivery_nearby_town(input: &Value, context: &mut ConversationContext) ->
     }
 }
 
-fn set_manual_delivery_cost(input: &Value, context: &mut ConversationContext) -> (String, bool) {
-    match input.get("amount").and_then(Value::as_i64) {
-        Some(amount) if amount > 0 => {
-            context.delivery_cost = Some(amount as i32);
-            (
-                format!("Domicilio manual guardado: ${}.", format_thousands(amount as u32)),
-                false,
-            )
-        }
-        _ => ("El monto debe ser un número entero positivo.".to_string(), true),
+fn set_manual_delivery_cost(id: &str, input: &Value, context: &mut ConversationContext) -> ToolOutcome {
+    let Some(delivery_cost) = input
+        .get("amount")
+        .and_then(Value::as_i64)
+        .filter(|amount| *amount > 0)
+        .map(|amount| amount as i32)
+    else {
+        return ToolOutcome::Result(error_result(
+            id,
+            "El monto debe ser un número entero positivo.",
+        ));
+    };
+
+    // Si ya existe un pedido PROGRAMADO finalizado esperando justo este dato
+    // (el único que faltaba), autoaceptarlo aquí mismo: los programados
+    // nunca pasan por confirm_advisor_availability (ver
+    // docs/canary-fixes-2026-07-19.md #4/D). Si todavía no hay pedido
+    // (se está resolviendo la zona antes de finalize_checkout), solo se
+    // guarda el costo y el flujo normal continúa.
+    if context.delivery_type.as_deref() == Some("scheduled") && context.current_order_id.is_some() {
+        return auto_accept_scheduled_order(id, context, delivery_cost);
     }
+
+    context.delivery_cost = Some(delivery_cost);
+    ToolOutcome::Result(ok_result(
+        id,
+        format!("Domicilio manual guardado: ${}.", format_thousands(delivery_cost as u32)),
+    ))
 }
 
 fn apply_referral_code(input: &Value, context: &mut ConversationContext) -> (String, bool) {
@@ -1001,14 +1091,20 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
     context.receipt_media_id = None;
     context.receipt_timer_started_at = None;
     context.receipt_timer_expired = false;
+
+    // Regla de negocio: un pedido PROGRAMADO nunca se confirma con el asesor
+    // -- se autoacepta (ver docs/canary-fixes-2026-07-19.md #4/D). Si el
+    // domicilio ya se conoce en este punto, se salta directo a método de
+    // pago sin pasar por confirm_advisor_availability.
+    let is_scheduled = context.delivery_type.as_deref() == Some("scheduled");
+    if is_scheduled {
+        if let Some(delivery_cost) = context.delivery_cost {
+            return auto_accept_scheduled_order(id, context, delivery_cost);
+        }
+    }
+
     context.advisor_timer_started_at = Some(chrono::Utc::now());
     context.advisor_timer_expired = false;
-
-    let timeout = if context.delivery_type.as_deref() == Some("scheduled") {
-        ADVISOR_RESPONSE_TIMEOUT
-    } else {
-        ADVISOR_RESPONSE_TIMEOUT
-    };
 
     let actions = vec![
         BotAction::FinalizeCurrentOrder {
@@ -1021,13 +1117,88 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
         BotAction::StartTimer {
             timer_type: TimerType::AdvisorResponse,
             phone: context.phone_number.clone(),
-            duration: timeout,
+            duration: ADVISOR_RESPONSE_TIMEOUT,
         },
     ];
 
+    let message = if is_scheduled {
+        "Pedido programado enviado: falta el costo de domicilio (municipio/zona desconocida). \
+         Pídele al asesor el VALOR del domicilio con message_advisor (no le preguntes \
+         disponibilidad, los programados se autoaceptan) y usa set_manual_delivery_cost cuando \
+         responda."
+    } else {
+        "Pedido enviado a revisión del asesor."
+    };
+
     ToolOutcome::ResultWithStateChange(
-        ok_result(id, "Pedido enviado a revisión del asesor."),
+        ok_result(id, message),
         ConversationState::AskDeliveryCost,
+        actions,
+    )
+}
+
+fn compute_total_final(context: &ConversationContext, delivery_cost: i32) -> i32 {
+    let pedido = tools::calculate_order(&context.items);
+    i32::try_from(pedido.total_estimado)
+        .unwrap_or(i32::MAX)
+        .saturating_sub(context.referral_discount_total.unwrap_or(0))
+        .saturating_add(delivery_cost)
+}
+
+/// Autoacepta un pedido PROGRAMADO apenas se conoce el domicilio: calcula el
+/// total, deja el pedido en draft_payment y avanza directo a método de pago
+/// sin pasar por confirm_advisor_availability (esa herramienta es solo para
+/// pedidos inmediatos, ver docs/canary-fixes-2026-07-19.md #4/D). El asesor
+/// solo recibe un aviso informativo, no se le pregunta nada.
+fn auto_accept_scheduled_order(
+    id: &str,
+    context: &mut ConversationContext,
+    delivery_cost: i32,
+) -> ToolOutcome {
+    context.delivery_cost = Some(delivery_cost);
+    let total_final = compute_total_final(context, delivery_cost);
+    context.total_final = Some(total_final);
+
+    let mut actions = Vec::new();
+    if context.current_order_id.is_none() {
+        actions.push(BotAction::FinalizeCurrentOrder {
+            status: "pending_advisor".to_string(),
+        });
+    }
+    actions.extend([
+        BotAction::UpdateCurrentOrderDeliveryCost {
+            delivery_cost,
+            total_final,
+            status: "draft_payment".to_string(),
+        },
+        BotAction::BindAdvisorSession {
+            advisor_phone: context.advisor_phone.clone(),
+            target_phone: context.phone_number.clone(),
+        },
+        BotAction::CancelTimer {
+            timer_type: TimerType::AdvisorResponse,
+            phone: context.phone_number.clone(),
+        },
+        BotAction::SendText {
+            to: context.advisor_phone.clone(),
+            body: format!(
+                "📅 Pedido PROGRAMADO auto-aceptado (no requiere confirmar disponibilidad):\n\n{}",
+                advisor_case_summary(context)
+            ),
+        },
+    ]);
+
+    ToolOutcome::ResultWithStateChange(
+        ok_result(
+            id,
+            format!(
+                "Pedido programado auto-aceptado. Total final: ${}. El pedido AÚN NO está \
+                 confirmado: pregúntale al cliente el método de pago y llama set_payment_method \
+                 cuando responda.",
+                format_thousands(u32::try_from(total_final).unwrap_or(0))
+            ),
+        ),
+        ConversationState::SelectPaymentMethod,
         actions,
     )
 }
@@ -1084,6 +1255,20 @@ fn confirm_advisor_availability(
     context: &mut ConversationContext,
     auto_finalize: bool,
 ) -> ToolOutcome {
+    // Regla de negocio: un pedido PROGRAMADO nunca se confirma con el
+    // asesor -- se autoacepta (ver docs/canary-fixes-2026-07-19.md #4/D).
+    // Sin este guard, el modelo llegó a preguntarle disponibilidad al
+    // asesor para pedidos programados durante las pruebas del 2026-07-19.
+    if context.delivery_type.as_deref() == Some("scheduled") {
+        return ToolOutcome::Result(error_result(
+            id,
+            "confirm_advisor_availability no aplica a pedidos PROGRAMADOS: esos se autoaceptan, \
+             nunca se le pregunta disponibilidad al asesor. Si falta el domicilio, pídeselo al \
+             asesor y usa set_manual_delivery_cost. Si el domicilio ya se conoce, este pedido ya \
+             debió pasar directo a método de pago.",
+        ));
+    }
+
     let available = input.get("available").and_then(Value::as_bool).unwrap_or(false);
 
     context.advisor_timer_started_at = None;
@@ -1123,11 +1308,7 @@ fn confirm_advisor_availability(
         ));
     };
 
-    let pedido = tools::calculate_order(&context.items);
-    let total_final = i32::try_from(pedido.total_estimado)
-        .unwrap_or(i32::MAX)
-        .saturating_sub(context.referral_discount_total.unwrap_or(0))
-        .saturating_add(delivery_cost);
+    let total_final = compute_total_final(context, delivery_cost);
     context.total_final = Some(total_final);
 
     let mut actions = Vec::new();
@@ -1311,6 +1492,82 @@ fn format_thousands(value: u32) -> String {
     rendered.chars().rev().collect()
 }
 
+/// Extrae montos con formato `$44.000` (el mismo que produce `format_currency`
+/// / `format_thousands`: signo `$`, dígitos agrupados de a tres con puntos,
+/// sin decimales). Se usa como comparación textual exacta, no numérica: así
+/// no hay que lidiar con separadores de miles/decimales ambiguos.
+fn extract_currency_amounts(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut amounts = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '$' {
+            let start = i + 1;
+            let mut end = start;
+            while end < chars.len() && (chars[end].is_ascii_digit() || chars[end] == '.') {
+                end += 1;
+            }
+            let mut trimmed_end = end;
+            while trimmed_end > start && chars[trimmed_end - 1] == '.' {
+                trimmed_end -= 1;
+            }
+            if trimmed_end > start && chars[start..trimmed_end].iter().any(char::is_ascii_digit) {
+                amounts.push(format!("${}", chars[start..trimmed_end].iter().collect::<String>()));
+            }
+            i = end.max(i + 1);
+        } else {
+            i += 1;
+        }
+    }
+    amounts
+}
+
+/// Ver docs/canary-fixes-2026-07-19.md #2: las únicas cifras en pesos que el
+/// LLM tiene permitido repetir textualmente son las que salieron de un
+/// tool-result real (get_order_summary, add_order_item, etc.) en algún punto
+/// de la conversación. Incluye todo `history`, no solo la ronda actual: un
+/// monto confirmado en un turno anterior sigue siendo válido de mencionar.
+fn known_tool_amounts(history: &[Message]) -> std::collections::HashSet<String> {
+    let mut known = std::collections::HashSet::new();
+    for message in history {
+        for block in &message.content {
+            if let ContentBlock::ToolResult { content, .. } = block {
+                known.extend(extract_currency_amounts(content));
+            }
+        }
+    }
+    known
+}
+
+/// Guard determinista: si el texto que se va a enviar menciona una cifra en
+/// pesos que ningún tool-result respalda, no confiamos en el prompt (ya pasó
+/// dos veces antes, ver SESSION-014) — se bloquea el mensaje original y se
+/// reemplaza por uno neutro, dejando rastro en logs para auditoría.
+fn sanitize_hallucinated_amounts(
+    body: &str,
+    known_amounts: &std::collections::HashSet<String>,
+    phone: &str,
+) -> String {
+    let mentioned = extract_currency_amounts(body);
+    let hallucinated: Vec<&String> = mentioned
+        .iter()
+        .filter(|amount| !known_amounts.contains(*amount))
+        .collect();
+
+    if hallucinated.is_empty() {
+        return body.to_string();
+    }
+
+    tracing::warn!(
+        phone = %crate::logging::mask_phone(phone),
+        body = %body,
+        hallucinated = ?hallucinated,
+        "blocked outgoing message: mentions a $ amount not backed by any tool-result"
+    );
+    "Dame un momento, estoy verificando las cifras exactas de tu pedido antes de confirmarte 🙏"
+        .to_string()
+}
+
 fn tool_definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
@@ -1361,15 +1618,16 @@ fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "add_order_item".to_string(),
-            description: "Agrega un producto al pedido usando un flavor_id válido de get_menu.".to_string(),
+            description: "Agrega un producto al pedido usando un flavor_id válido de get_menu. customer_wording debe ser la frase literal que usó el cliente para nombrar el sabor (ej. \"manzana\", \"smirnoff de lulo\", \"blueberry vodka\") — se usa para detectar si el nombre es ambiguo entre variantes con/sin licor; si lo es y customer_wording no distingue cuál, la tool rechaza el intento.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "has_liquor": { "type": "boolean" },
                     "flavor_id": { "type": "string" },
+                    "customer_wording": { "type": "string" },
                     "quantity": { "type": "integer", "minimum": 1, "maximum": 999 }
                 },
-                "required": ["has_liquor", "flavor_id", "quantity"],
+                "required": ["has_liquor", "flavor_id", "customer_wording", "quantity"],
                 "additionalProperties": false
             }),
         },
@@ -1568,5 +1826,332 @@ mod tests {
         let truncated = truncate_chars(&long, MAX_INBOUND_CHARS);
         assert!(truncated.chars().count() < long.chars().count());
         assert!(truncated.ends_with("[...mensaje recortado por longitud]"));
+    }
+
+    #[test]
+    fn extract_currency_amounts_finds_all_amounts_in_text() {
+        let text = "El subtotal es $44.000 y con domicilio $76.000, sin contar $0 de descuento.";
+        assert_eq!(
+            extract_currency_amounts(text),
+            vec!["$44.000", "$76.000", "$0"]
+        );
+    }
+
+    #[test]
+    fn extract_currency_amounts_trims_trailing_punctuation() {
+        assert_eq!(extract_currency_amounts("Total: $44.000."), vec!["$44.000"]);
+    }
+
+    #[test]
+    fn extract_currency_amounts_ignores_bare_dollar_sign() {
+        assert!(extract_currency_amounts("cuesta $ y ya").is_empty());
+    }
+
+    fn tool_result_with(content: &str) -> Message {
+        Message {
+            role: "user".to_string(),
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: "tu_1".to_string(),
+                content: content.to_string(),
+                is_error: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn known_tool_amounts_collects_amounts_across_whole_history() {
+        let history = vec![
+            tool_result_with("Agregado: 7 x Smirnoff.\nSubtotal: $44.000"),
+            text_message("assistant", "Va por $44.000"),
+            tool_result_with("Domicilio: $32.000\nTotal final: $76.000"),
+        ];
+        let known = known_tool_amounts(&history);
+        assert!(known.contains("$44.000"));
+        assert!(known.contains("$32.000"));
+        assert!(known.contains("$76.000"));
+        assert_eq!(known.len(), 3);
+    }
+
+    #[test]
+    fn sanitize_passes_through_text_backed_by_a_tool_result() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("$44.000".to_string());
+        let body = "Tu total es $44.000, ¿confirmamos?";
+        assert_eq!(
+            sanitize_hallucinated_amounts(body, &known, "3000000000"),
+            body
+        );
+    }
+
+    #[test]
+    fn sanitize_blocks_text_with_an_unbacked_amount() {
+        let known = std::collections::HashSet::new();
+        let body = "Tu total es $925.000, ¿confirmamos?";
+        let sanitized = sanitize_hallucinated_amounts(body, &known, "3000000000");
+        assert_ne!(sanitized, body);
+        assert!(!sanitized.contains('$'));
+    }
+
+    #[test]
+    fn sanitize_ignores_text_without_any_amount() {
+        let known = std::collections::HashSet::new();
+        let body = "¿Me confirmas tu dirección?";
+        assert_eq!(sanitize_hallucinated_amounts(body, &known, "3000000000"), body);
+    }
+
+    fn test_context() -> ConversationContext {
+        ConversationContext {
+            phone_number: "573001234567".to_string(),
+            advisor_phone: "573009999999".to_string(),
+            customer_name: Some("Ana".to_string()),
+            customer_phone: Some("3001234567".to_string()),
+            delivery_address: Some("Cra 15 #20-30 Armenia".to_string()),
+            items: vec![crate::db::models::OrderItemData {
+                flavor: "Maracumango".to_string(),
+                has_liquor: false,
+                quantity: 5,
+            }],
+            delivery_type: Some("scheduled".to_string()),
+            scheduled_date: Some("2026-07-20".to_string()),
+            scheduled_time: Some("8:00 AM".to_string()),
+            customer_review_scope: None,
+            payment_method: None,
+            referral_code: None,
+            referral_has_boost: false,
+            referral_discount_total: None,
+            ambassador_commission_total: None,
+            delivery_cost: None,
+            total_final: None,
+            receipt_media_id: None,
+            receipt_timer_started_at: None,
+            advisor_target_phone: None,
+            advisor_timer_started_at: None,
+            advisor_timer_expired: false,
+            relay_timer_started_at: None,
+            relay_kind: None,
+            advisor_proposed_hour: None,
+            client_counter_hour: None,
+            schedule_resume_target: None,
+            current_order_id: None,
+            editing_address: false,
+            receipt_timer_expired: false,
+            pending_has_liquor: None,
+            pending_flavor: None,
+            conversation_abandon_started_at: None,
+            conversation_abandon_reminder_sent: false,
+        }
+    }
+
+    fn tool_result_text(outcome: &ToolOutcome) -> String {
+        let block = match outcome {
+            ToolOutcome::Result(block) => block,
+            ToolOutcome::ResultWithStateChange(block, _, _) => block,
+            _ => panic!("unexpected ToolOutcome variant in test"),
+        };
+        match block {
+            ContentBlock::ToolResult { content, .. } => content.clone(),
+            _ => panic!("expected a ToolResult content block"),
+        }
+    }
+
+    #[test]
+    fn finalize_checkout_auto_accepts_scheduled_order_when_delivery_cost_known() {
+        let mut context = test_context();
+        context.delivery_cost = Some(15_000);
+
+        let outcome = finalize_checkout("id_1", &mut context);
+
+        match outcome {
+            ToolOutcome::ResultWithStateChange(block, next_state, actions) => {
+                assert_eq!(next_state, ConversationState::SelectPaymentMethod);
+                let ContentBlock::ToolResult { content, .. } = block else {
+                    panic!("expected tool result");
+                };
+                assert!(content.contains("auto-aceptado"));
+                assert!(!actions
+                    .iter()
+                    .any(|action| matches!(action, BotAction::StartTimer { .. })));
+                assert!(actions.iter().any(|action| matches!(
+                    action,
+                    BotAction::SendText { body, .. } if body.contains("auto-aceptado")
+                )));
+            }
+            _ => panic!("expected a state change"),
+        }
+        assert!(context.total_final.is_some());
+    }
+
+    #[test]
+    fn finalize_checkout_scheduled_without_delivery_cost_asks_for_cost_not_availability() {
+        let mut context = test_context();
+        context.delivery_cost = None;
+
+        let outcome = finalize_checkout("id_1", &mut context);
+
+        match outcome {
+            ToolOutcome::ResultWithStateChange(block, next_state, actions) => {
+                assert_eq!(next_state, ConversationState::AskDeliveryCost);
+                let ContentBlock::ToolResult { content, .. } = block else {
+                    panic!("expected tool result");
+                };
+                assert!(content.contains("domicilio"));
+                assert!(content.contains("no le preguntes disponibilidad"));
+                assert!(actions
+                    .iter()
+                    .any(|action| matches!(action, BotAction::StartTimer { .. })));
+            }
+            _ => panic!("expected a state change"),
+        }
+    }
+
+    #[test]
+    fn confirm_advisor_availability_rejects_scheduled_orders() {
+        let mut context = test_context();
+        context.delivery_cost = Some(15_000);
+
+        let outcome = confirm_advisor_availability(
+            "id_1",
+            &json!({ "available": true }),
+            &mut context,
+            true,
+        );
+
+        match outcome {
+            ToolOutcome::Result(ContentBlock::ToolResult { content, is_error, .. }) => {
+                assert_eq!(is_error, Some(true));
+                assert!(content.contains("PROGRAMADOS"));
+            }
+            _ => panic!("expected a rejected tool result"),
+        }
+    }
+
+    #[test]
+    fn set_manual_delivery_cost_auto_accepts_scheduled_order_with_existing_order() {
+        let mut context = test_context();
+        context.current_order_id = Some(7);
+
+        let outcome = set_manual_delivery_cost("id_1", &json!({ "amount": 15_000 }), &mut context);
+
+        match outcome {
+            ToolOutcome::ResultWithStateChange(_, next_state, actions) => {
+                assert_eq!(next_state, ConversationState::SelectPaymentMethod);
+                assert!(!actions
+                    .iter()
+                    .any(|action| matches!(action, BotAction::FinalizeCurrentOrder { .. })));
+                assert!(actions.iter().any(|action| matches!(
+                    action,
+                    BotAction::UpdateCurrentOrderDeliveryCost { delivery_cost: 15_000, .. }
+                )));
+            }
+            _ => panic!("expected a state change"),
+        }
+        assert_eq!(context.delivery_cost, Some(15_000));
+    }
+
+    #[test]
+    fn set_manual_delivery_cost_just_stores_cost_when_order_not_finalized_yet() {
+        let mut context = test_context();
+        context.current_order_id = None;
+
+        let outcome = set_manual_delivery_cost("id_1", &json!({ "amount": 15_000 }), &mut context);
+
+        assert!(matches!(outcome, ToolOutcome::Result(_)));
+        assert_eq!(context.delivery_cost, Some(15_000));
+        assert!(tool_result_text(&outcome).contains("15.000"));
+    }
+
+    #[test]
+    fn receipt_shortcut_triggers_from_context_even_if_state_is_stale() {
+        let mut context = test_context();
+        context.payment_method = Some("transfer".to_string());
+        context.receipt_media_id = None;
+
+        let result = try_handle_receipt_shortcut(
+            &mut context,
+            &ConversationState::MainMenu,
+            Actor::Customer,
+            &UserInput::ImageMessage("media_123".to_string()),
+        );
+
+        assert!(result.is_some());
+        let (state, actions) = result.unwrap();
+        assert_eq!(state, ConversationState::MainMenu);
+        assert!(actions
+            .iter()
+            .any(|action| matches!(action, BotAction::SendImage { .. })));
+    }
+
+    #[test]
+    fn receipt_shortcut_does_not_trigger_without_transfer_payment_or_matching_state() {
+        let mut context = test_context();
+        context.payment_method = None;
+
+        let result = try_handle_receipt_shortcut(
+            &mut context,
+            &ConversationState::MainMenu,
+            Actor::Customer,
+            &UserInput::ImageMessage("media_123".to_string()),
+        );
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn add_order_item_rejects_ambiguous_bare_flavor_name() {
+        let mut context = test_context();
+        context.items.clear();
+
+        let (message, is_error) = add_order_item(
+            &json!({
+                "has_liquor": true,
+                "flavor_id": "liquor_manzana_verde_tequila",
+                "customer_wording": "manzana",
+                "quantity": 5
+            }),
+            &mut context,
+        );
+
+        assert!(is_error);
+        assert!(message.contains("ambiguo"));
+        assert!(context.items.is_empty());
+    }
+
+    #[test]
+    fn add_order_item_accepts_flavor_when_wording_disambiguates_it() {
+        let mut context = test_context();
+        context.items.clear();
+
+        let (message, is_error) = add_order_item(
+            &json!({
+                "has_liquor": true,
+                "flavor_id": "liquor_manzana_verde_tequila",
+                "customer_wording": "manzana con tequila",
+                "quantity": 5
+            }),
+            &mut context,
+        );
+
+        assert!(!is_error, "unexpected error: {message}");
+        assert_eq!(context.items.len(), 1);
+        assert_eq!(context.items[0].flavor, "Manzana verde Tequila");
+    }
+
+    #[test]
+    fn add_order_item_accepts_unambiguous_flavor_without_extra_wording() {
+        let mut context = test_context();
+        context.items.clear();
+
+        let (message, is_error) = add_order_item(
+            &json!({
+                "has_liquor": true,
+                "flavor_id": "liquor_uva_vodka",
+                "customer_wording": "uva",
+                "quantity": 3
+            }),
+            &mut context,
+        );
+
+        assert!(!is_error, "unexpected error: {message}");
+        assert_eq!(context.items.len(), 1);
     }
 }

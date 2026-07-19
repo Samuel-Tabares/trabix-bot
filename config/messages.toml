@@ -146,7 +146,7 @@ Items:
 {items}
 
 Subtotal: {subtotal}
-{delivery_line}{referral_section}Total: {total}"""
+{delivery_line}{referral_section}{total_line}"""
 summary_delivery_immediate = "Inmediata"
 summary_delivery_scheduled_template = """Programada
 Fecha: {date}

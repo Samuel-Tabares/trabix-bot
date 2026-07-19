@@ -343,7 +343,7 @@ impl ClientMessages {
                 "subtotal",
                 "delivery_line",
                 "referral_section",
-                "total",
+                "total_line",
             ],
             "checkout.summary_template",
         )?;

@@ -412,13 +412,28 @@ pub fn render_summary(context: &ConversationContext, pedido: &PedidoCalculado) -
     };
 
     let subtotal = pedido.total_estimado;
+    // `context.delivery_cost` distingue "aún no se conoce" (None) de "se
+    // conoce y vale $0" (Some(0)): mostrar un total que ya incluya domicilio
+    // cuando en realidad todavía no se ha resuelto la zona/pueblo llevó a
+    // cotizar totales incompletos a clientes reales (ver
+    // docs/canary-fixes-2026-07-19.md #8).
+    let delivery_known = context.delivery_cost.is_some();
     let delivery_cost = context.delivery_cost.unwrap_or(0);
     let total = u32::try_from(i32::try_from(subtotal).unwrap_or(0).saturating_add(delivery_cost)).unwrap_or(0);
 
-    let delivery_line = if delivery_cost > 0 {
+    let delivery_line = if delivery_known {
         format!("Domicilio: {}\n", format_currency(u32::try_from(delivery_cost).unwrap_or(0)))
     } else {
-        String::new()
+        "Domicilio: aún por confirmar (falta conocer zona/barrio o municipio)\n".to_string()
+    };
+
+    let total_line = if delivery_known {
+        format!("Total: {}", format_currency(total))
+    } else {
+        format!(
+            "Subtotal de productos (sin domicilio aún, no es el total final): {}",
+            format_currency(subtotal)
+        )
     };
 
     let referral_section = if let Some(referral) = referral_from_context(context, pedido) {
@@ -451,7 +466,7 @@ pub fn render_summary(context: &ConversationContext, pedido: &PedidoCalculado) -
             ("subtotal", &format_currency(subtotal)),
             ("delivery_line", &delivery_line),
             ("referral_section", &referral_section),
-            ("total", &format_currency(total)),
+            ("total_line", &total_line),
         ],
     )
 }
@@ -753,10 +768,11 @@ mod tests {
     use crate::bot::state_machine::{BotAction, ConversationContext, ConversationState, UserInput};
 
     use super::{
-        handle_review_checkout, handle_select_payment_method, handle_select_referral_option,
-        handle_wait_receipt, handle_wait_referral_code, payment_entry_state_and_actions,
-        render_payment_ready_confirmation,
+        format_currency, handle_review_checkout, handle_select_payment_method,
+        handle_select_referral_option, handle_wait_receipt, handle_wait_referral_code,
+        payment_entry_state_and_actions, render_payment_ready_confirmation, render_summary,
     };
+    use crate::bot::pricing::calcular_pedido;
 
     fn context() -> ConversationContext {
         ConversationContext {
@@ -836,6 +852,33 @@ mod tests {
             crate::bot::state_machine::BotAction::FinalizeCurrentOrder { status }
             if status == "pending_advisor"
         )));
+    }
+
+    #[test]
+    fn render_summary_labels_it_as_subtotal_when_delivery_is_not_known_yet() {
+        let mut context = context();
+        context.delivery_cost = None;
+        let pedido = calcular_pedido(&context.items);
+
+        let summary = render_summary(&context, &pedido);
+
+        assert!(summary.contains("aún por confirmar"));
+        assert!(summary.contains("sin domicilio aún, no es el total final"));
+        assert!(!summary.contains("Total: $"));
+    }
+
+    #[test]
+    fn render_summary_shows_final_total_once_delivery_is_known() {
+        let mut context = context();
+        context.delivery_cost = Some(5_000);
+        let pedido = calcular_pedido(&context.items);
+        let expected_total = pedido.total_estimado + 5_000;
+
+        let summary = render_summary(&context, &pedido);
+
+        assert!(summary.contains(&format!("Domicilio: {}", format_currency(5_000))));
+        assert!(summary.contains(&format!("Total: {}", format_currency(expected_total))));
+        assert!(!summary.contains("aún por confirmar"));
     }
 
     #[test]
