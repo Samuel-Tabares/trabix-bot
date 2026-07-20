@@ -1,7 +1,6 @@
 use std::{
     error::Error,
     io::{Error as IoError, ErrorKind},
-    path::Path,
 };
 
 use serde_json::json;
@@ -30,8 +29,6 @@ use crate::{
     },
     logging::{log_bot_action, mask_phone, summarize_action_kinds},
     messages::client_messages,
-    simulator::{create_message, get_media, get_session_by_phone, NewSimulatorMessage},
-    transport::{OutboundTransport, SIMULATOR_MENU_ASSET_PATH},
     AppState,
 };
 
@@ -65,13 +62,7 @@ pub async fn process_customer_input(
     // el LLM (ver docs/canary-fixes-2026-07-19.md item 3).
     if should_use_agent(&state, &current_state) && !context.has_greeted {
         context.has_greeted = true;
-        send_text(
-            &state,
-            &phone,
-            &client_messages().agent.welcome,
-            Some(phone.as_str()),
-        )
-        .await?;
+        send_text(&state, &phone, &client_messages().agent.welcome).await?;
         update_state(
             &state.pool,
             &phone,
@@ -195,7 +186,6 @@ pub async fn process_advisor_input(
             &state,
             &advisor_phone,
             "Primero usa un botón de un caso pendiente para indicar a qué cliente responder.",
-            None,
         )
         .await?;
         update_last_message(&state.pool, &advisor_phone).await?;
@@ -215,7 +205,6 @@ pub async fn process_advisor_input(
             &state,
             &advisor_phone,
             "Ese caso ya no está disponible. Usa un botón de un caso pendiente.",
-            None,
         )
         .await?;
         update_last_message(&state.pool, &advisor_phone).await?;
@@ -322,8 +311,7 @@ async fn degrade_agent_failure(
 
     if turn_actor == "customer" {
         let body = client_messages().agent.llm_failure_customer.clone();
-        if let Err(send_err) = send_text(state, customer_phone, &body, Some(customer_phone)).await
-        {
+        if let Err(send_err) = send_text(state, customer_phone, &body).await {
             tracing::error!(
                 phone = %mask_phone(customer_phone),
                 error = %send_err,
@@ -350,14 +338,7 @@ async fn degrade_agent_failure(
         last_message,
         current_state.as_storage_key(),
     );
-    if let Err(send_err) = send_text(
-        state,
-        &state.config.advisor_phone,
-        &advisor_body,
-        Some(customer_phone),
-    )
-    .await
-    {
+    if let Err(send_err) = send_text(state, &state.config.advisor_phone, &advisor_body).await {
         tracing::error!(
             phone = %mask_phone(customer_phone),
             error = %send_err,
@@ -373,9 +354,7 @@ pub async fn mark_as_read_if_supported(
     state: &AppState,
     message_id: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if let Some(client) = state.transport.production() {
-        client.mark_as_read(message_id).await?;
-    }
+    state.transport.mark_as_read(message_id).await?;
 
     Ok(())
 }
@@ -384,30 +363,19 @@ pub async fn send_text(
     state: &AppState,
     to: &str,
     body: &str,
-    session_phone: Option<&str>,
 ) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
-    send_via_transport(
-        state,
-        to,
-        "text",
-        Some(body.to_string()),
-        json!({}),
-        session_phone,
-        None,
-    )
-    .await
+    send_via_transport(state, to, "text", Some(body.to_string()), json!({})).await
 }
 
 pub async fn send_timer_actions(
     state: &AppState,
     actions: &[BotAction],
-    session_phone: Option<&str>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     for action in actions {
         log_bot_action(action);
         match action {
             BotAction::SendText { to, body } => {
-                send_text(state, to, body, session_phone).await?;
+                send_text(state, to, body).await?;
             }
             BotAction::SendButtons { to, body, buttons } => {
                 send_via_transport(
@@ -416,8 +384,6 @@ pub async fn send_timer_actions(
                     "buttons",
                     Some(body.clone()),
                     json!({ "buttons": buttons }),
-                    session_phone,
-                    None,
                 )
                 .await?;
             }
@@ -436,8 +402,6 @@ pub async fn send_timer_actions(
                         "button_text": button_text,
                         "sections": sections,
                     }),
-                    session_phone,
-                    None,
                 )
                 .await?;
             }
@@ -446,10 +410,10 @@ pub async fn send_timer_actions(
                 media_id,
                 caption,
             } => {
-                send_image(state, to, media_id, caption.clone(), session_phone).await?;
+                send_image(state, to, media_id, caption.clone()).await?;
             }
             BotAction::SendAssetImage { to, asset, caption } => {
-                send_asset_image(state, to, asset.clone(), caption.clone(), session_phone).await?;
+                send_asset_image(state, to, asset.clone(), caption.clone()).await?;
             }
             BotAction::NoOp => {}
             _ => {
@@ -475,7 +439,7 @@ pub async fn execute_actions(
         log_bot_action(action);
         match action {
             BotAction::SendText { to, body } => {
-                let message_id = send_text(state, to, body, session_phone).await?;
+                let message_id = send_text(state, to, body).await?;
                 record_advisor_reply_thread_if_needed(
                     state,
                     to,
@@ -492,8 +456,6 @@ pub async fn execute_actions(
                     "buttons",
                     Some(body.clone()),
                     json!({ "buttons": buttons }),
-                    session_phone,
-                    None,
                 )
                 .await?;
                 record_advisor_reply_thread_if_needed(
@@ -520,8 +482,6 @@ pub async fn execute_actions(
                         "button_text": button_text,
                         "sections": sections,
                     }),
-                    session_phone,
-                    None,
                 )
                 .await?;
                 record_advisor_reply_thread_if_needed(
@@ -538,8 +498,7 @@ pub async fn execute_actions(
                 media_id,
                 caption,
             } => {
-                let message_id =
-                    send_image(state, to, media_id, caption.clone(), session_phone).await?;
+                let message_id = send_image(state, to, media_id, caption.clone()).await?;
                 record_advisor_reply_thread_if_needed(
                     state,
                     to,
@@ -551,8 +510,7 @@ pub async fn execute_actions(
             }
             BotAction::SendAssetImage { to, asset, caption } => {
                 let message_id =
-                    send_asset_image(state, to, asset.clone(), caption.clone(), session_phone)
-                        .await?;
+                    send_asset_image(state, to, asset.clone(), caption.clone()).await?;
                 record_advisor_reply_thread_if_needed(
                     state,
                     to,
@@ -573,7 +531,7 @@ pub async fn execute_actions(
                 } else {
                     configured
                 };
-                let message_id = send_text(state, to, body, session_phone).await?;
+                let message_id = send_text(state, to, body).await?;
                 record_advisor_reply_thread_if_needed(
                     state,
                     to,
@@ -598,7 +556,7 @@ pub async fn execute_actions(
                 let phone = phone.clone();
                 let app_state = state.clone();
                 let effective_duration =
-                    effective_duration_for_start_timer(state, &timer_type, *duration);
+                    effective_duration_for_start_timer(&timer_type, *duration);
                 start_timer(
                     state.timers.clone(),
                     (phone.clone(), timer_type.clone()),
@@ -690,7 +648,7 @@ pub async fn execute_actions(
                 bind_advisor_session(state, advisor_phone, None).await?;
             }
             BotAction::RelayMessage { to, body, .. } => {
-                let message_id = send_text(state, to, body, session_phone).await?;
+                let message_id = send_text(state, to, body).await?;
                 record_advisor_reply_thread_if_needed(
                     state,
                     to,
@@ -1027,68 +985,38 @@ async fn send_via_transport(
     message_kind: &str,
     body: Option<String>,
     payload: serde_json::Value,
-    session_phone: Option<&str>,
-    file_path: Option<&Path>,
 ) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
-    let message_id = match &state.transport {
-        OutboundTransport::Production(client) => match message_kind {
-            "text" => {
-                client
-                    .send_text(to, body.as_deref().unwrap_or_default())
-                    .await?
-            }
-            "buttons" => {
-                let buttons = serde_json::from_value(payload["buttons"].clone())?;
-                let message_id = client
-                    .send_buttons(to, body.as_deref().unwrap_or_default(), buttons)
-                    .await?;
-                message_id
-            }
-            "list" => {
-                let sections = serde_json::from_value(payload["sections"].clone())?;
-                let button_text = payload["button_text"].as_str().unwrap_or_default();
-                let message_id = client
-                    .send_list(
-                        to,
-                        body.as_deref().unwrap_or_default(),
-                        button_text,
-                        sections,
-                    )
-                    .await?;
-                message_id
-            }
-            "image" => {
-                let media_id = payload["media_id"].as_str().unwrap_or_default();
-                let caption = payload["caption"].as_str();
-                client.send_image(to, media_id, caption).await?
-            }
-            _ => None,
-        },
-        OutboundTransport::Simulator => {
-            let session_id = resolve_session_id_for_send(state, to, session_phone).await?;
-            let audience = if to == state.config.advisor_phone {
-                "advisor"
-            } else {
-                "customer"
-            };
-            let mut final_payload = payload;
-            if let Some(path) = file_path {
-                final_payload["url"] = json!(path.to_string_lossy());
-            }
-            let inserted = create_message(
-                &state.pool,
-                NewSimulatorMessage {
-                    session_id,
-                    actor: "bot".to_string(),
-                    audience: audience.to_string(),
-                    message_kind: message_kind.to_string(),
-                    body,
-                    payload: final_payload,
-                },
-            )
-            .await?;
-            Some(format!("simulator:{}", inserted.id))
+    let client = &state.transport;
+    let message_id = match message_kind {
+        "text" => {
+            client
+                .send_text(to, body.as_deref().unwrap_or_default())
+                .await?
         }
+        "buttons" => {
+            let buttons = serde_json::from_value(payload["buttons"].clone())?;
+            client
+                .send_buttons(to, body.as_deref().unwrap_or_default(), buttons)
+                .await?
+        }
+        "list" => {
+            let sections = serde_json::from_value(payload["sections"].clone())?;
+            let button_text = payload["button_text"].as_str().unwrap_or_default();
+            client
+                .send_list(
+                    to,
+                    body.as_deref().unwrap_or_default(),
+                    button_text,
+                    sections,
+                )
+                .await?
+        }
+        "image" => {
+            let media_id = payload["media_id"].as_str().unwrap_or_default();
+            let caption = payload["caption"].as_str();
+            client.send_image(to, media_id, caption).await?
+        }
+        _ => None,
     };
 
     Ok(message_id)
@@ -1099,43 +1027,16 @@ async fn send_image(
     to: &str,
     media_id: &str,
     caption: Option<String>,
-    session_phone: Option<&str>,
 ) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
-    match &state.transport {
-        OutboundTransport::Production(_) => {
-            let payload_caption = caption.clone();
-            send_via_transport(
-                state,
-                to,
-                "image",
-                caption,
-                json!({ "media_id": media_id, "caption": payload_caption }),
-                session_phone,
-                None,
-            )
-            .await
-        }
-        OutboundTransport::Simulator => {
-            let file_path = get_media(&state.pool, media_id)
-                .await?
-                .map(|media| media.file_path);
-            send_via_transport(
-                state,
-                to,
-                "image",
-                caption.clone(),
-                json!({
-                    "media_id": media_id,
-                    "caption": caption,
-                    "source": if file_path.is_some() { "simulator_media" } else { "external_media_id" },
-                    "media_url": format!("/simulator/api/media/{media_id}"),
-                }),
-                session_phone,
-                file_path.as_deref().map(Path::new),
-            )
-            .await
-        }
-    }
+    let payload_caption = caption.clone();
+    send_via_transport(
+        state,
+        to,
+        "image",
+        caption,
+        json!({ "media_id": media_id, "caption": payload_caption }),
+    )
+    .await
 }
 
 async fn send_asset_image(
@@ -1143,57 +1044,17 @@ async fn send_asset_image(
     to: &str,
     asset: ImageAsset,
     caption: Option<String>,
-    session_phone: Option<&str>,
 ) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
-    match (&state.transport, asset) {
-        (OutboundTransport::Production(_), ImageAsset::Menu) => {
-            let media_id = &state.config.production().menu_image_media_id;
-            send_via_transport(
-                state,
-                to,
-                "image",
-                caption.clone(),
-                json!({ "media_id": media_id, "caption": caption }),
-                session_phone,
-                None,
-            )
-            .await
-        }
-        (OutboundTransport::Simulator, ImageAsset::Menu) => {
-            send_via_transport(
-                state,
-                to,
-                "image",
-                caption.clone(),
-                json!({
-                    "asset": "menu",
-                    "caption": caption,
-                    "media_url": "/simulator/api/menu-asset",
-                }),
-                session_phone,
-                Some(Path::new(SIMULATOR_MENU_ASSET_PATH)),
-            )
-            .await
-        }
-    }
-}
-
-async fn resolve_session_id_for_send(
-    state: &AppState,
-    to: &str,
-    session_phone: Option<&str>,
-) -> Result<Option<i32>, sqlx::Error> {
-    let phone = if to == state.config.advisor_phone {
-        session_phone
-    } else {
-        Some(to)
-    };
-    let Some(phone) = phone else {
-        return Ok(None);
-    };
-    Ok(get_session_by_phone(&state.pool, phone)
-        .await?
-        .map(|session| session.id))
+    let ImageAsset::Menu = asset;
+    let media_id = &state.config.menu_image_media_id;
+    send_via_transport(
+        state,
+        to,
+        "image",
+        caption.clone(),
+        json!({ "media_id": media_id, "caption": caption }),
+    )
+    .await
 }
 
 async fn upsert_order_from_context(

@@ -1,15 +1,9 @@
 %%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor':'#667eea', 'primaryBorderColor':'#7b9bff', 'background':'#1e1e2e', 'mainBkg':'#2a2a3a', 'tertiaryBkg':'#333344', 'lineColor':'#7b9bff', 'textColor':'#e0e0e0', 'clusterBkg':'#2a2a3a', 'clusterBorder':'#7b9bff'}}}%%
-%% Release baseline: v1.7.2 - 2026-04-30
-%% Includes local simulator mode with shared engine/transport, persisted local transcripts/media,
-%% simulator transcript timestamps in America/Bogota, active timer inspection/countdowns,
-%% simulator-only timer overrides, and timeout source notices for runtime/sweep/boot reconciliation,
-%% plus repository distribution metadata under proprietary All Rights Reserved terms,
-%% plus cross-platform simulator launch scripts, a fixed tracked real simulator menu asset,
-%% top-level README onboarding for local simulator usage,
-%% session-centric advisor simulator chat, auto-refresh without manual reload,
-%% raw simulator database inspector tabs for conversations/orders/order_items,
-%% simulator HTTP handlers centralized under src/simulator/web.rs and frontend assets extracted under assets/simulator/,
-%% plus the existing main-menu simplification, America/Bogota SQL sessions,
+%% Release baseline: v1.8.0 - 2026-07-19
+%% Production-only: the local simulator mode/module/UI was removed in v1.8.0. The sole runtime is
+%% the Meta Cloud API webhook path; AppState.transport is the WhatsApp client directly.
+%% Repository distribution metadata under proprietary All Rights Reserved terms.
+%% Includes the existing main-menu simplification, America/Bogota SQL sessions,
 %% generic customer inactivity reminder/reset only while explicitly armed by inbound customer activity,
 %% and 30-minute stuck advisor hard resets, with 23-hour scheduled delivery-cost cutoffs.
 %% v1.7.2 also includes safe advisor quoted-message routing by Meta message_id,
@@ -20,8 +14,6 @@
 graph TD
 
     WAClient["👤 CLIENTE WHATSAPP"] --> Meta["📡 META CLOUD API"]
-    SimClient["🧪 CLIENTE LOCAL"] --> SimUI["🖥️ /simulator UI"]
-    SimAdvisor["🧪 ASESOR LOCAL"] --> SimUI
     Meta -->|GET /webhook| Verify["✅ VERIFY WEBHOOK"]
     Meta -->|POST /webhook + X-Hub-Signature-256| Webhook["📥 RECEIVE WEBHOOK"]
     Verify -->|hub.challenge| Meta
@@ -30,25 +22,17 @@ graph TD
         Webhook --> HMAC{"🔐 ¿Firma válida?"}
         HMAC -->|No| Reject["401 / ignorar"]
         HMAC -->|Si| Parse["🧩 Parse webhook + describe_input + match contacts/profile"]
-        SimUI --> SimParse["🧩 Parse local session + profile name + local media"]
         Parse --> Msg{"💬 ¿Hay mensaje útil?<br/>context.id opcional/tolerante"}
-        SimParse --> SimMsg{"💬 ¿Hay mensaje útil?"}
         Msg -->|No| Ignore["200 OK + log"]
-        SimMsg -->|No| SimIgnore["UI sin cambio"]
         Msg -->|Si| Route{"from == ADVISOR_PHONE?"}
-        SimMsg -->|Si| SimRoute{"actor == advisor?"}
         Route --> Engine["🧠 shared engine<br/>process customer/advisor input<br/>shared action executor"]
-        SimRoute --> Engine
     end
 
     subgraph Persistence["POSTGRESQL + RUNTIME STATE"]
         Conversations["🗂️ conversations<br/>- phone_number<br/>- state<br/>- state_data JSONB<br/>- customer_name<br/>- customer_phone<br/>- delivery_address<br/>- last_message_at<br/>- SQL session TZ America/Bogota"]
         Orders["🧾 orders<br/>- delivery_type<br/>- scheduled_date<br/>- scheduled_time<br/>- payment_method<br/>- receipt_media_id<br/>- referral_code<br/>- referral_discount_total<br/>- ambassador_commission_total<br/>- delivery_cost<br/>- total_estimated<br/>- total_final<br/>- status"]
         OrderItems["🧊 order_items<br/>- flavor<br/>- has_liquor<br/>- quantity<br/>- unit_price<br/>- subtotal"]
-        SimSessions["🧪 simulator_sessions<br/>- customer_phone<br/>- profile_name"]
-        SimMessages["💬 simulator_messages<br/>- actor<br/>- audience<br/>- message_kind<br/>- body<br/>- payload JSONB<br/>- created_at timestamp"]
-        SimMedia["🖼️ simulator_media<br/>- file_path<br/>- mime_type<br/>- original_filename"]
-        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- advisor_detail_stuck 30m<br/>- scheduled ask_delivery_cost 23h<br/>- relay_inactivity 30m<br/>- inactivity reminder 2m / reset 35m<br/>- restore_pending_timers()<br/>- sweep_expired_timers()<br/>- simulator UI overrides/countdowns"]
+        Timers["⏱️ runtime timers<br/>- wait_receipt 10m<br/>- advisor_response 2m<br/>- advisor_detail_stuck 30m<br/>- scheduled ask_delivery_cost 23h<br/>- relay_inactivity 30m<br/>- inactivity reminder 2m / reset 35m<br/>- restore_pending_timers()<br/>- sweep_expired_timers()"]
     end
 
     Engine -->|Cliente| LoadClient["load_or_create_conversation + rehydrate context + seed inbound name/phone"]
@@ -133,9 +117,6 @@ graph TD
     LoadClient --> Conversations
     LoadAdvisor --> Conversations
     Parse --> Conversations
-    SimParse --> SimSessions
-    Engine --> SimMessages
-    Engine --> SimMedia
     Timers --> Conversations
 
     subgraph OrderAdvisorFlow["FLUJO REAL ASESOR PARA PEDIDOS"]
@@ -227,11 +208,9 @@ graph TD
         Timers --> Restore["restore_pending_timers al boot\nrehidrata solo timers aun activos\ncatch-up silencioso para expirados\nsin mensajes salientes por reinicio"]
     end
 
-    Engine --> Transport{"🚚 transport mode"}
-    Transport -->|production| Meta
+    Engine -->|WhatsApp Cloud API| Meta
     Meta --> WAClient
     Meta --> AdvisorWA["👨‍💼 ASESOR WHATSAPP"]
-    Transport -->|simulator| SimUI
 
     Conversations -.estado y contexto persistido.-> LoadClient
     Orders -.current_order_id / status.-> ContextData

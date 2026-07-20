@@ -8,13 +8,10 @@ webhooks) · Docker → Railway.
 ## Purpose
 
 State-machine WhatsApp bot that takes granizado orders for Trabix Granizados, with
-referral/embajador code support. Two runtimes selected via `BOT_MODE`:
+referral/embajador code support. Production-only: the sole runtime is the real Meta webhook
+runtime (there is no simulator — it was removed in v1.8.0).
 
-- `production` (default): real Meta webhook runtime.
-- `simulator`: local web chat at `http://127.0.0.1:8080/simulator` running the same bot brain,
-  no calls to Meta — launch with `./scripts/run_simulator.sh`.
-
-Two engines selected via `BOT_ENGINE` (independent of `BOT_MODE`; both work in production):
+Two engines selected via `BOT_ENGINE`:
 
 - `deterministic` (default when unset): the original non-LLM state machine. Removing
   `BOT_ENGINE` in Railway + redeploy is the instant rollback path.
@@ -32,19 +29,17 @@ Two engines selected via `BOT_ENGINE` (independent of `BOT_MODE`; both work in p
   `general_info/simple_diagram.mermaid` (simplified).
 - **Version history** → `CHANGELOG.md` (Keep a Changelog + SemVer). Don't duplicate release notes
   here.
-- **Licensing** → `LICENSE` — proprietary, `All Rights Reserved`, evaluation-only simulator use.
+- **Licensing** → `LICENSE` — proprietary, `All Rights Reserved`.
 
 ## Code layout
 
-- `src/routes/` — webhook verification (`verify.rs`), inbound webhook (`webhook.rs`), simulator
-  mount (`simulator.rs`), public legal pages for Meta review (`legal.rs`).
-- `src/engine.rs` — shared inbound-processing/outbound-action path used by webhook, simulator,
-  and timers. Production and simulator share this — a change here must be validated in both.
-- `src/whatsapp/` — Meta Cloud API client, button/list builders, payload types.
+- `src/routes/` — webhook verification (`verify.rs`), inbound webhook (`webhook.rs`), public
+  legal pages for Meta review (`legal.rs`).
+- `src/engine.rs` — shared inbound-processing/outbound-action path used by webhook and timers.
+- `src/whatsapp/` — Meta Cloud API client (also the `AppState.transport`), button/list builders,
+  payload types.
 - `src/bot/` — state machine and per-state handlers (`pricing.rs`, `states/*.rs`, `timers.rs`).
 - `src/db/` — SQLx models and conversation queries.
-- `src/simulator/` — local simulator persistence (sessions, transcripts, local media).
-- `src/transport.rs` — outbound transport selection (Meta vs. simulator recording).
 - `config/messages.toml` — customer-facing copy, loaded at startup (restart after editing).
 - `config/referrals.toml` — embajador referral codes (`codes`, `boost_codes`), loaded at startup;
   keep entries trimmed lowercase, no spaces, ≤15 chars; every `boost_codes` entry must also exist
@@ -54,10 +49,10 @@ Two engines selected via `BOT_ENGINE` (independent of `BOT_MODE`; both work in p
 
 ## Build / run / test
 
-- `cargo check` / `cargo test` — verify + run coverage before any commit.
-- `cargo run --bin granizado-bot` — run production-mode locally.
-- `./scripts/run_simulator.sh` (or `BOT_MODE=simulator cargo run --bin granizado-bot`) — simulator
-  mode, no Meta credentials needed, binds to `127.0.0.1`.
+- `cargo check` / `cargo test` — verify + run coverage before any commit. Since the simulator was
+  removed there is no local-chat harness; validation is `cargo test` + the deterministic-engine
+  fallback + live testing on the real number.
+- `cargo run --bin granizado-bot` — run the bot locally (needs the real env vars).
 - `cargo test --test live_whatsapp -- --ignored --test-threads=1` — live WhatsApp smoke test,
   requires real credentials in `.env`.
 - `cargo run --bin upload_media -- /path/to/menu.jpg` — upload local media to Meta, prints
@@ -65,13 +60,11 @@ Two engines selected via `BOT_ENGINE` (independent of `BOT_MODE`; both work in p
 
 ## Operational essentials
 
-- `BOT_MODE=production` is the default — omit it in Railway unless simulator mode is intended.
-- Docker/Railway builds must copy `assets/` and `config/` before `cargo build --release` — both
-  are compiled in via `include_str!`.
+- Docker/Railway builds must copy `config/` before `cargo build --release` — it is compiled in
+  via `include_str!`.
 - Production webhook path is exactly `/webhook`. The Meta app must be in `Live` mode and the WABA
   subscribed to it (`GET /{WABA_ID}/subscribed_apps`) or inbound traffic never reaches Railway even
   if webhook test events work.
-- `FORCE_BOGOTA_NOW` is local-testing only — never enable in Railway/production.
 - PostgreSQL sessions run on `America/Bogota` (UTC-5) so `NOW()` and stored timestamps stay aligned.
 - Keep `ADVISOR_PHONE` different from `WHATSAPP_TEST_RECIPIENT` during live testing, or tester
   messages get routed as advisor messages.

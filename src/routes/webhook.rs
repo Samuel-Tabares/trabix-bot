@@ -49,7 +49,7 @@ pub async fn receive_webhook(
     if let Err(err) = verify_signature(
         &body,
         signature,
-        &state.config.production().whatsapp_app_secret,
+        &state.config.whatsapp_app_secret,
     ) {
         tracing::error!("webhook rejected: {}", err);
         return StatusCode::UNAUTHORIZED;

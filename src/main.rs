@@ -2,15 +2,12 @@ use std::net::SocketAddr;
 
 use axum::Router;
 use granizado_bot::{
-    bot::timers::{
-        new_timer_map, new_timer_overrides, restore_pending_timers, spawn_timer_sweeper,
-    },
-    config::{BotMode, Config},
+    bot::timers::{new_timer_map, restore_pending_timers, spawn_timer_sweeper},
+    config::Config,
     db::init_pool,
     messages::{set_client_messages, ClientMessages},
     referrals::{set_referral_registry, ReferralRegistry},
     routes,
-    transport::OutboundTransport,
     whatsapp::client::WhatsAppClient,
     AppState,
 };
@@ -34,20 +31,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = init_pool(&config.database_url).await?;
     sqlx::migrate!().run(&pool).await?;
 
-    let transport = match config.mode {
-        BotMode::Production => {
-            let production = config.production();
-            OutboundTransport::Production(WhatsAppClient::new(
-                production.whatsapp_token.clone(),
-                production.whatsapp_phone_id.clone(),
-            ))
-        }
-        BotMode::Simulator => {
-            let simulator = config.simulator();
-            std::fs::create_dir_all(&simulator.upload_dir)?;
-            OutboundTransport::Simulator
-        }
-    };
+    let transport = WhatsAppClient::new(
+        config.whatsapp_token.clone(),
+        config.whatsapp_phone_id.clone(),
+    );
 
     let app_state = AppState {
         llm_budget: granizado_bot::ai::budget::new_llm_budget_handle(
@@ -58,14 +45,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool,
         transport,
         timers: new_timer_map(),
-        timer_overrides: new_timer_overrides(),
         conversation_locks: granizado_bot::new_conversation_locks(),
     };
 
     restore_pending_timers(app_state.clone()).await?;
     let _timer_sweeper = spawn_timer_sweeper(app_state.clone());
 
-    let app: Router = routes::router(&config).with_state(app_state);
+    let app: Router = routes::router().with_state(app_state);
 
     let addr = SocketAddr::new(config.bind_ip, config.port);
     let listener = tokio::net::TcpListener::bind(addr).await?;

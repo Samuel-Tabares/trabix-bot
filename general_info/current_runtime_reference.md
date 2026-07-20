@@ -17,34 +17,28 @@ Licenciamiento actual del repositorio:
 
 - el repositorio es propietario y se distribuye bajo `All Rights Reserved`
 - la visibilidad publica del codigo no concede permiso para copiarlo, modificarlo, redistribuirlo o venderlo
-- solo se permite ver el codigo y ejecutar el simulator localmente para evaluacion personal no comercial, segun `LICENSE`
+- solo se permite ver el codigo para evaluacion personal no comercial, segun `LICENSE`
 
 ## Arquitectura Actual
 
-El proyecto es un servicio Rust con dos modos de runtime:
-
-- `BOT_MODE=production`: recibe webhooks de Meta Cloud API, valida la firma HMAC, clasifica los mensajes entre cliente y asesor, ejecuta una maquina de estados persistente y responde por WhatsApp usando texto, botones, listas e imagenes.
-- `BOT_MODE=simulator`: expone una UI local en `/simulator`, procesa los mismos estados y timers, persiste el mismo flujo de conversaciones/pedidos y registra las salidas en transcriptos locales en vez de llamar Meta.
+El proyecto es un servicio Rust production-only. El unico runtime recibe webhooks de Meta Cloud
+API, valida la firma HMAC, clasifica los mensajes entre cliente y asesor, ejecuta una maquina de
+estados persistente y responde por WhatsApp usando texto, botones, listas e imagenes. El simulador
+local fue eliminado en v1.8.0.
 
 Componentes principales:
 
 - `src/routes/`
   - `verify.rs`: verificacion de `GET /webhook`
   - `webhook.rs`: recepcion del webhook productivo y normalizacion de inputs
-  - `simulator.rs`: wrapper minimo que monta el runtime del simulator
   - `legal.rs`: paginas publicas `/privacy-policy` y `/terms-of-service`
 - `src/engine.rs`
   - procesamiento compartido de cliente/asesor
-  - ejecucion compartida de acciones para webhook, simulator y timers
+  - ejecucion compartida de acciones para webhook y timers
 - `src/whatsapp/`
-  - cliente de Meta Cloud API
+  - cliente de Meta Cloud API (es el `AppState.transport`)
   - builders de botones y listas
   - tipos serde para payloads entrantes y salientes
-- `src/simulator/`
-  - sesiones locales
-  - transcriptos persistidos
-  - media local para comprobantes e imagenes
-  - `web.rs`: handlers HTTP del simulator y serving de assets locales
 - `src/bot/`
   - maquina de estados
   - handlers por estado
@@ -58,8 +52,7 @@ Componentes principales:
 
 ## Motor De Agente IA (`BOT_ENGINE=agent`)
 
-Desde este ciclo el motor de agente puede correr tanto en `BOT_MODE=simulator` como en
-`BOT_MODE=production` (el gate `AgentEngineRequiresSimulator` fue eliminado). Reglas operativas:
+El motor de agente corre en el runtime productivo. Reglas operativas:
 
 - `BOT_ENGINE` sin definir = motor determinista. Quitar la variable en Railway y redeploy es el
   rollback completo: las tablas son compartidas y no hay nada que migrar de vuelta.
@@ -181,40 +174,6 @@ Comportamiento actual relevante:
 - Los logs del runtime priorizan visibilidad operativa con telefono enmascarado, previews cortos de texto, transiciones de estado, resumen de respuestas salientes y eventos de timers. Los callbacks de estado `sent/delivered/read` de Meta deben quedar fuera del ruido normal de `INFO` y verse en `DEBUG` cuando haga falta.
 - El callback productivo exacto es `/webhook`.
 - Para trafico publico real, la app de Meta debe estar en `Live` y el WABA debe estar suscrito a la app activa.
-
-## Runtime Local Simulator
-
-Cuando `BOT_MODE=simulator`:
-
-- no se monta `/webhook`
-- no se requieren credenciales `WHATSAPP_*`
-- el servicio se liga por defecto a `127.0.0.1`
-- la UI local vive en `/simulator`
-- el frontend del simulator vive en `assets/simulator/index.html`, `assets/simulator/simulator.css` y `assets/simulator/simulator.js`
-- el backend HTTP del simulator vive en `src/simulator/web.rs`
-- cada sesion local crea o reutiliza un cliente identificado por telefono y nombre de perfil opcional
-- el bot sigue usando `conversations`, `orders`, `order_items`, restauracion de timers y sweep periodico
-- las respuestas del bot se persisten en transcriptos locales en vez de salir a Meta
-- los comprobantes o imagenes de prueba se guardan en disco local y se referencian por id local
-- cada mensaje del transcript muestra su `created_at` en `America/Bogota`
-- el panel de asesor es por sesion; los mensajes del asesor y del bot para ese caso se ven dentro del chat de esa sesion
-- la UI expone timers activos con inicio, vencimiento, countdown y fase del timeout
-- la UI permite overrides locales de timers solo para nuevas esperas creadas en simulator
-- la UI permite override local de la hora efectiva de Bogota para validar horario inmediato y `out_of_hours` sin reiniciar el proceso
-- los timeouts del simulator registran avisos de sistema indicando si se dispararon por runtime, sweep o reconciliacion de arranque
-- la UI hace auto-refresh del transcript, el estado persistido y la vista de base de datos para que timers y mensajes aparezcan sin recargar manualmente
-- la UI expone un inspector read-only de base de datos para `conversations`, `orders` y `order_items`
-- el repositorio incluye launchers en `scripts/` para arrancar el simulator con defaults razonables en macOS/Linux y Windows
-- esos launchers pueden crear o arrancar un Postgres local via Docker si `DATABASE_URL` no fue configurado manualmente
-- el simulator siempre usa `assets/trabix-menu.png` como imagen local rastreada para `Ver Menú`
-- si quieres que otro equipo vea el menú real al clonar el repo, reemplaza ese archivo rastreado y súbelo a GitHub
-
-El objetivo del simulator es validar localmente el mismo comportamiento productivo del bot, incluyendo:
-
-- persistencia de `customer_name`, `customer_phone` y `delivery_address`
-- preservacion de esos datos cuando la conversacion vuelve a `main_menu`
-- flujo completo de cliente, asesor, relay, recibos y timers
-- recuperacion de timers y transcriptos despues de reinicio
 
 ## Flujo Real Del Cliente
 
@@ -733,7 +692,6 @@ Cada item persistido guarda:
 
 Variables y datos operativos clave:
 
-- `BOT_MODE`
 - `DATABASE_URL`
 - `TEST_DATABASE_URL`
 - `WHATSAPP_TOKEN`
@@ -742,7 +700,6 @@ Variables y datos operativos clave:
 - `WHATSAPP_APP_SECRET`
 - `ADVISOR_PHONE`
 - `MENU_IMAGE_MEDIA_ID`
-- `SIMULATOR_UPLOAD_DIR`
 - `BOT_ENGINE` (`deterministic` por defecto; `agent` activa el motor IA)
 - `ANTHROPIC_API_KEY` (obligatoria con `BOT_ENGINE=agent`)
 - `AGENT_DAILY_LLM_CALL_LIMIT` (opcional, kill-switch global de llamadas LLM por dia)
@@ -751,13 +708,8 @@ Notas actuales:
 
 - los mensajes del cliente viven en `config/messages.toml`
 - `TRANSFER_PAYMENT_TEXT` queda como fallback legado si `config/messages.toml` no define el texto de transferencia
-- las sesiones PostgreSQL del bot usan `America/Bogota`
-- `FORCE_BOGOTA_NOW=YYYY-MM-DD HH:MM` es solo para pruebas locales de horario
-- en simulator tambien puede usarse un override visual de la hora de Bogota desde la UI local; afecta solo al proceso actual y solo al entorno local
+- las sesiones PostgreSQL del bot usan `America/Bogota`; la hora efectiva es siempre `Utc::now()` en `America/Bogota` (ya no hay override de reloj)
 - `WHATSAPP_TEST_RECIPIENT` sirve para smoke tests live, no define el numero productivo escuchado por el bot
-- `BOT_MODE=simulator` no usa `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` ni `MENU_IMAGE_MEDIA_ID`
-- `assets/trabix-menu.png` es la imagen rastreada usada por `Ver Menú` en simulator
-- `SIMULATOR_UPLOAD_DIR` guarda imagenes locales de prueba como comprobantes o capturas
 
 Validaciones operativas importantes:
 
@@ -775,7 +727,6 @@ cargo check
 cargo test
 cargo test --test live_whatsapp -- --ignored --test-threads=1
 cargo run --bin granizado-bot
-BOT_MODE=simulator cargo run --bin granizado-bot
 ```
 
 ### Checklist Manual Minimo
@@ -797,16 +748,6 @@ Asesor:
 - negociar hora para un pedido que no puede salir inmediato
 - validar que el asesor no puede responder sin seleccionar un caso pendiente
 - validar multiples casos pendientes sin cruce de contexto
-
-Simulator local:
-
-- crear sesion local con telefono y nombre de perfil
-- verificar que el primer mensaje siembre `customer_phone` y `customer_name`
-- verificar que direccion, telefono y nombre persisten despues de reset a `main_menu`
-- validar `Ver Menú` con imagen local
-- validar `Pago Ahora` con imagen subida desde el navegador local
-- reiniciar el servicio y confirmar recuperacion de transcriptos, estados y timers activos
-- confirmar que nada sale a Meta durante la prueba
 
 Relay y contacto:
 

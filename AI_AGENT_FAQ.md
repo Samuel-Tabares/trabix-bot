@@ -33,9 +33,7 @@ Asesor` se eliminó en FASE 4; el agente detecta esa intención por texto libre)
 
 **Respuesta:** Sí, siempre. En el estado `view_menu`, el bot envía:
 
-1. Una imagen única usando `MENU_IMAGE_MEDIA_ID`
-   - En **producción:** media_id válido de Meta Cloud API
-   - En **simulator local:** `assets/trabix-menu.png` (imagen rastreada en el repositorio)
+1. Una imagen única usando `MENU_IMAGE_MEDIA_ID` (media_id válido de Meta Cloud API)
 2. Texto de precios y descripción del menú
 3. Botones para acciones (`Hacer Pedido`, `Volver al Menú`)
 
@@ -84,9 +82,7 @@ El bot incluye también un mensaje invitativo: "Si quieres, te acompaño a armar
 - **Qué persiste:** Historial completo de mensajes JSON entre cliente/asesor y Claude Haiku
 - **Estructura:** `phone_number` (PK), `messages` (JSONB), `updated_at`
 - **Cuándo se limpia:** Nunca (desde FASE 3 el historial es permanente por cliente; es la base del CRM)
-- **Cómo acceder:** 
-  - Directamente en PostgreSQL: `SELECT * FROM agent_case_messages WHERE phone_number = '+57...'`
-  - Desde el simulator: Inspector de BD en `/simulator` → tabla `agent_case_messages`
+- **Cómo acceder:** Directamente en PostgreSQL: `SELECT * FROM agent_case_messages WHERE phone_number = '+57...'`
 
 ### B. Tablas transaccionales (Datos del pedido)
 - `conversations`: nombre, teléfono, dirección, estado actual de la conversación

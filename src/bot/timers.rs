@@ -3,14 +3,12 @@ use std::{
     future::Future,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc,
     },
     time::Duration,
 };
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tokio::sync::Mutex;
 use tokio::time::{interval, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
@@ -36,7 +34,6 @@ use crate::{
     },
     logging::mask_phone,
     messages::client_messages,
-    simulator::{create_message, get_session_by_phone, NewSimulatorMessage},
     whatsapp::types::{Button, ButtonReplyPayload},
     AppState,
 };
@@ -49,10 +46,7 @@ pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const TIMER_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 static NEXT_TIMER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
-pub type TimerOverridesHandle = Arc<RwLock<SimulatorTimerOverrides>>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TimerRule {
     AdvisorResponse,
     ReceiptUpload,
@@ -60,22 +54,6 @@ pub enum TimerRule {
 }
 
 impl TimerRule {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::AdvisorResponse => "advisor_response",
-            Self::ReceiptUpload => "receipt_upload",
-            Self::ConversationReminder => "conversation_reminder",
-        }
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::AdvisorResponse => "Asesor sin responder",
-            Self::ReceiptUpload => "Espera de comprobante",
-            Self::ConversationReminder => "Recordatorio por inactividad",
-        }
-    }
-
     pub fn default_duration(&self) -> Duration {
         match self {
             Self::AdvisorResponse => ADVISOR_RESPONSE_TIMEOUT,
@@ -85,55 +63,10 @@ impl TimerRule {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SimulatorTimerOverrides {
-    pub advisor_response_seconds: Option<u64>,
-    pub receipt_upload_seconds: Option<u64>,
-    pub conversation_reminder_seconds: Option<u64>,
-}
-
-impl SimulatorTimerOverrides {
-    pub fn seconds_for(&self, rule: TimerRule) -> Option<u64> {
-        match rule {
-            TimerRule::AdvisorResponse => self.advisor_response_seconds,
-            TimerRule::ReceiptUpload => self.receipt_upload_seconds,
-            TimerRule::ConversationReminder => self.conversation_reminder_seconds,
-        }
-    }
-
-    fn duration_for(&self, rule: TimerRule) -> Option<Duration> {
-        self.seconds_for(rule).map(Duration::from_secs)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SimulatorTimerRuleInfo {
-    pub key: String,
-    pub label: String,
-    pub default_seconds: u64,
-    pub override_seconds: Option<u64>,
-    pub effective_seconds: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SimulatorTimerSnapshot {
-    pub timer_type: String,
-    pub rule_key: String,
-    pub label: String,
-    pub phase: String,
-    pub state: String,
-    pub started_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-    pub effective_seconds: i64,
-    pub remaining_seconds: i64,
-    pub expired: bool,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TimerSource {
     Runtime,
     Sweep,
-    BootReconcile,
 }
 
 impl TimerSource {
@@ -141,7 +74,6 @@ impl TimerSource {
         match self {
             Self::Runtime => "runtime",
             Self::Sweep => "sweep",
-            Self::BootReconcile => "boot_reconcile",
         }
     }
 }
@@ -155,100 +87,17 @@ pub fn new_timer_map() -> TimerMap {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
-pub fn new_timer_overrides() -> TimerOverridesHandle {
-    Arc::new(RwLock::new(SimulatorTimerOverrides::default()))
-}
-
-pub fn simulator_timer_rules(state: &AppState) -> Vec<SimulatorTimerRuleInfo> {
-    let overrides = state
-        .timer_overrides
-        .read()
-        .expect("timer overrides lock poisoned")
-        .clone();
-
-    [
-        TimerRule::AdvisorResponse,
-        TimerRule::ReceiptUpload,
-        TimerRule::ConversationReminder,
-    ]
-    .into_iter()
-    .map(|rule| SimulatorTimerRuleInfo {
-        key: rule.as_str().to_string(),
-        label: rule.label().to_string(),
-        default_seconds: rule.default_duration().as_secs(),
-        override_seconds: overrides.seconds_for(rule),
-        effective_seconds: effective_duration(state, rule).as_secs(),
-    })
-    .collect()
-}
-
-pub fn update_simulator_timer_overrides(
-    state: &AppState,
-    overrides: SimulatorTimerOverrides,
-) -> Vec<SimulatorTimerRuleInfo> {
-    *state
-        .timer_overrides
-        .write()
-        .expect("timer overrides lock poisoned") = overrides;
-    simulator_timer_rules(state)
-}
-
 pub fn effective_duration_for_start_timer(
-    state: &AppState,
     timer_type: &TimerType,
     requested_duration: Duration,
 ) -> Duration {
-    match timer_rule_for_start_timer(timer_type, requested_duration) {
-        Some(rule) => effective_duration(state, rule),
+    match timer_rule_for_start_timer(timer_type) {
+        Some(rule) => rule.default_duration(),
         None => requested_duration,
     }
 }
 
-pub fn simulator_timer_snapshots(
-    state: &AppState,
-    conversation: &crate::db::models::Conversation,
-    now: DateTime<Utc>,
-) -> Vec<SimulatorTimerSnapshot> {
-    derive_timer_snapshots(
-        state,
-        &conversation.state,
-        &conversation.state_data.0,
-        conversation.last_message_at,
-        now,
-    )
-}
-
-fn effective_duration(state: &AppState, rule: TimerRule) -> Duration {
-    if !state.config.mode.is_simulator() {
-        return rule.default_duration();
-    }
-
-    state
-        .timer_overrides
-        .read()
-        .expect("timer overrides lock poisoned")
-        .duration_for(rule)
-        .unwrap_or_else(|| rule.default_duration())
-}
-
-fn duration_from_overrides(
-    is_simulator: bool,
-    overrides: &SimulatorTimerOverrides,
-    rule: TimerRule,
-) -> Duration {
-    if is_simulator {
-        overrides
-            .duration_for(rule)
-            .unwrap_or_else(|| rule.default_duration())
-    } else {
-        rule.default_duration()
-    }
-}
-
-fn timer_rule_for_start_timer(
-    timer_type: &TimerType,
-    _requested_duration: Duration,
-) -> Option<TimerRule> {
+fn timer_rule_for_start_timer(timer_type: &TimerType) -> Option<TimerRule> {
     match timer_type {
         TimerType::ReceiptUpload => Some(TimerRule::ReceiptUpload),
         TimerType::ConversationAbandon => Some(TimerRule::ConversationReminder),
@@ -306,7 +155,7 @@ pub async fn restore_pending_timers(state: AppState) -> Result<(), sqlx::Error> 
     let conversations = list_active_timer_conversations(&state.pool, &recovery_states).await?;
 
     for conversation in conversations {
-        match timer_recovery(&state, &conversation, Utc::now()) {
+        match timer_recovery(&conversation, Utc::now()) {
             Some(TimerRecovery::Expired(timer_type)) => {
                 tracing::info!(
                     phone = %mask_phone(&conversation.phone_number),
@@ -363,7 +212,7 @@ async fn reconcile_boot_expired_timer(
     conversation: &crate::db::queries::ActiveTimerConversation,
     timer_type: TimerType,
 ) -> Result<(), sqlx::Error> {
-    match boot_expiration_action(&state, conversation, timer_type.clone(), Utc::now()) {
+    match boot_expiration_action(conversation, timer_type.clone()) {
         BootExpirationAction::UpdateReceiptExpired => {
             let mut state_data = conversation.state_data.0.clone();
             state_data.receipt_timer_expired = true;
@@ -374,16 +223,6 @@ async fn reconcile_boot_expired_timer(
                 &state_data,
             )
             .await?;
-            record_simulator_timer_notice(
-                &state,
-                &conversation.phone_number,
-                TimerType::ReceiptUpload,
-                TimerSource::BootReconcile,
-                &conversation.state,
-                "marked_expired_silently",
-                false,
-            )
-            .await;
         }
         BootExpirationAction::UpdateAdvisorExpiredAndClearSession => {
             let mut state_data = conversation.state_data.0.clone();
@@ -397,16 +236,6 @@ async fn reconcile_boot_expired_timer(
                 &state_data,
             )
             .await?;
-            record_simulator_timer_notice(
-                &state,
-                &conversation.phone_number,
-                TimerType::AdvisorResponse,
-                TimerSource::BootReconcile,
-                &conversation.state,
-                "marked_expired_silently",
-                false,
-            )
-            .await;
         }
         BootExpirationAction::ResetConversation {
             clear_advisor_session,
@@ -424,17 +253,6 @@ async fn reconcile_boot_expired_timer(
             if clear_advisor_session {
                 clear_bound_advisor_session(&state, &state.config.advisor_phone).await?;
             }
-
-            record_simulator_timer_notice(
-                &state,
-                &conversation.phone_number,
-                timer_type,
-                TimerSource::BootReconcile,
-                &conversation.state,
-                "reset_main_menu_silently",
-                true,
-            )
-            .await;
         }
         BootExpirationAction::MarkInactivityReminderSilently => {
             let mut state_data = conversation.state_data.0.clone();
@@ -446,16 +264,6 @@ async fn reconcile_boot_expired_timer(
                 &state_data,
             )
             .await?;
-            record_simulator_timer_notice(
-                &state,
-                &conversation.phone_number,
-                TimerType::ConversationAbandon,
-                TimerSource::BootReconcile,
-                &conversation.state,
-                "marked_reminder_silently",
-                false,
-            )
-            .await;
         }
         BootExpirationAction::None => {}
     }
@@ -469,7 +277,7 @@ pub async fn sweep_expired_timers(state: AppState) -> Result<(), sqlx::Error> {
 
     for conversation in conversations {
         if let Some(TimerRecovery::Expired(timer_type)) =
-            timer_recovery(&state, &conversation, Utc::now())
+            timer_recovery(&conversation, Utc::now())
         {
             tracing::info!(
                 phone = %mask_phone(&conversation.phone_number),
@@ -557,26 +365,6 @@ enum TimerRecovery {
 }
 
 fn timer_recovery(
-    state: &AppState,
-    conversation: &crate::db::queries::ActiveTimerConversation,
-    now: DateTime<Utc>,
-) -> Option<TimerRecovery> {
-    let overrides = state
-        .timer_overrides
-        .read()
-        .expect("timer overrides lock poisoned")
-        .clone();
-    timer_recovery_with_overrides(
-        state.config.mode.is_simulator(),
-        &overrides,
-        conversation,
-        now,
-    )
-}
-
-fn timer_recovery_with_overrides(
-    is_simulator: bool,
-    overrides: &SimulatorTimerOverrides,
     conversation: &crate::db::queries::ActiveTimerConversation,
     now: DateTime<Utc>,
 ) -> Option<TimerRecovery> {
@@ -589,17 +377,12 @@ fn timer_recovery_with_overrides(
         if state_data.conversation_abandon_reminder_sent {
             return None;
         }
-        let timeout = duration_from_overrides(is_simulator, overrides, TimerRule::ConversationReminder);
+        let timeout = TimerRule::ConversationReminder.default_duration();
 
         return timer_recovery_for(TimerType::ConversationAbandon, timeout, started_at, now);
     }
 
-    if let Some(timeout) = advisor_timeout_for_state_with_overrides(
-        is_simulator,
-        overrides,
-        conversation.state.as_str(),
-        state_data,
-    ) {
+    if let Some(timeout) = advisor_timeout_for_state(conversation.state.as_str()) {
         if state_data.advisor_timer_expired {
             return None;
         }
@@ -617,7 +400,7 @@ fn timer_recovery_with_overrides(
     match conversation.state.as_str() {
         "wait_receipt" if !state_data.receipt_timer_expired => timer_recovery_for(
             TimerType::ReceiptUpload,
-            duration_from_overrides(is_simulator, overrides, TimerRule::ReceiptUpload),
+            TimerRule::ReceiptUpload.default_duration(),
             state_data
                 .receipt_timer_started_at
                 .unwrap_or(conversation.last_message_at),
@@ -645,31 +428,8 @@ fn timer_recovery_for(
 }
 
 fn boot_expiration_action(
-    state: &AppState,
     conversation: &crate::db::queries::ActiveTimerConversation,
     timer_type: TimerType,
-    now: DateTime<Utc>,
-) -> BootExpirationAction {
-    let overrides = state
-        .timer_overrides
-        .read()
-        .expect("timer overrides lock poisoned")
-        .clone();
-    boot_expiration_action_with_overrides(
-        state.config.mode.is_simulator(),
-        &overrides,
-        conversation,
-        timer_type,
-        now,
-    )
-}
-
-fn boot_expiration_action_with_overrides(
-    _is_simulator: bool,
-    _overrides: &SimulatorTimerOverrides,
-    conversation: &crate::db::queries::ActiveTimerConversation,
-    timer_type: TimerType,
-    _now: DateTime<Utc>,
 ) -> BootExpirationAction {
     let state_data = &conversation.state_data.0;
 
@@ -803,16 +563,6 @@ async fn expire_receipt_timer_with_source(
         source = %source.as_str(),
         "receipt timer expired"
     );
-    record_simulator_timer_notice(
-        &state,
-        &phone_number,
-        TimerType::ReceiptUpload,
-        source,
-        &conversation.state,
-        "timeout_buttons",
-        false,
-    )
-    .await;
     let mut actions = vec![BotAction::SendText {
         to: phone_number.clone(),
         body: client_messages()
@@ -832,7 +582,7 @@ async fn expire_receipt_timer_with_source(
             buttons: receipt_timeout_buttons(),
         });
     }
-    dispatch_timer_actions(&state, &actions, Some(&phone_number)).await?;
+    dispatch_timer_actions(&state, &actions).await?;
 
     Ok(())
 }
@@ -883,16 +633,6 @@ async fn expire_advisor_timer_with_source(
                 source = %source.as_str(),
                 "advisor timer auto-transitioned immediate order"
             );
-            record_simulator_timer_notice(
-                &state,
-                &phone_number,
-                TimerType::AdvisorResponse,
-                source,
-                &conversation.state,
-                "auto_no_puedo",
-                false,
-            )
-            .await;
 
             bind_advisor_session_for_timer(
                 &state,
@@ -920,7 +660,6 @@ async fn expire_advisor_timer_with_source(
                             .clone(),
                     },
                 ],
-                Some(&phone_number),
             )
             .await?;
         }
@@ -936,16 +675,6 @@ async fn expire_advisor_timer_with_source(
                 source = %source.as_str(),
                 "advisor timer expired"
             );
-            record_simulator_timer_notice(
-                &state,
-                &phone_number,
-                TimerType::AdvisorResponse,
-                source,
-                &conversation.state,
-                "fallback_buttons",
-                false,
-            )
-            .await;
 
             match conversation.state.as_str() {
                 "wait_advisor_contact" => {
@@ -965,7 +694,7 @@ async fn expire_advisor_timer_with_source(
                             buttons: contact_timeout_buttons(),
                         }
                     };
-                    dispatch_timer_actions(&state, &[action], Some(&phone_number)).await?;
+                    dispatch_timer_actions(&state, &[action]).await?;
                 }
                 _ => {
                     let timeout_text = if conversation.state == "wait_advisor_mayor" {
@@ -989,7 +718,7 @@ async fn expire_advisor_timer_with_source(
                             buttons: advisor_timeout_buttons(),
                         });
                     }
-                    dispatch_timer_actions(&state, &actions, Some(&phone_number)).await?;
+                    dispatch_timer_actions(&state, &actions).await?;
                 }
             }
         }
@@ -1008,16 +737,6 @@ async fn expire_advisor_timer_with_source(
                 source = %source.as_str(),
                 "advisor stuck timer reset conversation"
             );
-            record_simulator_timer_notice(
-                &state,
-                &phone_number,
-                TimerType::AdvisorResponse,
-                source,
-                &conversation.state,
-                "hard_reset_main_menu",
-                true,
-            )
-            .await;
             dispatch_timer_actions(
                 &state,
                 &[BotAction::SendText {
@@ -1027,7 +746,6 @@ async fn expire_advisor_timer_with_source(
                         .advisor_stuck_timeout_text
                         .clone(),
                 }],
-                Some(&phone_number),
             )
             .await?;
         }
@@ -1065,16 +783,6 @@ async fn expire_relay_timer_with_source(
         source = %source.as_str(),
         "relay timer expired"
     );
-    record_simulator_timer_notice(
-        &state,
-        &phone_number,
-        TimerType::RelayInactivity,
-        source,
-        &conversation.state,
-        "reset_main_menu",
-        true,
-    )
-    .await;
     dispatch_timer_actions(
         &state,
         &[
@@ -1090,7 +798,6 @@ async fn expire_relay_timer_with_source(
                 ),
             },
         ],
-        Some(&phone_number),
     )
     .await?;
 
@@ -1156,17 +863,7 @@ async fn expire_conversation_abandon_with_source(
             source = %source.as_str(),
             "sending inactivity reminder"
         );
-        record_simulator_timer_notice(
-            &state,
-            &phone_number,
-            TimerType::ConversationAbandon,
-            source,
-            &conversation.state,
-            "reminder_sent",
-            false,
-        )
-        .await;
-        dispatch_timer_actions(&state, &actions, Some(&phone_number)).await?;
+        dispatch_timer_actions(&state, &actions).await?;
 
         state_data.conversation_abandon_started_at = Some(started_at);
         state_data.conversation_abandon_reminder_sent = true;
@@ -1236,108 +933,8 @@ fn advisor_timeout_kind(state: &str) -> Option<AdvisorTimeoutKind> {
     }
 }
 
-fn advisor_timeout_for_state_with_overrides(
-    is_simulator: bool,
-    overrides: &SimulatorTimerOverrides,
-    state: &str,
-    _state_data: &ConversationStateData,
-) -> Option<Duration> {
-    match advisor_timeout_kind(state) {
-        Some(_) => Some(duration_from_overrides(
-            is_simulator,
-            overrides,
-            TimerRule::AdvisorResponse,
-        )),
-        None => None,
-    }
-}
-
-fn derive_timer_snapshots(
-    state: &AppState,
-    conversation_state: &str,
-    state_data: &ConversationStateData,
-    last_message_at: DateTime<Utc>,
-    now: DateTime<Utc>,
-) -> Vec<SimulatorTimerSnapshot> {
-    let mut snapshots = Vec::new();
-
-    if customer_inactivity_state(conversation_state) {
-        if let Some(started_at) = state_data.conversation_abandon_started_at {
-            if !state_data.conversation_abandon_reminder_sent {
-                snapshots.push(build_timer_snapshot(
-                    state,
-                    TimerType::ConversationAbandon,
-                    TimerRule::ConversationReminder,
-                    "reminder",
-                    conversation_state,
-                    started_at,
-                    now,
-                ));
-            }
-        }
-    }
-
-    if !state_data.advisor_timer_expired {
-        if let Some(_kind) = advisor_timeout_kind(conversation_state) {
-            snapshots.push(build_timer_snapshot(
-                state,
-                TimerType::AdvisorResponse,
-                TimerRule::AdvisorResponse,
-                "advisor_response",
-                conversation_state,
-                state_data
-                    .advisor_timer_started_at
-                    .unwrap_or(last_message_at),
-                now,
-            ));
-        }
-    }
-
-    if conversation_state == "wait_receipt" && !state_data.receipt_timer_expired {
-        snapshots.push(build_timer_snapshot(
-            state,
-            TimerType::ReceiptUpload,
-            TimerRule::ReceiptUpload,
-            "receipt_upload",
-            conversation_state,
-            state_data
-                .receipt_timer_started_at
-                .unwrap_or(last_message_at),
-            now,
-        ));
-    }
-
-    snapshots
-}
-
-fn build_timer_snapshot(
-    state: &AppState,
-    timer_type: TimerType,
-    rule: TimerRule,
-    phase: &str,
-    conversation_state: &str,
-    started_at: DateTime<Utc>,
-    now: DateTime<Utc>,
-) -> SimulatorTimerSnapshot {
-    let duration = effective_duration(state, rule);
-    let elapsed = elapsed_since(started_at, now);
-    let remaining = duration
-        .checked_sub(elapsed)
-        .map(|value| value.as_secs() as i64)
-        .unwrap_or(0);
-
-    SimulatorTimerSnapshot {
-        timer_type: timer_type.as_str().to_string(),
-        rule_key: rule.as_str().to_string(),
-        label: rule.label().to_string(),
-        phase: phase.to_string(),
-        state: conversation_state.to_string(),
-        started_at,
-        expires_at: started_at + chrono::Duration::from_std(duration).unwrap_or_default(),
-        effective_seconds: duration.as_secs() as i64,
-        remaining_seconds: remaining,
-        expired: elapsed >= duration,
-    }
+fn advisor_timeout_for_state(state: &str) -> Option<Duration> {
+    advisor_timeout_kind(state).map(|_| TimerRule::AdvisorResponse.default_duration())
 }
 
 fn customer_inactivity_state(state: &str) -> bool {
@@ -1371,73 +968,6 @@ fn customer_inactivity_state(state: &str) -> bool {
             | "contact_advisor_phone"
             | "leave_message"
     )
-}
-
-async fn record_simulator_timer_notice(
-    state: &AppState,
-    phone_number: &str,
-    timer_type: TimerType,
-    source: TimerSource,
-    conversation_state: &str,
-    outcome: &str,
-    reset_to_main_menu: bool,
-) {
-    if !state.transport.is_simulator() {
-        return;
-    }
-
-    let session_id = match get_session_by_phone(&state.pool, phone_number).await {
-        Ok(Some(session)) => Some(session.id),
-        Ok(None) => None,
-        Err(err) => {
-            tracing::warn!(
-                phone = %mask_phone(phone_number),
-                error = %err,
-                "failed to load simulator session for timer notice"
-            );
-            None
-        }
-    };
-
-    let body = format!(
-        "Timer {} ({}) en {} -> {}{}",
-        timer_type.as_str(),
-        source.as_str(),
-        conversation_state,
-        outcome,
-        if reset_to_main_menu {
-            " -> main_menu"
-        } else {
-            ""
-        }
-    );
-
-    if let Err(err) = create_message(
-        &state.pool,
-        NewSimulatorMessage {
-            session_id,
-            actor: "system".to_string(),
-            audience: "system".to_string(),
-            message_kind: "state_notice".to_string(),
-            body: Some(body),
-            payload: json!({
-                "phone_number": phone_number,
-                "timer_type": timer_type.as_str(),
-                "source": source.as_str(),
-                "state": conversation_state,
-                "outcome": outcome,
-                "reset_to_main_menu": reset_to_main_menu,
-            }),
-        },
-    )
-    .await
-    {
-        tracing::warn!(
-            phone = %mask_phone(phone_number),
-            error = %err,
-            "failed to record simulator timer notice"
-        );
-    }
 }
 
 pub fn rehydrate_context_for_timer(
@@ -1561,8 +1091,8 @@ mod tests {
     use sqlx::types::Json;
 
     use super::{
-        boot_expiration_action_with_overrides, timer_recovery_with_overrides, BootExpirationAction,
-        SimulatorTimerOverrides, TimerRecovery, ADVISOR_RESPONSE_TIMEOUT,
+        boot_expiration_action, timer_recovery, BootExpirationAction, TimerRecovery,
+        ADVISOR_RESPONSE_TIMEOUT,
     };
     use crate::{
         bot::state_machine::TimerType,
@@ -1586,10 +1116,6 @@ mod tests {
         }
     }
 
-    fn production_overrides() -> SimulatorTimerOverrides {
-        SimulatorTimerOverrides::default()
-    }
-
     #[test]
     fn timer_recovery_uses_last_message_when_start_timestamp_is_missing() {
         let now = chrono::Utc::now();
@@ -1600,7 +1126,7 @@ mod tests {
         );
 
         let recovery =
-            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+            timer_recovery(&conversation, now);
 
         assert_eq!(
             recovery,
@@ -1626,7 +1152,7 @@ mod tests {
         );
 
         let recovery =
-            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+            timer_recovery(&conversation, now);
 
         assert!(recovery.is_none());
     }
@@ -1644,7 +1170,7 @@ mod tests {
         );
 
         let recovery =
-            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+            timer_recovery(&conversation, now);
 
         assert_eq!(
             recovery,
@@ -1658,12 +1184,7 @@ mod tests {
         let conversation =
             active_timer_conversation("main_menu", ConversationStateData::default(), now);
 
-        let recovery = timer_recovery_with_overrides(
-            false,
-            &production_overrides(),
-            &conversation,
-            now + ChronoDuration::minutes(40),
-        );
+        let recovery = timer_recovery(&conversation, now + ChronoDuration::minutes(40));
 
         assert!(recovery.is_none());
     }
@@ -1678,7 +1199,7 @@ mod tests {
         );
 
         let recovery =
-            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+            timer_recovery(&conversation, now);
 
         assert!(recovery.is_none());
     }
@@ -1696,7 +1217,7 @@ mod tests {
         );
 
         let recovery =
-            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+            timer_recovery(&conversation, now);
 
         assert_eq!(
             recovery,
@@ -1722,7 +1243,7 @@ mod tests {
         );
 
         let recovery =
-            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+            timer_recovery(&conversation, now);
 
         assert_eq!(
             recovery,
@@ -1748,7 +1269,7 @@ mod tests {
         );
 
         let recovery =
-            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+            timer_recovery(&conversation, now);
 
         assert_eq!(
             recovery,
@@ -1773,7 +1294,7 @@ mod tests {
         );
 
         let recovery =
-            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+            timer_recovery(&conversation, now);
 
         assert_eq!(
             recovery,
@@ -1795,7 +1316,7 @@ mod tests {
         );
 
         let recovery =
-            timer_recovery_with_overrides(false, &production_overrides(), &conversation, now);
+            timer_recovery(&conversation, now);
 
         assert_eq!(recovery, None);
     }
@@ -1806,13 +1327,7 @@ mod tests {
         let conversation =
             active_timer_conversation("wait_receipt", ConversationStateData::default(), now);
 
-        let action = boot_expiration_action_with_overrides(
-            false,
-            &production_overrides(),
-            &conversation,
-            TimerType::ReceiptUpload,
-            now,
-        );
+        let action = boot_expiration_action(&conversation, TimerType::ReceiptUpload);
 
         assert_eq!(action, BootExpirationAction::UpdateReceiptExpired);
     }
@@ -1826,13 +1341,7 @@ mod tests {
             now,
         );
 
-        let action = boot_expiration_action_with_overrides(
-            false,
-            &production_overrides(),
-            &conversation,
-            TimerType::AdvisorResponse,
-            now,
-        );
+        let action = boot_expiration_action(&conversation, TimerType::AdvisorResponse);
 
         assert_eq!(
             action,
@@ -1852,13 +1361,7 @@ mod tests {
             now,
         );
 
-        let action = boot_expiration_action_with_overrides(
-            false,
-            &production_overrides(),
-            &conversation,
-            TimerType::AdvisorResponse,
-            now,
-        );
+        let action = boot_expiration_action(&conversation, TimerType::AdvisorResponse);
 
         assert_eq!(
             action,
@@ -1875,13 +1378,7 @@ mod tests {
         let conversation =
             active_timer_conversation("relay_mode", ConversationStateData::default(), now);
 
-        let action = boot_expiration_action_with_overrides(
-            false,
-            &production_overrides(),
-            &conversation,
-            TimerType::RelayInactivity,
-            now,
-        );
+        let action = boot_expiration_action(&conversation, TimerType::RelayInactivity);
 
         assert_eq!(
             action,
@@ -1905,13 +1402,7 @@ mod tests {
             now,
         );
 
-        let action = boot_expiration_action_with_overrides(
-            false,
-            &production_overrides(),
-            &conversation,
-            TimerType::ConversationAbandon,
-            now,
-        );
+        let action = boot_expiration_action(&conversation, TimerType::ConversationAbandon);
 
         assert_eq!(action, BootExpirationAction::None);
     }
@@ -1929,38 +1420,8 @@ mod tests {
             now,
         );
 
-        let action = boot_expiration_action_with_overrides(
-            false,
-            &production_overrides(),
-            &conversation,
-            TimerType::ConversationAbandon,
-            now,
-        );
+        let action = boot_expiration_action(&conversation, TimerType::ConversationAbandon);
 
         assert_eq!(action, BootExpirationAction::MarkInactivityReminderSilently);
-    }
-
-    #[test]
-    fn timer_recovery_uses_simulator_override_for_receipt_timeout() {
-        let now = chrono::Utc::now();
-        let conversation = active_timer_conversation(
-            "wait_receipt",
-            ConversationStateData {
-                receipt_timer_started_at: Some(now - ChronoDuration::seconds(31)),
-                ..Default::default()
-            },
-            now,
-        );
-        let overrides = SimulatorTimerOverrides {
-            receipt_upload_seconds: Some(30),
-            ..Default::default()
-        };
-
-        let recovery = timer_recovery_with_overrides(true, &overrides, &conversation, now);
-
-        assert_eq!(
-            recovery,
-            Some(TimerRecovery::Expired(TimerType::ReceiptUpload))
-        );
     }
 }

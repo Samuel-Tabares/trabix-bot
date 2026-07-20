@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-07-19
+
+### Removed
+- **The local simulator was removed entirely** (runtime, module, UI, launch scripts, assets, and
+  docs). The bot is now production-only: there is no `BOT_MODE` split — the single runtime is the
+  Meta Cloud API webhook path. Deleted `src/simulator/`, `src/routes/simulator.rs`,
+  `src/transport.rs`, `assets/`, `scripts/run_simulator.*`. `OutboundTransport` (an enum whose only
+  purpose was to switch Meta vs. simulator recording) is gone; `AppState.transport` is now the
+  `WhatsAppClient` directly. `Config` lost `BotMode`/`SimulatorConfig`/`mode` and its
+  `ProductionConfig` was flattened into `Config`. The simulator-only timer machinery in
+  `bot/timers.rs` (`SimulatorTimerOverrides`, `TimerOverridesHandle`, `simulator_timer_rules`,
+  `simulator_timer_snapshots`, `record_simulator_timer_notice`, and the `is_simulator` threading)
+  was removed; production always uses the default timer durations, which is exactly what it did
+  before. Validation is now `cargo test` + the deterministic-engine fallback + live testing.
+  Migration `005_create_simulator_tables.sql` stays (append-only history); its tables are now
+  orphaned but harmless.
+- Removed the `FORCE_BOGOTA_NOW` env override and the simulator in-memory clock override in
+  `bot/states/scheduling.rs`. `now_bogota()` is now always `Utc::now()` in `America/Bogota`.
+- Removed the dead `calculate_order_with_delivery()` super-tool (and its `OrderSummary` struct)
+  from `src/ai/tools.rs` — it was never wired into the agent tool dispatch.
+
 ### Added
 - Customer totals and referral analytics now update when an order actually reaches `confirmed` (cash on delivery selected, or transfer receipt received), in both the AI-agent flow and the deterministic flow, via shared `checkout::order_confirmation_analytics_action()`. New `BotAction::UpdateCustomerAndAnalytics` executed in `engine.rs`. Integration tests in `tests/customer_analytics.rs` cover cumulative updates for both tables; unit tests in `checkout.rs` cover both confirmation paths.
 - New `crm-web/` Next.js dashboard (separate app, shares the bot's PostgreSQL database via direct `pg` connection, no Supabase involved): customer search/sort, customer detail view with conversation transcript (parsed from `agent_case_messages`), order history, and referral-code usage per customer.
@@ -11,8 +32,8 @@ All notable changes to this project will be documented in this file.
 - Permanent conversation memory: agent conversation history now persists indefinitely by customer instead of clearing after checkout, enabling full CRM view of all previous interactions.
 - Persistent customer CRM data via new `customers` table (migration 008): tracks unique customer by `phone_number_meta` from Meta, with optional manual phone/name, username, last delivery address, and cumulative totals (spend and units). Supports cross-conversation history without limits.
 - Referral code analytics via new `referral_code_analytics` table (migration 009): tracks usage count, total discounts generated, ambassador commissions, units purchased, and gross sales per code for business intelligence and commission reporting.
-- Claude Haiku 4.5 AI agent mode (BOT_ENGINE=agent) for customer conversations: orchestrates menu selection, data collection (name, phone, address), order assembly, delivery-zone detection, and checkout with tool-calling. Agent handles customer/advisor message routing, confirms availability and payment method, and bridges to advisor. Deterministic pricing, delivery zones, referrals, and validation remain unchanged. Conversation locks prevent race conditions on concurrent messages from customer and advisor. Conversation memory persists agent history between turns in `agent_case_messages` table. New migration: `007_create_agent_case_messages.sql`. Configuration: `BOT_ENGINE` env var selects engine; agent mode works in both `simulator` and `production` modes (the initial simulator-only gate was removed in this release). New files: `src/ai/{client.rs,agent.rs,tools.rs,memory.rs}`, `src/bot/delivery_zone.rs`.
-- Three deterministic calculation tools for agent (FASE 2): `get_delivery_cost()` resolves delivery zones (Armenia norte/centro/sur, nearby towns, or manual unknown), `apply_referral_discount()` applies referral codes with boost detection, and `calculate_order_with_delivery()` computes complete order summary (items + delivery + referral discount + ambassador commission) in one step. All tools delegate to existing pricing and delivery-zone logic; no rule changes.
+- Claude Haiku 4.5 AI agent mode (BOT_ENGINE=agent) for customer conversations: orchestrates menu selection, data collection (name, phone, address), order assembly, delivery-zone detection, and checkout with tool-calling. Agent handles customer/advisor message routing, confirms availability and payment method, and bridges to advisor. Deterministic pricing, delivery zones, referrals, and validation remain unchanged. Conversation locks prevent race conditions on concurrent messages from customer and advisor. Conversation memory persists agent history between turns in `agent_case_messages` table. New migration: `007_create_agent_case_messages.sql`. Configuration: `BOT_ENGINE` env var selects engine (works in the production runtime). New files: `src/ai/{client.rs,agent.rs,tools.rs,memory.rs}`, `src/bot/delivery_zone.rs`.
+- Deterministic calculation tools for agent (FASE 2): `get_delivery_cost()` resolves delivery zones (Armenia norte/centro/sur, nearby towns, or manual unknown) and `apply_referral_discount()` applies referral codes with boost detection. Both delegate to existing pricing and delivery-zone logic; no rule changes. (A third `calculate_order_with_delivery()` super-tool was added here but never wired into dispatch, and was removed in 1.8.0.)
 
 ### Added
 - Safe degradation when the agent LLM call fails (timeout, 5xx, exhausted credit): the customer

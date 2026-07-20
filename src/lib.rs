@@ -7,8 +7,6 @@ pub mod logging;
 pub mod messages;
 pub mod referrals;
 pub mod routes;
-pub mod simulator;
-pub mod transport;
 pub mod whatsapp;
 
 use std::{
@@ -75,9 +73,8 @@ pub async fn is_duplicate_message(cache: &WebhookDedupCache, message_id: &str) -
 pub struct AppState {
     pub config: config::Config,
     pub pool: sqlx::PgPool,
-    pub transport: transport::OutboundTransport,
+    pub transport: whatsapp::client::WhatsAppClient,
     pub timers: bot::timers::TimerMap,
-    pub timer_overrides: bot::timers::TimerOverridesHandle,
     pub conversation_locks: ConversationLocks,
     pub llm_budget: ai::budget::LlmBudgetHandle,
     pub webhook_dedup: WebhookDedupCache,

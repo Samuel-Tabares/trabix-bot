@@ -394,16 +394,6 @@ pub struct DeliveryCostInfo {
 }
 
 #[derive(Debug, Clone)]
-pub struct OrderSummary {
-    pub subtotal: i32,
-    pub delivery_cost: i32,
-    pub referral_discount: i32,
-    pub ambassador_commission: i32,
-    pub total_final: i32,
-    pub breakdown: String,
-}
-
-#[derive(Debug, Clone)]
 pub struct ReferralDiscountBreakdown {
     pub code: String,
     pub is_valid: bool,
@@ -483,69 +473,6 @@ pub fn apply_referral_discount(
     })
 }
 
-/// Calcula pedido completo: items + domicilio + referral (si aplica).
-/// Este es el "super-tool" que orquesta todo en un solo paso.
-pub fn calculate_order_with_delivery(
-    items: &[OrderItemData],
-    delivery_zone: Option<&str>,
-    delivery_town: Option<&str>,
-    delivery_manual_cost: Option<i32>,
-    referral_code: Option<&str>,
-) -> Result<OrderSummary, String> {
-    // Calcula base del pedido
-    let pedido = pricing::calcular_pedido(items);
-    let subtotal = pedido.total_estimado as i32;
-
-    // Resuelve domicilio
-    let delivery_cost = if let Some(manual_cost) = delivery_manual_cost {
-        manual_cost
-    } else if let Some(zone) = delivery_zone {
-        match get_delivery_cost(zone, items.iter().map(|i| i.quantity).sum()) {
-            Ok(info) => info.cost,
-            Err(_) => return Err(format!("No se pudo determinar costo de domicilio para: {}", zone)),
-        }
-    } else if let Some(town) = delivery_town {
-        match get_delivery_cost(town, items.iter().map(|i| i.quantity).sum()) {
-            Ok(info) => info.cost,
-            Err(_) => return Err(format!("No se pudo determinar costo de domicilio para: {}", town)),
-        }
-    } else {
-        0
-    };
-
-    let subtotal_with_delivery = subtotal + delivery_cost;
-
-    // Aplica descuento referral si lo hay
-    let (referral_discount, ambassador_commission, total_final) =
-        if let Some(code) = referral_code {
-            if let Some(discount_info) = apply_referral_discount(&pedido, code) {
-                (
-                    discount_info.discount_to_client,
-                    discount_info.ambassador_commission,
-                    discount_info.subtotal_discounted + delivery_cost,
-                )
-            } else {
-                (0, 0, subtotal_with_delivery)
-            }
-        } else {
-            (0, 0, subtotal_with_delivery)
-        };
-
-    let breakdown = format!(
-        "Subtotal: ${}\nDomicilio: ${}\nDescuento: ${}\nComisión asesor: ${}\nTotal final: ${}",
-        subtotal, delivery_cost, referral_discount, ambassador_commission, total_final
-    );
-
-    Ok(OrderSummary {
-        subtotal,
-        delivery_cost,
-        referral_discount,
-        ambassador_commission,
-        total_final,
-        breakdown,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,8 +498,7 @@ mod tests {
 
     #[test]
     fn check_business_hours_reports_hours_text() {
-        // No FORCE_BOGOTA_NOW mutation here: scheduling.rs's own tests race on
-        // that global env var without shared locking, so this only checks the
+        // The clock is always the real Bogotá time now, so this only checks the
         // wrapper's shape, not a specific is_open value.
         let status = check_business_hours();
 
@@ -692,45 +618,6 @@ mod tests {
         // Por ahora solo verifica que la función retorna None para código inválido
         let result = apply_referral_discount(&pedido, "codigo-invalido");
         assert!(result.is_none());
-    }
-
-    #[test]
-    fn calculate_order_with_delivery_armenía_zona_north() {
-        let items = [OrderItemData {
-            flavor: "Maracumango".to_string(),
-            has_liquor: false,
-            quantity: 20,
-        }];
-
-        let result = calculate_order_with_delivery(&items, Some("norte"), None, None, None).unwrap();
-        assert_eq!(result.subtotal, 96_000);
-        assert_eq!(result.delivery_cost, 6_000);
-        assert_eq!(result.total_final, 102_000);
-    }
-
-    #[test]
-    fn calculate_order_with_delivery_manual_cost() {
-        let items = [OrderItemData {
-            flavor: "Blueberry".to_string(),
-            has_liquor: true,
-            quantity: 20,
-        }];
-
-        let result = calculate_order_with_delivery(&items, None, None, Some(15_000), None).unwrap();
-        assert_eq!(result.delivery_cost, 15_000);
-        assert!(result.breakdown.contains("15000"));
-    }
-
-    #[test]
-    fn calculate_order_with_delivery_unknown_zone_fails() {
-        let items = [OrderItemData {
-            flavor: "Maracumango".to_string(),
-            has_liquor: false,
-            quantity: 20,
-        }];
-
-        let result = calculate_order_with_delivery(&items, Some("Bogotá"), None, None, None);
-        assert!(result.is_err());
     }
 
     #[test]

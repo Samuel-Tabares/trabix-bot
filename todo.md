@@ -29,41 +29,42 @@ fb0a421..27aafda), Railway auto-deploys from master. Simulator validation was sk
 straight to prod per Samuel's call (and the simulator is being removed anyway, see below).
 
 ================================================================================
-NEXT SESSION — DEAD-CODE PURGE + REMOVE THE SIMULATOR (Samuel's directive, 2026-07-20)
+DONE (2026-07-19) — SIMULATOR REMOVED + DEAD-CODE PURGE (v1.8.0, not yet pushed)
 ================================================================================
 
-GOAL: the only code that stays is code that has a real function in the system AND actually runs
-in production. Everything else goes. First fully understand how the system works end to end, then
-cut aggressively so the codebase is smaller and easier to optimize.
+Executed Samuel's directive. Mapped the system end to end first, then cut. `cargo test` green
+throughout (180 passed, 0 failed, 4 ignored; 0 build warnings). Cargo.toml bumped 1.7.2 -> 1.8.0.
 
-Scope (to be executed next session, not done yet):
+What was removed:
+1. THE SIMULATOR, entirely. Deleted `src/simulator/`, `src/routes/simulator.rs`, `src/transport.rs`,
+   `assets/`, `scripts/run_simulator.*`. Dropped `BOT_MODE`/`BotMode`/`SimulatorConfig`/`mode`; the
+   bot is production-only. `OutboundTransport` enum deleted — `AppState.transport` is now the
+   `WhatsAppClient` directly. `ProductionConfig` flattened into `Config`. Removed the simulator-only
+   timer machinery in `bot/timers.rs` (`SimulatorTimerOverrides`, `TimerOverridesHandle`,
+   `simulator_timer_rules`, `simulator_timer_snapshots`, `record_simulator_timer_notice`, all the
+   `is_simulator` threading). KEY INVARIANT: production always used `default_duration()` already
+   (overrides only applied under `is_simulator`), so timing is unchanged. Removed the simulator
+   `session_phone`/`file_path` plumbing from the engine send path (kept `session_phone` where it
+   doubles as advisor-reply-thread target — that's real production logic). `agent_degradation.rs`
+   rewritten to assert the DB-observable invariant (no error propagation + state unchanged).
+2. `FORCE_BOGOTA_NOW` + the simulator clock override — `now_bogota()` is now always `Utc::now()`.
+3. Dead `calculate_order_with_delivery` super-tool + `OrderSummary` (never wired into dispatch).
+4. Dead `TimerSource::BootReconcile` variant (only fed the removed simulator notices).
 
-1. REMOVE THE SIMULATOR ENTIRELY. We don't need it. Delete everything related to it:
-   - `BOT_MODE=simulator` runtime and the whole mode split (bot becomes production-only).
-   - `src/simulator/` (local sessions/transcripts/media persistence), the simulator route mount,
-     and the simulator branch of outbound transport (recording instead of sending).
-   - `scripts/run_simulator.sh`, the simulator UI/assets, simulator timer-override plumbing.
-   - All simulator references in docs (CLAUDE.md, current_runtime_reference.md, runbook.md,
-     README/testing notes) and any simulator-only config.
-   - After removal there is no local-chat harness — validation is via `cargo test` + the
-     deterministic-engine fallback + live testing. Accept that tradeoff (Samuel confirmed).
+Docs updated: CLAUDE.md, README.md, .env.example, .gitignore, general_info/current_runtime_reference.md,
+general_info/complex_diagram.md, AI_AGENT_FAQ.md, CHANGELOG.md, Dockerfile (dropped `COPY assets/`).
 
-2. REMOVE THE KNOWN DEAD HELPER: the unused `calculate_order_with_delivery` super-tool in
-   `src/ai/tools.rs` (never wired into dispatch).
+Left in place on purpose:
+- Migration `005_create_simulator_tables.sql` (append-only history; its tables are now orphaned but
+  harmless — Samuel chose NOT to add a drop migration).
+- The deterministic ENGINE (the agent's instant rollback — must keep working).
+- `#![allow(dead_code)]` on `src/db/{models,queries}.rs` and `whatsapp/buttons.rs`: pre-existing,
+  covers `FromRow` structs whose fields are used by SQLx deserialization, not simulator-related.
+  Risky to prune without per-field analysis — deferred as a possible future sweep.
+- MASTER_PROMPT.md / MASTER_PROMPT_PRODUCCION.md: historical rollout-planning docs (reference an
+  already-removed gate); left as point-in-time records.
 
-3. FULL DEAD-CODE SWEEP: hunt down and delete every unused path — functions, branches, config
-   fields, messages, states, tools, DB columns/queries never read, `#[allow(dead_code)]` cover-ups,
-   leftover FASE-x scaffolding. Anything not reachable/executed in the production agent + advisor
-   flow. Understand each before deleting (don't remove something that only looks unused but is
-   reached via a timer, webhook, or restore path).
-
-4. Keep `cargo test` green throughout; document what was removed and why. Consider a version bump
-   + release/tag once the codebase is trimmed.
-
-CAUTION for whoever does this: the deterministic engine is the instant rollback for the agent, so
-do NOT delete the deterministic flow even though agent mode is live — it must keep working. Only
-the SIMULATOR goes, not the deterministic ENGINE. Verify each candidate is truly unreachable
-(timers, boot restore, sweep, webhook verify, advisor routing) before cutting.
+NOT pushed/deployed yet — pending Samuel's decision on when to ship (and whether to tag v1.8.0).
 
 Done:
 1. ✅ Pushed to GitHub
