@@ -46,9 +46,13 @@ Two engines selected via `BOT_ENGINE`:
   in `codes`. Restart after editing.
 - `migrations/` — PostgreSQL schema, append-only (see below).
 - `tests/` — integration tests plus `live_whatsapp.rs` (real Meta smoke test, `--ignored`).
-- `crm-web/` — read-only Next.js viewer (own `package.json`, not compiled into the Rust binary)
-  reading the same PostgreSQL DB directly via `pg`: customers, orders, referral usage, agent
-  transcripts. Run with `cd crm-web && npm run dev`. See root README's "CRM web" section.
+- `crm-web/` — read-only Next.js conversation console (own `package.json`, not compiled into the
+  Rust binary) reading the same PostgreSQL DB directly via `pg`. Telegram-style two-pane UI over
+  the `message_events` trace: each customer is a chat; bubbles are actor-coded (client/bot/advisor)
+  with lane chips separating the customer↔bot and internal bot↔advisor lanes. Single-password gate
+  (`CRM_PASSWORD`). Deployed 24/7 as the `crm` Railway service (manual deploy:
+  `railway up --service crm`, `rootDirectory=crm-web`, `PORT=3000`) at
+  `https://crm-production-618e.up.railway.app`. Ops notes in `general_info/runbook.md`.
 
 ## Build / run / test
 

@@ -25,8 +25,11 @@ runtime en `current_runtime_reference.md`.
 
 ## Leer un caso atascado
 
-- Transcripción completa del agente: tabla `agent_case_messages` (una fila por teléfono, JSONB
-  con todos los turnos) o el dashboard local `crm-web/`.
+- Conversación completa (ambos carriles, cliente↔bot y bot↔asesor, cualquier motor): consola
+  desplegada `https://crm-production-618e.up.railway.app` (password = variable `CRM_PASSWORD`
+  del servicio `crm`) o directamente la tabla `message_events` (solo captura desde 2026-07-22).
+- Memoria cruda del agente LLM: tabla `agent_case_messages` (una fila por teléfono, JSONB con
+  todos los turnos, incluye tool calls).
 - Estado actual: tabla `conversations` → columnas `state` y `state_data` (incluye
   `current_order_id`, timers, costo de domicilio, método de pago).
 - Pedido: tablas `orders` / `order_items`. Estados relevantes: `pending_advisor` (esperando
@@ -44,6 +47,28 @@ cargo run --bin upload_media -- /ruta/al/menu.jpg
 ```
 
 Copiar el `media_id` impreso a la variable `MENU_IMAGE_MEDIA_ID` en Railway y redeploy.
+
+## Ventana de 24h de WhatsApp (ping diario del asesor)
+
+Si nadie escribe al número del asesor durante 24h, Meta empieza a rechazar los mensajes del bot
+hacia el asesor (los trata como mensaje de plantilla no aprobado). Prevención: el asesor envía
+`✅` (solo el emoji) al bot **una vez al día**, antes de cumplirse las 24h. El bot lo ignora en
+silencio (no responde, no toca ningún caso) pero para Meta cuenta como mensaje entrante y renueva
+la ventana. Si la ventana ya venció (el asesor dejó de recibir avisos), basta con que envíe
+cualquier mensaje al bot para reabrirla.
+
+## Consola de conversaciones (`crm-web/` en Railway)
+
+- URL: `https://crm-production-618e.up.railway.app` — servicio `crm` en el mismo proyecto
+  Railway del bot, lee la misma Postgres por red interna (`DATABASE_URL = ${{Postgres.DATABASE_URL}}`).
+- Acceso: un solo operador, password en la variable `CRM_PASSWORD` del servicio `crm` (cambiarla
+  ahí invalida las sesiones activas, porque la cookie es un hash del password).
+- Deploy: **manual**, no se autodespliega con push. Desde la raíz del repo:
+  `railway up --service crm --detach` (el servicio tiene `rootDirectory = crm-web`; requiere
+  `PORT=3000` ya configurado — el dominio apunta a ese puerto).
+- Si sale 502: revisar que `PORT=3000` siga en las variables del servicio.
+- La consola solo muestra `message_events` (captura desde 2026-07-22); si la tabla aún no
+  existiera, muestra estado vacío sin romper.
 
 ## Control de gasto LLM
 

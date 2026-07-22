@@ -63,11 +63,20 @@ cargo run --bin upload_media -- /path/to/menu.jpg
 
 Prints the Meta `media_id` to set as `MENU_IMAGE_MEDIA_ID`.
 
-## CRM web (`crm-web/`)
+## Conversation console (`crm-web/`)
 
-Read-only Next.js viewer into the bot's live PostgreSQL data: customers, order history, referral
-usage, and raw agent-engine transcripts. Useful for watching conversations in real time during
-testing/canary.
+Read-only Next.js console over the bot's `message_events` trace, styled like a messaging app:
+the left rail lists each customer as a chat (search, last message, recency); the right pane
+replays the full thread with actor-coded bubbles (client / bot / advisor) and lane chips that
+separate the customer↔bot conversation from the internal bot↔advisor orchestration. Polls the DB
+for near-live updates. Gated by a single shared password (`CRM_PASSWORD`).
+
+**Production:** deployed 24/7 as the `crm` service in the bot's Railway project, reading the same
+Postgres over the private network — `https://crm-production-618e.up.railway.app`. Deploys are
+manual (`railway up --service crm --detach` from the repo root; the service is configured with
+`rootDirectory=crm-web` and `PORT=3000`). Ops details in `general_info/runbook.md`.
+
+**Local dev:**
 
 ```bash
 cd crm-web
@@ -75,6 +84,6 @@ npm install   # only if node_modules isn't already there
 npm run dev
 ```
 
-Open `http://localhost:3000`. It reads `DATABASE_URL` from `crm-web/.env.local` — point it at the
-same Postgres instance the bot is using (local or Railway) to see real data. No auth; keep it
-local/dev-only.
+Open `http://localhost:3000`. Set `DATABASE_URL` and `CRM_PASSWORD` in `crm-web/.env.local`
+(see `crm-web/.env.example`) — point `DATABASE_URL` at the bot's Postgres (Railway public URL or
+local) to see real data.

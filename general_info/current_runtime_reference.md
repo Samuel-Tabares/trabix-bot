@@ -8,8 +8,8 @@ Su objetivo es describir el funcionamiento real y actual del bot en produccion, 
 Este archivo debe mantenerse alineado con:
 
 - `CLAUDE.md`
-- `general_info/complex_diagram.mermaid`
-- `general_info/simple_diagram.mermaid`
+- `general_info/complex_diagram.md`
+- `general_info/simple_diagram.md`
 - la implementacion vigente en `src/`
 - `LICENSE`
 
@@ -165,6 +165,12 @@ Flujo base:
 4. Si el payload no trae mensajes entrantes, el bot solo registra el evento y no ejecuta flujo conversacional.
 5. Si el `from` coincide con `ADVISOR_PHONE`, el mensaje entra siempre al flujo de asesor.
 6. Cualquier otro numero entra al flujo de cliente.
+
+Excepcion keepalive: si el asesor envia exactamente `✅` (solo el emoji, espacios ignorados),
+el bot lo ignora en silencio — sin respuesta, sin ruteo, sin escritura en BD
+(`is_window_keepalive_ping` en `src/engine.rs`). Es el ping diario del asesor para mantener
+abierta la ventana de servicio de 24h de WhatsApp: si nadie escribe al numero del asesor en 24h,
+Meta trata los mensajes salientes hacia el como plantilla/publicidad y los rechaza.
 
 Comportamiento actual relevante:
 
@@ -687,6 +693,21 @@ Cada item persistido guarda:
 - `quantity`
 - `unit_price`
 - `subtotal`
+
+### Tabla `message_events` (migracion 010)
+
+Traza append-only de cada mensaje que pasa por el bot, para que `crm-web/` pueda reproducir la
+conversacion completa. Campos: `case_phone` (el cliente del caso — los mensajes con el asesor
+tambien se agrupan bajo el telefono del cliente), `channel` (`client` = carril cliente↔bot,
+`advisor` = carril interno bot↔asesor), `actor` (`client` / `bot` / `advisor`), `content_type`
+(`text`, `buttons`, `list`, `image`, `button_reply`, `list_reply`), `body`, `payload` (JSONB con
+botones/listas/media_id), `wa_message_id`, `created_at`.
+
+Se escribe best-effort en las costuras compartidas (`execute_actions`, `send_timer_actions`,
+entradas de cliente y asesor, saludo del agente, degradacion por falla del LLM): un fallo de
+logging solo genera warning y nunca bloquea la entrega. Aplica a ambos motores. El ping `✅` del
+asesor no se registra. La tabla solo captura hacia adelante (no hay backfill de conversaciones
+previas a la migracion).
 
 ## Configuracion Y Operacion
 

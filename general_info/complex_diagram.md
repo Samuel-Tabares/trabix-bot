@@ -11,6 +11,9 @@
 %% Runtime observability logs masked phone markers, short content previews, state transitions,
 %% outbound action summaries, and timer restore/expiry paths while keeping status-only webhooks out of INFO.
 %% Narrative runtime and validation reference is consolidated in general_info/current_runtime_reference.md.
+%% Post-1.8.0 (2026-07-22): advisor bare-✅ keepalive is silently ignored before routing
+%% (is_window_keepalive_ping), and every routed inbound/outbound message is traced best-effort
+%% into the append-only message_events table (migration 010) for the crm-web console.
 graph TD
 
     WAClient["👤 CLIENTE WHATSAPP"] --> Meta["📡 META CLOUD API"]
