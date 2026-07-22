@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Conversation trace for the CRM: new append-only `message_events` table (migration 010) logs every
+  message that flows through the bot — the customer↔bot lane (`channel = 'client'`) and the internal
+  bot↔advisor lane (`channel = 'advisor'`), tagged by `actor` (`client` / `bot` / `advisor`). Logged
+  best-effort at the shared seams (`execute_actions`, `send_timer_actions`, inbound customer/advisor
+  handlers, the agent welcome greeting, and the degradation fallback) so a logging failure never
+  blocks delivery. `send_timer_actions` now takes the case phone so timer-driven messages attribute
+  to the right conversation. New `record_message_event` query; pure classification helpers unit-tested.
 - Advisor can send a bare `✅` to the bot to silently keep the WhatsApp 24h service window open
   (e.g. daily, before it lapses) without triggering any bot reply. `process_advisor_input` now
   short-circuits on `is_window_keepalive_ping()` in `src/engine.rs` before any routing/DB work.

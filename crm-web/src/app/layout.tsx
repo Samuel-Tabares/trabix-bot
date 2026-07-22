@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "@/styles/globals.css";
 
 export const metadata: Metadata = {
-  title: "Trabix CRM",
-  description: "Panel interno de clientes, pedidos y conversaciones — Trabix Granizados",
+  title: "Trabix — Conversaciones",
+  description: "Consola de conversaciones del bot (cliente ⇄ bot ⇄ asesor) — Trabix Granizados",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

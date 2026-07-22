@@ -582,7 +582,7 @@ async fn expire_receipt_timer_with_source(
             buttons: receipt_timeout_buttons(),
         });
     }
-    dispatch_timer_actions(&state, &actions).await?;
+    dispatch_timer_actions(&state, &phone_number, &actions).await?;
 
     Ok(())
 }
@@ -644,6 +644,7 @@ async fn expire_advisor_timer_with_source(
             update_last_message(&state.pool, &phone_number).await?;
             dispatch_timer_actions(
                 &state,
+                &phone_number,
                 &[
                     BotAction::SendText {
                         to: state.config.advisor_phone.clone(),
@@ -694,7 +695,7 @@ async fn expire_advisor_timer_with_source(
                             buttons: contact_timeout_buttons(),
                         }
                     };
-                    dispatch_timer_actions(&state, &[action]).await?;
+                    dispatch_timer_actions(&state, &phone_number, &[action]).await?;
                 }
                 _ => {
                     let timeout_text = if conversation.state == "wait_advisor_mayor" {
@@ -718,7 +719,7 @@ async fn expire_advisor_timer_with_source(
                             buttons: advisor_timeout_buttons(),
                         });
                     }
-                    dispatch_timer_actions(&state, &actions).await?;
+                    dispatch_timer_actions(&state, &phone_number, &actions).await?;
                 }
             }
         }
@@ -739,6 +740,7 @@ async fn expire_advisor_timer_with_source(
             );
             dispatch_timer_actions(
                 &state,
+                &phone_number,
                 &[BotAction::SendText {
                     to: phone_number.clone(),
                     body: client_messages()
@@ -785,6 +787,7 @@ async fn expire_relay_timer_with_source(
     );
     dispatch_timer_actions(
         &state,
+        &phone_number,
         &[
             BotAction::SendText {
                 to: phone_number.clone(),
@@ -863,7 +866,7 @@ async fn expire_conversation_abandon_with_source(
             source = %source.as_str(),
             "sending inactivity reminder"
         );
-        dispatch_timer_actions(&state, &actions).await?;
+        dispatch_timer_actions(&state, &phone_number, &actions).await?;
 
         state_data.conversation_abandon_started_at = Some(started_at);
         state_data.conversation_abandon_reminder_sent = true;

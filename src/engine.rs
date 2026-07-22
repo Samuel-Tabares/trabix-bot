@@ -45,6 +45,8 @@ pub async fn process_customer_input(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let _case_lock = crate::lock_conversation(&state.conversation_locks, &phone).await;
 
+    log_inbound_event(&state, &phone, CHANNEL_CLIENT, ACTOR_CLIENT, &input).await;
+
     let conversation = load_or_create_conversation(&state, &phone).await?;
     let (current_state, mut context) = rehydrate_client_conversation(&state, &conversation).await?;
     let seeded = seed_customer_data(&mut context, &phone, profile_name.as_deref());
@@ -63,6 +65,7 @@ pub async fn process_customer_input(
     if should_use_agent(&state, &current_state) && !context.has_greeted {
         context.has_greeted = true;
         send_text(&state, &phone, &client_messages().agent.welcome).await?;
+        log_outbound_text(&state, &phone, &phone, &client_messages().agent.welcome).await;
         update_state(
             &state.pool,
             &phone,
@@ -172,6 +175,163 @@ fn is_window_keepalive_ping(input: &UserInput) -> bool {
     matches!(input, UserInput::TextMessage(text) if text.trim() == WINDOW_KEEPALIVE_PING)
 }
 
+// --- Conversation trace (message_events) ---------------------------------
+// Best-effort append-only log of every message so the CRM can replay the full
+// flow: the customer<->bot lane ("client") and the internal bot<->advisor lane
+// ("advisor"). Logging failures never block delivery.
+
+const CHANNEL_CLIENT: &str = "client";
+const CHANNEL_ADVISOR: &str = "advisor";
+const ACTOR_CLIENT: &str = "client";
+const ACTOR_BOT: &str = "bot";
+const ACTOR_ADVISOR: &str = "advisor";
+
+fn outbound_recipient(action: &BotAction) -> Option<&str> {
+    match action {
+        BotAction::SendText { to, .. }
+        | BotAction::SendButtons { to, .. }
+        | BotAction::SendList { to, .. }
+        | BotAction::SendImage { to, .. }
+        | BotAction::SendAssetImage { to, .. }
+        | BotAction::SendTransferInstructions { to } => Some(to),
+        _ => None,
+    }
+}
+
+type OutboundDescription = (&'static str, Option<String>, Option<serde_json::Value>);
+
+fn describe_outbound_action(action: &BotAction) -> Option<OutboundDescription> {
+    match action {
+        BotAction::SendText { body, .. } => Some(("text", Some(body.clone()), None)),
+        BotAction::SendTransferInstructions { .. } => Some((
+            "text",
+            Some("[instrucciones de transferencia]".to_string()),
+            None,
+        )),
+        BotAction::SendButtons { body, buttons, .. } => Some((
+            "buttons",
+            Some(body.clone()),
+            Some(json!({ "buttons": buttons })),
+        )),
+        BotAction::SendList {
+            body,
+            button_text,
+            sections,
+            ..
+        } => Some((
+            "list",
+            Some(body.clone()),
+            Some(json!({ "button_text": button_text, "sections": sections })),
+        )),
+        BotAction::SendImage {
+            media_id, caption, ..
+        } => Some((
+            "image",
+            caption.clone(),
+            Some(json!({ "media_id": media_id })),
+        )),
+        BotAction::SendAssetImage { asset, caption, .. } => Some((
+            "image",
+            caption.clone(),
+            Some(json!({ "asset": format!("{asset:?}") })),
+        )),
+        _ => None,
+    }
+}
+
+fn channel_for_recipient(to: &str, advisor_phone: &str) -> &'static str {
+    if to == advisor_phone {
+        CHANNEL_ADVISOR
+    } else {
+        CHANNEL_CLIENT
+    }
+}
+
+fn describe_inbound_input(input: &UserInput) -> OutboundDescription {
+    match input {
+        UserInput::TextMessage(text) => ("text", Some(text.clone()), None),
+        UserInput::ButtonPress(id) => (
+            "button_reply",
+            Some(id.clone()),
+            Some(json!({ "button_id": id })),
+        ),
+        UserInput::ListSelection(id) => (
+            "list_reply",
+            Some(id.clone()),
+            Some(json!({ "list_id": id })),
+        ),
+        UserInput::ImageMessage(media_id) => {
+            ("image", None, Some(json!({ "media_id": media_id })))
+        }
+    }
+}
+
+async fn log_outbound_event(state: &AppState, case_phone: &str, action: &BotAction) {
+    let Some(to) = outbound_recipient(action) else {
+        return;
+    };
+    let Some((content_type, body, payload)) = describe_outbound_action(action) else {
+        return;
+    };
+    let channel = channel_for_recipient(to, &state.config.advisor_phone);
+    if let Err(err) = crate::db::queries::record_message_event(
+        &state.pool,
+        case_phone,
+        channel,
+        ACTOR_BOT,
+        content_type,
+        body.as_deref(),
+        payload,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = %err, "failed to record outbound message event");
+    }
+}
+
+async fn log_inbound_event(
+    state: &AppState,
+    case_phone: &str,
+    channel: &str,
+    actor: &str,
+    input: &UserInput,
+) {
+    let (content_type, body, payload) = describe_inbound_input(input);
+    if let Err(err) = crate::db::queries::record_message_event(
+        &state.pool,
+        case_phone,
+        channel,
+        actor,
+        content_type,
+        body.as_deref(),
+        payload,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = %err, "failed to record inbound message event");
+    }
+}
+
+async fn log_outbound_text(state: &AppState, case_phone: &str, to: &str, body: &str) {
+    let channel = channel_for_recipient(to, &state.config.advisor_phone);
+    if let Err(err) = crate::db::queries::record_message_event(
+        &state.pool,
+        case_phone,
+        channel,
+        ACTOR_BOT,
+        "text",
+        Some(body),
+        None,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = %err, "failed to record outbound text event");
+    }
+}
+
 pub async fn process_advisor_input(
     state: AppState,
     input: UserInput,
@@ -205,6 +365,8 @@ pub async fn process_advisor_input(
     };
 
     let _case_lock = crate::lock_conversation(&state.conversation_locks, &target_phone).await;
+
+    log_inbound_event(&state, &target_phone, CHANNEL_ADVISOR, ACTOR_ADVISOR, &input).await;
 
     let Some(client_conversation) = get_conversation(&state.pool, &target_phone).await? else {
         tracing::warn!(
@@ -330,6 +492,7 @@ async fn degrade_agent_failure(
                 "failed to send LLM-failure fallback message to customer"
             );
         }
+        log_outbound_text(state, customer_phone, customer_phone, &body).await;
     }
 
     let last_message = match input {
@@ -357,6 +520,7 @@ async fn degrade_agent_failure(
             "failed to notify advisor about agent failure"
         );
     }
+    log_outbound_text(state, customer_phone, &state.config.advisor_phone, &advisor_body).await;
 
     update_last_message(&state.pool, customer_phone).await?;
     Ok(())
@@ -381,10 +545,12 @@ pub async fn send_text(
 
 pub async fn send_timer_actions(
     state: &AppState,
+    case_phone: &str,
     actions: &[BotAction],
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     for action in actions {
         log_bot_action(action);
+        log_outbound_event(state, case_phone, action).await;
         match action {
             BotAction::SendText { to, body } => {
                 send_text(state, to, body).await?;
@@ -446,9 +612,11 @@ pub async fn execute_actions(
     thread_recording_state: Option<&ConversationState>,
 ) -> Result<ExecutionOutcome, Box<dyn Error + Send + Sync>> {
     let mut reset_requested = false;
+    let case_phone = context.phone_number.clone();
 
     for action in actions {
         log_bot_action(action);
+        log_outbound_event(state, &case_phone, action).await;
         match action {
             BotAction::SendText { to, body } => {
                 let message_id = send_text(state, to, body).await?;
@@ -1257,5 +1425,69 @@ mod tests {
         assert!(!super::is_window_keepalive_ping(&UserInput::ButtonPress(
             "✅".to_string()
         )));
+    }
+
+    #[test]
+    fn channel_classification_splits_client_and_advisor_lanes() {
+        assert_eq!(
+            super::channel_for_recipient("573001111111", "573009999999"),
+            super::CHANNEL_CLIENT
+        );
+        assert_eq!(
+            super::channel_for_recipient("573009999999", "573009999999"),
+            super::CHANNEL_ADVISOR
+        );
+    }
+
+    #[test]
+    fn outbound_recipient_only_matches_message_actions() {
+        use crate::bot::state_machine::BotAction;
+
+        let text = BotAction::SendText {
+            to: "573001111111".to_string(),
+            body: "hola".to_string(),
+        };
+        assert_eq!(super::outbound_recipient(&text), Some("573001111111"));
+
+        let reset = BotAction::ResetConversation {
+            phone: "573001111111".to_string(),
+        };
+        assert_eq!(super::outbound_recipient(&reset), None);
+    }
+
+    #[test]
+    fn describe_outbound_action_extracts_type_and_body() {
+        use crate::bot::state_machine::BotAction;
+
+        let (content_type, body, payload) = super::describe_outbound_action(&BotAction::SendText {
+            to: "x".to_string(),
+            body: "hola".to_string(),
+        })
+        .expect("text is loggable");
+        assert_eq!(content_type, "text");
+        assert_eq!(body.as_deref(), Some("hola"));
+        assert!(payload.is_none());
+
+        assert!(super::describe_outbound_action(&BotAction::NoOp).is_none());
+    }
+
+    #[test]
+    fn describe_inbound_input_maps_every_variant() {
+        assert_eq!(
+            super::describe_inbound_input(&UserInput::TextMessage("hola".to_string())).0,
+            "text"
+        );
+        assert_eq!(
+            super::describe_inbound_input(&UserInput::ButtonPress("btn".to_string())).0,
+            "button_reply"
+        );
+        assert_eq!(
+            super::describe_inbound_input(&UserInput::ListSelection("opt".to_string())).0,
+            "list_reply"
+        );
+        assert_eq!(
+            super::describe_inbound_input(&UserInput::ImageMessage("mid".to_string())).0,
+            "image"
+        );
     }
 }

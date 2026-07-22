@@ -574,6 +574,40 @@ pub async fn create_or_update_referral_analytics(
     .await
 }
 
+/// Append one message to the conversation trace (`message_events`). Best-effort
+/// audit log for the CRM; callers log and swallow errors so a logging failure
+/// never blocks message delivery.
+#[allow(clippy::too_many_arguments)]
+pub async fn record_message_event(
+    pool: &PgPool,
+    case_phone: &str,
+    channel: &str,
+    actor: &str,
+    content_type: &str,
+    body: Option<&str>,
+    payload: Option<serde_json::Value>,
+    wa_message_id: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO message_events
+            (case_phone, channel, actor, content_type, body, payload, wa_message_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "#,
+    )
+    .bind(case_phone)
+    .bind(channel)
+    .bind(actor)
+    .bind(content_type)
+    .bind(body)
+    .bind(payload.map(Json))
+    .bind(wa_message_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
