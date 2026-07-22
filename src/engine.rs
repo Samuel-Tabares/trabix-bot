@@ -164,11 +164,23 @@ pub async fn process_customer_input(
     Ok(())
 }
 
+/// Advisor sends this daily to keep the 24h WhatsApp service window open
+/// before it lapses; the bot must stay silent so it isn't mistaken for a reply.
+const WINDOW_KEEPALIVE_PING: &str = "✅";
+
+fn is_window_keepalive_ping(input: &UserInput) -> bool {
+    matches!(input, UserInput::TextMessage(text) if text.trim() == WINDOW_KEEPALIVE_PING)
+}
+
 pub async fn process_advisor_input(
     state: AppState,
     input: UserInput,
     reply_to_message_id: Option<String>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if is_window_keepalive_ping(&input) {
+        return Ok(());
+    }
+
     let advisor_phone = state.config.advisor_phone.clone();
     let advisor_conversation = load_or_create_conversation(&state, &advisor_phone).await?;
 
@@ -1225,5 +1237,25 @@ mod tests {
         );
 
         assert_eq!(target.as_deref(), Some("573002222222"));
+    }
+
+    #[test]
+    fn keepalive_ping_matches_bare_checkmark_ignoring_whitespace() {
+        assert!(super::is_window_keepalive_ping(&UserInput::TextMessage(
+            "✅".to_string()
+        )));
+        assert!(super::is_window_keepalive_ping(&UserInput::TextMessage(
+            "  ✅  ".to_string()
+        )));
+    }
+
+    #[test]
+    fn keepalive_ping_does_not_match_other_text_or_buttons() {
+        assert!(!super::is_window_keepalive_ping(&UserInput::TextMessage(
+            "✅ listo".to_string()
+        )));
+        assert!(!super::is_window_keepalive_ping(&UserInput::ButtonPress(
+            "✅".to_string()
+        )));
     }
 }

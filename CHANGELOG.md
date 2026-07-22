@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Advisor can send a bare `✅` to the bot to silently keep the WhatsApp 24h service window open
+  (e.g. daily, before it lapses) without triggering any bot reply. `process_advisor_input` now
+  short-circuits on `is_window_keepalive_ping()` in `src/engine.rs` before any routing/DB work.
+
+### Changed
+- Documented `crm-web/` in the root README ("CRM web" section) and in `CLAUDE.md`'s code layout —
+  it previously had no run instructions anywhere in the repo.
+- Fixed a stale doc reference in `CLAUDE.md`: architecture diagrams are `general_info/*.md`, not
+  `*.mermaid`.
+
+### Removed
+- Deleted the empty `.simulator_uploads/` directory and the unused `BOT_MODE`/`SIMULATOR_UPLOAD_DIR`
+  entries from local `.env` — dead since the simulator removal in v1.8.0 (`config.rs` never reads
+  either variable).
+- Archived completed AI-agent rollout planning docs (`AI_AGENT_FAQ.md`, `MASTER_PROMPT.md`,
+  `MASTER_PROMPT_PRODUCCION.md`, `todo.md`) into `docs/archive/` — all describe already-shipped,
+  already-deployed work now superseded by `docs/project-knowledge/SESSION-*.md`.
+
 ## [1.8.0] - 2026-07-19
 
 ### Removed

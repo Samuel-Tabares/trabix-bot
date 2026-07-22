@@ -62,3 +62,19 @@ cargo run --bin upload_media -- /path/to/menu.jpg
 ```
 
 Prints the Meta `media_id` to set as `MENU_IMAGE_MEDIA_ID`.
+
+## CRM web (`crm-web/`)
+
+Read-only Next.js viewer into the bot's live PostgreSQL data: customers, order history, referral
+usage, and raw agent-engine transcripts. Useful for watching conversations in real time during
+testing/canary.
+
+```bash
+cd crm-web
+npm install   # only if node_modules isn't already there
+npm run dev
+```
+
+Open `http://localhost:3000`. It reads `DATABASE_URL` from `crm-web/.env.local` — point it at the
+same Postgres instance the bot is using (local or Railway) to see real data. No auth; keep it
+local/dev-only.

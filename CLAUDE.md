@@ -25,8 +25,8 @@ Two engines selected via `BOT_ENGINE`:
 - **Runtime behavior, timers, persistence, validation checklist** →
   `general_info/current_runtime_reference.md` (must stay aligned with this file and the diagrams
   below whenever runtime behavior changes).
-- **Architecture/flow diagrams** → `general_info/complex_diagram.mermaid` (detailed) and
-  `general_info/simple_diagram.mermaid` (simplified).
+- **Architecture/flow diagrams** → `general_info/complex_diagram.md` (detailed) and
+  `general_info/simple_diagram.md` (simplified).
 - **Version history** → `CHANGELOG.md` (Keep a Changelog + SemVer). Don't duplicate release notes
   here.
 - **Licensing** → `LICENSE` — proprietary, `All Rights Reserved`.
@@ -46,6 +46,9 @@ Two engines selected via `BOT_ENGINE`:
   in `codes`. Restart after editing.
 - `migrations/` — PostgreSQL schema, append-only (see below).
 - `tests/` — integration tests plus `live_whatsapp.rs` (real Meta smoke test, `--ignored`).
+- `crm-web/` — read-only Next.js viewer (own `package.json`, not compiled into the Rust binary)
+  reading the same PostgreSQL DB directly via `pg`: customers, orders, referral usage, agent
+  transcripts. Run with `cd crm-web && npm run dev`. See root README's "CRM web" section.
 
 ## Build / run / test
 
