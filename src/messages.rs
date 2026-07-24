@@ -12,13 +12,14 @@ pub const DEFAULT_MESSAGES_PATH: &str = "config/messages.toml";
 
 static CLIENT_MESSAGES: OnceLock<ClientMessages> = OnceLock::new();
 
-const REQUIRED_LIQUOR_FLAVOR_IDS: [&str; 7] = [
+const REQUIRED_LIQUOR_FLAVOR_IDS: [&str; 8] = [
     "liquor_maracumango_ron_blanco",
     "liquor_blueberry_vodka",
     "liquor_uva_vodka",
     "liquor_bonbonbum_whiskey",
     "liquor_bonbonbum_fresa_champagne",
     "liquor_smirnoff_lulo",
+    "liquor_smirnoff_tamarindo",
     "liquor_manzana_verde_tequila",
 ];
 
@@ -285,6 +286,7 @@ pub struct TimerCustomerMessages {
     pub contact_timeout_menu_button: String,
     pub relay_timeout_text: String,
     pub conversation_inactivity_reset_text: String,
+    pub agent_inactivity_nudge_text: String,
 }
 
 impl ClientMessages {

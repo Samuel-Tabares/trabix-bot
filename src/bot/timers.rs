@@ -42,7 +42,7 @@ pub type TimerKey = (String, TimerType);
 pub type TimerMap = Arc<Mutex<HashMap<TimerKey, ActiveTimer>>>;
 
 pub const RECEIPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+pub const ADVISOR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const TIMER_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 static NEXT_TIMER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -858,7 +858,22 @@ async fn expire_conversation_abandon_with_source(
             }
         };
 
-        let actions = reminder_actions(&current_state, &context);
+        // En motor agente los recordatorios de estado son deterministas y
+        // reinyectan BOTONES/listas (checkout::select_payment_method_actions,
+        // etc.), justo lo que el agente tiene prohibido usar — por eso en la
+        // prueba apareció el botón de pago. Con el agente el recordatorio es un
+        // texto suave y neutro; la conversación la retoma el LLM.
+        let actions = if state.config.bot_engine.is_agent() {
+            vec![BotAction::SendText {
+                to: phone_number.clone(),
+                body: client_messages()
+                    .timers_customer
+                    .agent_inactivity_nudge_text
+                    .clone(),
+            }]
+        } else {
+            reminder_actions(&current_state, &context)
+        };
         tracing::info!(
             phone = %mask_phone(&phone_number),
             timer_type = %TimerType::ConversationAbandon.as_str(),

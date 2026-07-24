@@ -482,7 +482,7 @@ mod tests {
     fn get_menu_exposes_both_flavor_lists() {
         let menu = get_menu();
 
-        assert_eq!(menu.flavors_with_liquor.len(), 7);
+        assert_eq!(menu.flavors_with_liquor.len(), 8);
         assert_eq!(menu.flavors_without_liquor.len(), 4);
         assert!(!menu.menu_text.is_empty());
     }

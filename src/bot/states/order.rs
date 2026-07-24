@@ -19,13 +19,14 @@ const RESTART_ORDER: &str = "restart_order";
 const CONFIRM_RESTART_ORDER: &str = "confirm_restart_order";
 const CANCEL_RESTART_ORDER: &str = "cancel_restart_order";
 
-const LIQUOR_FLAVOR_IDS: [&str; 7] = [
+const LIQUOR_FLAVOR_IDS: [&str; 8] = [
     "liquor_maracumango_ron_blanco",
     "liquor_blueberry_vodka",
     "liquor_uva_vodka",
     "liquor_bonbonbum_whiskey",
     "liquor_bonbonbum_fresa_champagne",
     "liquor_smirnoff_lulo",
+    "liquor_smirnoff_tamarindo",
     "liquor_manzana_verde_tequila",
 ];
 
@@ -493,7 +494,7 @@ mod tests {
         assert!(matches!(
             actions.first(),
             Some(crate::bot::state_machine::BotAction::SendList { sections, .. })
-            if sections.first().map(|section| section.rows.len()) == Some(7)
+            if sections.first().map(|section| section.rows.len()) == Some(8)
         ));
         assert_eq!(actions.len(), 1);
     }

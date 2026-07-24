@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Nuevo sabor **Smirnoff de tamarindo** (con licor) en el catálogo (`config/messages.toml`,
+  `LIQUOR_FLAVOR_IDS`, `REQUIRED_LIQUOR_FLAVOR_IDS`).
+- **Regla sin licor agotado al detal**: los granizados sin licor solo se venden al por mayor
+  (mínimo 20 unidades sin licor). `finalize_checkout` rechaza de forma determinista un pedido
+  sin licor por debajo del mínimo (`sin_licor_retail_block`, toggle `SIN_LICOR_RETAIL_AVAILABLE`).
+- **Mínimo 24h para pedidos programados**: `set_delivery_schedule` ahora recibe fecha/hora en ISO
+  (`YYYY-MM-DD` / `HH:MM` 24h) que el modelo resuelve, valida ≥24h de anticipación de forma
+  determinista y guarda en ISO (las columnas tipadas de la BD ya se llenan).
+- Al asesor se le muestra, cuando se usa un código de referido, el **código, el descuento al
+  cliente y la comisión del embajador** en el resumen del caso (`advisor_case_summary`).
 - Conversation trace for the CRM: new append-only `message_events` table (migration 010) logs every
   message that flows through the bot — the customer↔bot lane (`channel = 'client'`) and the internal
   bot↔advisor lane (`channel = 'advisor'`), tagged by `actor` (`client` / `bot` / `advisor`). Logged
@@ -17,6 +27,18 @@ All notable changes to this project will be documented in this file.
   short-circuits on `is_window_keepalive_ping()` in `src/engine.rs` before any routing/DB work.
 
 ### Changed
+- **Motor por defecto ahora es Claude Sonnet 4.5** (`DEFAULT_MODEL`), antes Haiku 4.5 — mejor
+  razonamiento aritmético/fechas para reducir errores de conteo y programación.
+- El agente ahora envía **un solo mensaje de WhatsApp por turno** (se acumula el texto de todas
+  las rondas del loop) en vez de una ráfaga de 2-3 mensajes.
+- El **tool-result de resumen del pedido incluye el total de unidades** explícito para que el
+  modelo no invente el conteo (dijo "45" cuando había 35).
+- El **timer de espera del asesor pasó de 5 a 10 minutos**; al vencer, el cliente recibe un mensaje
+  de "tu pedido quedó guardado, un asesor te escribe" en vez de "empieza de nuevo desde el menú".
+- En modo agente, el **recordatorio por inactividad es texto** (antes reinyectaba botones/listas
+  deterministas — origen de los botones de pago que aparecían en el CRM de prueba).
+- Prompt reforzado: resolver zona de Armenia automáticamente sin preguntar al asesor, y regla de
+  sin licor / mínimo 24h de programados.
 - Documented `crm-web/` in the root README ("CRM web" section) and in `CLAUDE.md`'s code layout —
   it previously had no run instructions anywhere in the repo.
 - Fixed a stale doc reference in `CLAUDE.md`: architecture diagrams are `general_info/*.md`, not

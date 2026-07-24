@@ -40,6 +40,14 @@ use crate::{
 };
 
 const MAX_TOOL_ITERATIONS: usize = 8;
+// Los granizados SIN licor están agotados al detal: por ahora solo se venden
+// al por mayor (20+ unidades sin licor en el pedido). Poner en true cuando
+// vuelva a haber stock al detal para desactivar el guard sin tocar más código.
+const SIN_LICOR_RETAIL_AVAILABLE: bool = false;
+// Un pedido sin licor debe llegar a este mínimo para considerarse mayorista.
+const SIN_LICOR_WHOLESALE_MIN: u32 = 20;
+// Un pedido PROGRAMADO necesita al menos esta anticipación para poder gestionarlo.
+const SCHEDULED_MIN_LEAD_HOURS: i64 = 24;
 // La memoria permanente en `agent_case_messages` guarda TODO el historial
 // (CRM), pero al LLM solo se le manda una ventana de los ultimos mensajes:
 // el bloque "ESTADO ACTUAL DEL CASO" del system prompt ya lleva los datos
@@ -91,7 +99,9 @@ REGLA MAYORISTA + REFERRAL:
   cierre). En pedidos retail (menos de 20 del mismo tipo) el código NO aplica, no preguntes.
 
 DOMICILIO AUTOMÁTICO (no pidas al asesor si puedes resolverlo):
-- Armenia: pregunta zona (norte/centro/sur) → set_delivery_zone_armenia → costo automático ✓
+- Armenia: apenas sepas la zona/barrio (norte/centro/sur) llama set_delivery_zone_armenia \
+  INMEDIATAMENTE — no le preguntes el costo al asesor, la herramienta te lo da sola. Si la \
+  dirección dice "sur/norte/centro de Armenia" ya tienes la zona, úsala sin volver a preguntar. ✓
 - Pueblo cercano conocido (Bogotá, etc.): lookup_nearby_town → si existe y ≥20 unidades → \
   set_delivery_nearby_town → costo automático ✓
 - Pueblo cercano pero <20 unidades: rechaza con "Mínimo 20 unidades para ese destino" ✓
@@ -122,6 +132,13 @@ Reglas que no puedes romper:
   ESTADO ACTUAL DEL CASO (línea "Hora actual en Armenia/Bogotá"). Úsalo SIEMPRE, nunca asumas ni \
   respondas de memoria: si dice CERRADO, no ofrezcas entrega inmediata, ofrece programar.
 - Antes de agregar un producto usa get_menu para conocer los flavor_id validos; no inventes ids.
+- SIN LICOR AGOTADO AL DETAL: por ahora los granizados sin licor (Manzana verde, Bonbonbum, \
+  Maracumango, Blueberry en su versión sin licor) SOLO se venden al por mayor (mínimo 20 unidades \
+  sin licor en el pedido). Al detal no hay sin licor por el momento. Si el cliente pide pocos sin \
+  licor, explícale esto con amabilidad y ofrécele completar 20+ unidades sin licor o cambiar a \
+  sabores CON licor, que son nuestro fuerte. El resto del menú (incluido el nuevo Smirnoff de \
+  tamarindo) es con licor y está disponible normal. finalize_checkout rechaza un pedido sin licor \
+  que no llegue al mínimo mayorista.
 - Maracumango, Manzana verde, Bonbonbum y Blueberry existen como productos DISTINTOS con y sin \
   licor (no son la misma bebida con/sin licor, son productos distintos). Si el cliente solo dice \
   el nombre base sin ninguna palabra que distinga la variante (ron, tequila, vodka, whiskey, \
@@ -150,7 +167,11 @@ Reglas que no puedes romper:
   domicilio no se conoce todavia (municipio fuera de la lista), pidele el valor. Cuando el asesor \
   te responda que si puede, usa confirm_advisor_availability con available=true; si dice que no \
   puede, usa confirm_advisor_availability con available=false.
-- PEDIDO PROGRAMADO: un pedido programado NUNCA se confirma con el asesor — se autoacepta. NO uses \
+- PEDIDO PROGRAMADO: mínimo 24 HORAS de anticipación. Cuando el cliente dé la fecha/hora, \
+  resuélvela tú a ISO (usando la fecha/hora actual del bloque ESTADO) y pásala a \
+  set_delivery_schedule como date=YYYY-MM-DD y time=HH:MM 24h; si es muy pronto la herramienta te \
+  rechaza y te dice desde cuándo se puede — pídele al cliente una fecha más adelante. Un pedido \
+  programado NUNCA se confirma con el asesor — se autoacepta. NO uses \
   confirm_advisor_availability para un pedido programado, esa herramienta la rechaza. Si al llamar \
   finalize_checkout el domicilio ya se conoce, la herramienta autoacepta el pedido sola y te dice \
   el total: ya puedes preguntarle al cliente el método de pago. Si el domicilio todavía no se \
@@ -265,6 +286,11 @@ async fn run_case_turn(
     let tool_defs = tool_definitions();
 
     let mut actions: Vec<BotAction> = Vec::new();
+    // El texto plano que el modelo escribe en CADA ronda del loop se acumula
+    // aquí y se envía como UN SOLO mensaje al final del turno, en vez de un
+    // mensaje de WhatsApp por bloque (que llegaba como ráfaga de 2-3 mensajes
+    // en <1s y a veces con el modelo contradiciéndose entre bloques).
+    let mut direct_reply_parts: Vec<String> = Vec::new();
     let mut terminal: Option<(ConversationState, Vec<BotAction>)> = None;
     let mut effective_state = current_state.clone();
     // Al primer tool que cambia de estado (finalize_checkout,
@@ -306,14 +332,7 @@ async fn run_case_turn(
         for block in &response.content {
             if let ContentBlock::Text { text } = block {
                 if !text.trim().is_empty() {
-                    let to = match actor {
-                        Actor::Customer => context.phone_number.clone(),
-                        Actor::Advisor => context.advisor_phone.clone(),
-                    };
-                    actions.push(BotAction::SendText {
-                        to,
-                        body: text.clone(),
-                    });
+                    direct_reply_parts.push(text.trim().to_string());
                 }
             }
         }
@@ -387,6 +406,18 @@ async fn run_case_turn(
     }
 
     memory::save_messages(&state.pool, &phone, &history).await?;
+
+    // Un solo mensaje de texto con todo lo que el modelo redactó en el turno.
+    if !direct_reply_parts.is_empty() {
+        let to = match actor {
+            Actor::Customer => context.phone_number.clone(),
+            Actor::Advisor => context.advisor_phone.clone(),
+        };
+        actions.push(BotAction::SendText {
+            to,
+            body: direct_reply_parts.join("\n\n"),
+        });
+    }
 
     let final_state = terminal
         .map(|(next_state, _)| next_state)
@@ -922,34 +953,58 @@ fn set_delivery_immediate(context: &mut ConversationContext) -> (String, bool) {
 }
 
 fn set_delivery_schedule(input: &Value, context: &mut ConversationContext) -> (String, bool) {
-    let date = normalize_schedule_text(input.get("date").and_then(Value::as_str).unwrap_or(""));
-    let time = normalize_schedule_text(input.get("time").and_then(Value::as_str).unwrap_or(""));
+    // El modelo interpreta la fecha/hora que dijo el cliente ("mañana",
+    // "el sábado a las 3") y la pasa ya resuelta en ISO: date=YYYY-MM-DD,
+    // time=HH:MM (24h). Aquí se valida de forma determinista y se guarda en
+    // ISO, para que las columnas tipadas de la BD se llenen y para poder
+    // exigir el mínimo de 24h de anticipación.
+    let date_raw = input.get("date").and_then(Value::as_str).unwrap_or("").trim();
+    let time_raw = input.get("time").and_then(Value::as_str).unwrap_or("").trim();
 
-    let (Some(date), Some(time)) = (date, time) else {
+    let Ok(date) = chrono::NaiveDate::parse_from_str(date_raw, "%Y-%m-%d") else {
         return (
-            "Fecha y hora deben tener texto válido (2-40 caracteres cada una).".to_string(),
+            format!("Fecha inválida: '{date_raw}'. Pásala en formato YYYY-MM-DD (resuélvela tú a \
+                     partir de lo que dijo el cliente usando la fecha actual del bloque ESTADO)."),
+            true,
+        );
+    };
+    let Ok(time) = chrono::NaiveTime::parse_from_str(time_raw, "%H:%M") else {
+        return (
+            format!("Hora inválida: '{time_raw}'. Pásala en formato HH:MM de 24 horas (ej. las 3 \
+                     de la tarde es 15:00)."),
             true,
         );
     };
 
+    let scheduled_at = chrono::NaiveDateTime::new(date, time);
+    let now_bogota = crate::bot::states::scheduling::current_bogota_now().naive_local();
+    let min_at = now_bogota + chrono::Duration::hours(SCHEDULED_MIN_LEAD_HOURS);
+    if scheduled_at < min_at {
+        return (
+            format!(
+                "Los pedidos programados necesitan mínimo {SCHEDULED_MIN_LEAD_HOURS} horas de \
+                 anticipación para poder gestionarlos. Esa fecha/hora es muy pronto. Pídele al \
+                 cliente una fecha a partir de {} y vuelve a intentar.",
+                min_at.format("%Y-%m-%d %H:%M")
+            ),
+            true,
+        );
+    }
+
+    let date_iso = date.format("%Y-%m-%d").to_string();
+    let time_iso = time.format("%H:%M").to_string();
     context.delivery_type = Some("scheduled".to_string());
-    context.scheduled_date = Some(date.clone());
-    context.scheduled_time = Some(time.clone());
+    context.scheduled_date = Some(date_iso.clone());
+    context.scheduled_time = Some(time_iso.clone());
     (
-        format!("Entrega programada para {date} a las {time}."),
+        format!(
+            "Entrega programada para {date_iso} a las {time_iso} (cumple el mínimo de \
+             {SCHEDULED_MIN_LEAD_HOURS}h). Confírmale al cliente la fecha en palabras naturales."
+        ),
         false,
     )
 }
 
-fn normalize_schedule_text(raw: &str) -> Option<String> {
-    let normalized = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    let length = normalized.chars().count();
-    if (1..=40).contains(&length) {
-        Some(normalized)
-    } else {
-        None
-    }
-}
 
 fn add_order_item(input: &Value, context: &mut ConversationContext) -> (String, bool) {
     let has_liquor = input
@@ -1039,7 +1094,16 @@ fn get_order_summary(context: &ConversationContext) -> (String, bool) {
     }
 
     let pedido = tools::calculate_order(&context.items);
-    (checkout::render_summary(context, &pedido), false)
+    let total_units: u32 = context.items.iter().map(|item| item.quantity).sum();
+    // El conteo total de unidades va explícito en el tool-result (dato duro que
+    // el modelo debe usar tal cual): sin esto llegó a decir "45 granizados"
+    // cuando en realidad había agregado 35. NO calcules el total tú mismo, usa
+    // esta cifra.
+    let summary = format!(
+        "{}\n\n(Total de unidades en el pedido: {total_units} — usa EXACTAMENTE este número, no lo recalcules)",
+        checkout::render_summary(context, &pedido)
+    );
+    (summary, false)
 }
 
 fn set_delivery_zone_armenia(input: &Value, context: &mut ConversationContext) -> (String, bool) {
@@ -1206,6 +1270,10 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
         return ToolOutcome::Result(error_result(id, error));
     }
 
+    if let Some(error) = sin_licor_retail_block(context) {
+        return ToolOutcome::Result(error_result(id, error));
+    }
+
     // Regla mayorista: en un pedido al por mayor SIEMPRE hay que resolver el
     // tema del código de descuento antes de confirmar (aplicar uno válido o
     // que el cliente diga que no tiene → skip_referral_code). Guard
@@ -1282,6 +1350,32 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
 
 fn order_has_wholesale(context: &ConversationContext) -> bool {
     crate::bot::pricing::has_wholesale_bucket(&tools::calculate_order(&context.items))
+}
+
+/// Sin licor está agotado al detal: solo se puede vender al por mayor. Si el
+/// pedido tiene ítems sin licor pero no llega al mínimo mayorista sin licor,
+/// devuelve un mensaje para que el modelo se lo explique al cliente en vez de
+/// dejar pasar un pedido que no se puede despachar.
+fn sin_licor_retail_block(context: &ConversationContext) -> Option<String> {
+    if SIN_LICOR_RETAIL_AVAILABLE {
+        return None;
+    }
+    let sin_licor_units: u32 = context
+        .items
+        .iter()
+        .filter(|item| !item.has_liquor)
+        .map(|item| item.quantity)
+        .sum();
+    if sin_licor_units == 0 || sin_licor_units >= SIN_LICOR_WHOLESALE_MIN {
+        return None;
+    }
+    Some(format!(
+        "Los granizados SIN licor están agotados al detal: por ahora solo se venden al por mayor \
+         (mínimo {SIN_LICOR_WHOLESALE_MIN} unidades sin licor). Este pedido tiene {sin_licor_units} \
+         sin licor. Explícale al cliente que por ahora los sin licor solo van por mayor y ofrécele \
+         completar {SIN_LICOR_WHOLESALE_MIN}+ unidades sin licor o cambiar a sabores con licor \
+         (nuestro fuerte). No finalices así."
+    ))
 }
 
 fn compute_total_final(context: &ConversationContext, delivery_cost: i32) -> i32 {
@@ -1656,8 +1750,22 @@ fn advisor_case_summary(context: &ConversationContext) -> String {
         .total_final
         .unwrap_or_else(|| i32::try_from(pedido.total_estimado).unwrap_or(0) + delivery_cost);
 
+    // Si se usó un código de referido, el asesor debe ver cuál fue, cuánto se
+    // le descontó al cliente y la comisión que le corresponde al embajador
+    // (para liquidarle después). Estos datos ya están en el contexto; aquí solo
+    // se pintan cuando hay un código realmente aplicado.
+    let referral_section = match context.referral_code.as_deref() {
+        Some(code) if !code.trim().is_empty() => format!(
+            "\nCódigo referido: {}\nDescuento al cliente: -${}\nComisión embajador: ${}",
+            code,
+            format_thousands(u32::try_from(context.referral_discount_total.unwrap_or(0)).unwrap_or(0)),
+            format_thousands(u32::try_from(context.ambassador_commission_total.unwrap_or(0)).unwrap_or(0)),
+        ),
+        _ => String::new(),
+    };
+
     format!(
-        "Cliente: {}\nTeléfono: {}\nDirección: {}\nEntrega: {}\n\nItems:\n{}\n\nDomicilio: ${}\nTotal final: ${}",
+        "Cliente: {}\nTeléfono: {}\nDirección: {}\nEntrega: {}\n\nItems:\n{}\n\nDomicilio: ${}\nTotal final: ${}{}",
         customer_identity_line(context.customer_name.as_deref(), context.meta_customer_name.as_deref()),
         customer_identity_line(context.customer_phone.as_deref(), context.meta_customer_phone.as_deref()),
         context.delivery_address.as_deref().unwrap_or("pendiente"),
@@ -1665,6 +1773,7 @@ fn advisor_case_summary(context: &ConversationContext) -> String {
         items_text,
         format_thousands(u32::try_from(delivery_cost).unwrap_or(0)),
         format_thousands(u32::try_from(total_final).unwrap_or(0)),
+        referral_section,
     )
 }
 
@@ -1819,12 +1928,12 @@ fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "set_delivery_schedule".to_string(),
-            description: "Marca el pedido como programado, guardando fecha y hora tal como las dijo el cliente (texto libre).".to_string(),
+            description: "Marca el pedido como PROGRAMADO. Resuelve tú la fecha/hora que dijo el cliente (\"mañana\", \"el sábado a las 3\") a formato ISO usando la fecha/hora actual del bloque ESTADO: date = YYYY-MM-DD, time = HH:MM en 24 horas (las 3 de la tarde = 15:00). Los programados requieren mínimo 24 horas de anticipación; la herramienta rechaza fechas más próximas y te dice desde cuándo se puede.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "date": { "type": "string" },
-                    "time": { "type": "string" }
+                    "date": { "type": "string", "description": "Fecha en formato YYYY-MM-DD" },
+                    "time": { "type": "string", "description": "Hora en formato HH:MM de 24 horas" }
                 },
                 "required": ["date", "time"],
                 "additionalProperties": false
@@ -2184,8 +2293,8 @@ mod tests {
             customer_phone: Some("3001234567".to_string()),
             delivery_address: Some("Cra 15 #20-30 Armenia".to_string()),
             items: vec![crate::db::models::OrderItemData {
-                flavor: "Maracumango".to_string(),
-                has_liquor: false,
+                flavor: "Uva Vodka".to_string(),
+                has_liquor: true,
                 quantity: 5,
             }],
             delivery_type: Some("scheduled".to_string()),
@@ -2407,12 +2516,66 @@ mod tests {
         }];
         assert!(!context.referral_prompt_resolved);
 
-        // Retail: no exige código; el programado se autoacepta sin bloquear.
+        // Retail con licor: no exige código; el programado se autoacepta sin bloquear.
+        context.items = vec![crate::db::models::OrderItemData {
+            flavor: "Uva Vodka".to_string(),
+            has_liquor: true,
+            quantity: 3,
+        }];
         let outcome = finalize_checkout("id_1", &mut context);
         assert!(matches!(
             outcome,
             ToolOutcome::ResultWithStateChange(_, ConversationState::SelectPaymentMethod, _)
         ));
+    }
+
+    #[test]
+    fn finalize_checkout_blocks_sin_licor_retail() {
+        let mut context = test_context();
+        context.delivery_cost = Some(0);
+        // Sin licor por debajo del mínimo mayorista: debe rechazarse.
+        context.items = vec![crate::db::models::OrderItemData {
+            flavor: "Manzana verde".to_string(),
+            has_liquor: false,
+            quantity: 5,
+        }];
+
+        let outcome = finalize_checkout("id_1", &mut context);
+        match outcome {
+            ToolOutcome::Result(ContentBlock::ToolResult { content, is_error, .. }) => {
+                assert_eq!(is_error, Some(true));
+                assert!(content.to_lowercase().contains("sin licor"));
+            }
+            _ => panic!("expected sin-licor retail guard to block"),
+        }
+    }
+
+    #[test]
+    fn set_delivery_schedule_rejects_dates_under_24h() {
+        let mut context = test_context();
+        let now = crate::bot::states::scheduling::current_bogota_now();
+        let too_soon = now + chrono::Duration::hours(2);
+        let outcome = set_delivery_schedule(
+            &json!({
+                "date": too_soon.format("%Y-%m-%d").to_string(),
+                "time": too_soon.format("%H:%M").to_string(),
+            }),
+            &mut context,
+        );
+        assert!(outcome.1, "expected an error result for a <24h schedule");
+        assert!(outcome.0.contains("24"));
+    }
+
+    #[test]
+    fn set_delivery_schedule_accepts_iso_with_enough_lead() {
+        let mut context = test_context();
+        let far = crate::bot::states::scheduling::current_bogota_now() + chrono::Duration::days(2);
+        let outcome = set_delivery_schedule(
+            &json!({ "date": far.format("%Y-%m-%d").to_string(), "time": "15:00" }),
+            &mut context,
+        );
+        assert!(!outcome.1, "expected success for a >24h schedule");
+        assert_eq!(context.scheduled_time.as_deref(), Some("15:00"));
     }
 
     #[test]

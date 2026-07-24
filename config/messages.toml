@@ -123,6 +123,7 @@ liquor_uva_vodka = "Uva Vodka"
 liquor_bonbonbum_whiskey = "Bonbonbum Whiskey"
 liquor_bonbonbum_fresa_champagne = "Bonbonbum fresa champaña"
 liquor_smirnoff_lulo = "Smirnoff de lulo"
+liquor_smirnoff_tamarindo = "Smirnoff de tamarindo"
 liquor_manzana_verde_tequila = "Manzana verde Tequila"
 
 [order.flavors_without_liquor]
@@ -266,7 +267,7 @@ receipt_timeout_text = "No recibimos el comprobante dentro de los 10 minutos ⏳
 receipt_timeout_buttons_body = "¿Cómo quieres continuar?"
 advisor_timeout_text = "El asesor no respondió a tiempo ⏳ Puedes reintentar, programar o volver al menú."
 advisor_timeout_wholesale_text = "El asesor todavía no toma el caso ⏳ Puedes reintentar, programar o volver al menú."
-advisor_stuck_timeout_text = "La gestión con el asesor se cerró por inactividad ⏳ Cuando quieras continuar, escríbeme de nuevo y retomamos desde el menú principal."
+advisor_stuck_timeout_text = "Tu pedido quedó guardado ✅ pero no pude confirmar el detalle con el asesor a tiempo. Un asesor te va a escribir para terminar de coordinarlo. Si prefieres, también puedes escribirme para dejarlo programado o hacer algún ajuste."
 advisor_timeout_buttons_body = "Selecciona cómo quieres continuar 👇"
 advisor_timeout_schedule_button = "Programar"
 advisor_timeout_retry_button = "Reintentar"
@@ -276,6 +277,7 @@ contact_timeout_leave_message_button = "Dejar mensaje"
 contact_timeout_menu_button = "Menú"
 relay_timeout_text = "La conversación con el asesor se cerró por inactividad ⏳"
 conversation_inactivity_reset_text = "Reinicié la conversación por inactividad ⏳ Cuando quieras continuar, escríbeme de nuevo y retomamos desde el menú principal."
+agent_inactivity_nudge_text = "¿Sigues por ahí? 😊 Cuando quieras seguimos con tu pedido, escríbeme y continuamos."
 
 [agent]
 welcome = """¡Hola! 👋 Soy el asistente de Trabix Granizados 🍧
