@@ -77,12 +77,3 @@ cualquier mensaje al bot para reabrirla.
   global). Al alcanzarlo, todos los casos degradan a mensaje fijo + aviso al asesor.
 - Gasto real: consola de Anthropic → Usage. Cada turno de cliente consume 1–8 llamadas Haiku
   (tools encadenadas); un pedido completo típico son ~4 turnos de cliente + 1–2 del asesor.
-
-## Checklist del canario (antes de abrir al público)
-
-- [ ] 0 clientes en silencio (todo error visible tuvo mensaje fijo + aviso al asesor)
-- [ ] 0 totales incorrectos en mensajes al cliente (comparar transcripciones vs. `orders.total_final`)
-- [ ] `orders` confirmadas = conversaciones que terminaron en confirmación
-- [ ] `customers` y `referral_code_analytics` cuadran con los pedidos confirmados
-- [ ] Costo por conversación medido en la consola de Anthropic y aceptado
-- [ ] Rollback probado una vez (quitar `BOT_ENGINE` → determinista responde)
