@@ -1,5 +1,9 @@
 # Trabix Granizados Bot (`granizado-bot`)
 
+> **Lee `ROADMAP.md` al iniciar sesión.** Este archivo describe cómo está construido el bot;
+> `ROADMAP.md` describe qué falta, en qué orden y qué está bloqueado. Los dos juntos son suficientes
+> para trabajar sin salir del repo.
+
 ## Stack
 
 Rust (edition 2021) · Axum · SQLx/PostgreSQL · Tokio · Meta WhatsApp Cloud API (HMAC-validated
