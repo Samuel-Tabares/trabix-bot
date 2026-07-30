@@ -11,14 +11,21 @@ State-machine WhatsApp bot that takes granizado orders for Trabix Granizados, wi
 referral/embajador code support. Production-only: the sole runtime is the real Meta webhook
 runtime (there is no simulator — it was removed in v1.8.0).
 
-Two engines selected via `BOT_ENGINE`:
+**Production runs the agent engine** (`BOT_ENGINE=agent` set in Railway): a Claude tool-calling
+engine (`src/ai/`, model `claude-sonnet-4-5` — see `DEFAULT_MODEL` in `src/ai/client.rs`) driving
+the customer self-service states; requires `ANTHROPIC_API_KEY`. Pricing/zones/referrals stay
+deterministic via tools. Guards, cost budget, failure degradation, and the relay reachability audit
+are documented in `general_info/current_runtime_reference.md` and `general_info/runbook.md`.
 
-- `deterministic` (default when unset): the original non-LLM state machine. Removing
-  `BOT_ENGINE` in Railway + redeploy is the instant rollback path.
-- `agent`: Claude Haiku tool-calling engine (`src/ai/`) for customer self-service states;
-  requires `ANTHROPIC_API_KEY`. Pricing/zones/referrals stay deterministic via tools. Guards,
-  cost budget, failure degradation, and the relay reachability audit are documented in
-  `general_info/current_runtime_reference.md` and `general_info/runbook.md`.
+The `BOT_ENGINE` toggle still exists in code and defaults to `deterministic` when unset, but the
+original non-LLM state machine is **legacy and scheduled for removal** — Samuel confirmed it will
+not be used again and no rollback net is needed. Do not build new behavior on it. The removal plan
+(dead FSM files, the toggle itself, and what must be kept) is in
+`docs/CLEANUP_deterministic_engine.md`.
+
+Prompt caching is **not implemented** — the ~11,400-char system prompt plus tool schemas are resent
+at full price every turn. This is the bot's largest variable cost. Spec:
+`../docs/PENDIENTE_prompt_caching.md`.
 
 ## Source of truth by concern
 
@@ -57,8 +64,8 @@ Two engines selected via `BOT_ENGINE`:
 ## Build / run / test
 
 - `cargo check` / `cargo test` — verify + run coverage before any commit. Since the simulator was
-  removed there is no local-chat harness; validation is `cargo test` + the deterministic-engine
-  fallback + live testing on the real number.
+  removed there is no local-chat harness; validation is `cargo test` + live testing on the real
+  number.
 - `cargo run --bin granizado-bot` — run the bot locally (needs the real env vars).
 - `cargo test --test live_whatsapp -- --ignored --test-threads=1` — live WhatsApp smoke test,
   requires real credentials in `.env`.
