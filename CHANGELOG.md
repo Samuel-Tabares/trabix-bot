@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Prompt caching en el motor de agente**: el `system` de la Messages API ahora se envía como
+  dos bloques — el system prompt estático (`SYSTEM_PROMPT`) marcado con `cache_control:
+  {"type": "ephemeral"}`, y el bloque dinámico "ESTADO ACTUAL DEL CASO" (hora, pedido, quién
+  escribe) sin marca, después del estático. El breakpoint en el último bloque de `system` cachea
+  también las definiciones de tools (van antes en el render de la API). `AnthropicClient::send_message`
+  ahora recibe `static_system`/`dynamic_system` por separado en vez de un solo `&str`, y loguea
+  `usage.cache_read_input_tokens`/`cache_creation_input_tokens` en cada llamada (`tracing::debug!`)
+  para medir el ahorro real. Ver `docs/PENDIENTE_prompt_caching.md`.
 - Nuevo sabor **Smirnoff de tamarindo** (con licor) en el catálogo (`config/messages.toml`,
   `LIQUOR_FLAVOR_IDS`, `REQUIRED_LIQUOR_FLAVOR_IDS`).
 - **Regla sin licor agotado al detal**: los granizados sin licor solo se venden al por mayor

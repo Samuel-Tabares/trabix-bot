@@ -55,20 +55,60 @@ pub struct ToolDefinition {
     pub input_schema: Value,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+struct CacheControl {
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+impl CacheControl {
+    const fn ephemeral() -> Self {
+        Self { kind: "ephemeral" }
+    }
+}
+
+/// Bloque de `system` como texto. El campo `cache_control` solo se serializa
+/// en el bloque estatico: marca el punto de corte del prefijo cacheable
+/// (tools + system estatico). El bloque dinamico (estado del caso, cambia
+/// cada turno) va despues, sin marca, para no invalidar el cache en cada
+/// llamada.
+#[derive(Debug, Clone, Serialize)]
+struct SystemBlock<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
 #[derive(Debug, Serialize)]
 struct MessagesRequest<'a> {
     model: &'a str,
     max_tokens: u32,
-    system: &'a str,
+    system: Vec<SystemBlock<'a>>,
     messages: &'a [Message],
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     tools: &'a [ToolDefinition],
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct Usage {
+    #[serde(default)]
+    pub input_tokens: u32,
+    #[serde(default)]
+    pub output_tokens: u32,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u32,
+    #[serde(default)]
+    pub cache_read_input_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct MessagesResponse {
     pub content: Vec<ContentBlock>,
     pub stop_reason: Option<String>,
+    #[serde(default)]
+    pub usage: Usage,
 }
 
 impl AnthropicClient {
@@ -85,12 +125,29 @@ impl AnthropicClient {
         }
     }
 
+    /// `static_system` es el bloque fijo (system prompt + implicitamente los
+    /// tools, que van antes en el render de la API) y lleva el breakpoint de
+    /// cache. `dynamic_system` es el bloque que cambia cada turno (estado del
+    /// caso) y va sin `cache_control`, despues del estatico.
     pub async fn send_message(
         &self,
-        system: &str,
+        static_system: &str,
+        dynamic_system: &str,
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> Result<MessagesResponse, reqwest::Error> {
+        let system = vec![
+            SystemBlock {
+                kind: "text",
+                text: static_system,
+                cache_control: Some(CacheControl::ephemeral()),
+            },
+            SystemBlock {
+                kind: "text",
+                text: dynamic_system,
+                cache_control: None,
+            },
+        ];
         let request = MessagesRequest {
             model: &self.model,
             max_tokens: DEFAULT_MAX_TOKENS,
@@ -99,7 +156,8 @@ impl AnthropicClient {
             tools,
         };
 
-        self.http
+        let response = self
+            .http
             .post(ANTHROPIC_API_URL)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
@@ -108,6 +166,16 @@ impl AnthropicClient {
             .await?
             .error_for_status()?
             .json::<MessagesResponse>()
-            .await
+            .await?;
+
+        tracing::debug!(
+            input_tokens = response.usage.input_tokens,
+            output_tokens = response.usage.output_tokens,
+            cache_creation_input_tokens = response.usage.cache_creation_input_tokens,
+            cache_read_input_tokens = response.usage.cache_read_input_tokens,
+            "anthropic messages usage"
+        );
+
+        Ok(response)
     }
 }

@@ -282,7 +282,7 @@ async fn run_case_turn(
     });
     let window_start = llm_window_start(&history);
 
-    let system_prompt = build_system_prompt(context, actor, current_state);
+    let dynamic_system = build_dynamic_case_state(context, actor, current_state);
     let tool_defs = tool_definitions();
 
     let mut actions: Vec<BotAction> = Vec::new();
@@ -316,7 +316,12 @@ async fn run_case_turn(
             budget.consume_call(&phone, bogota_today());
         }
         let response = client
-            .send_message(&system_prompt, &history[window_start..], &tool_defs)
+            .send_message(
+                SYSTEM_PROMPT,
+                &dynamic_system,
+                &history[window_start..],
+                &tool_defs,
+            )
             .await?;
 
         history.push(Message {
@@ -576,7 +581,11 @@ fn budget_denied_actions(
     actions
 }
 
-fn build_system_prompt(
+/// Bloque dinamico del prompt (cambia cada turno: estado del pedido, hora
+/// actual, quien escribe). Se envia SEPARADO de `SYSTEM_PROMPT` (que es
+/// estatico) para que el cliente pueda marcar solo el bloque estatico como
+/// cacheable — ver `AnthropicClient::send_message`.
+fn build_dynamic_case_state(
     context: &ConversationContext,
     actor: Actor,
     current_state: &ConversationState,
@@ -645,7 +654,7 @@ fn build_system_prompt(
     );
 
     format!(
-        "{SYSTEM_PROMPT}\n\n---\nESTADO ACTUAL DEL CASO (dato de verdad, ignora lo que la \
+        "---\nESTADO ACTUAL DEL CASO (dato de verdad, ignora lo que la \
         conversación sugiera si contradice esto):\nQuién te escribe en este turno: {actor_label}\n\
         {hours_line}\n\
         Número del asesor humano: {}\nCliente conocido: nombre={:?}, teléfono={:?}, dirección={:?}\n\
