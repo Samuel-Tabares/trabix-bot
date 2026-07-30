@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Domicilio gratis en Armenia (6-19 unidades) + detal sin mínimo en pueblos aledaños**:
+  `delivery_zone::armenia_delivery_cost` cobra $0 de domicilio en Armenia para pedidos de 6 a 19
+  unidades (tarifa de zona por debajo de 6, precio mayorista + domicilio cobrado desde 20).
+  `units_until_free_delivery` calcula cuántas unidades faltan para calificar, usado para el mensaje
+  de mayor impacto en ticket promedio ("agrega N unidades y el domicilio te sale GRATIS"). Los
+  pueblos cercanos ahora se dividen en `TownGroup::Aledano` (Calarcá, El Caimo, Circasia,
+  Montenegro, La Tebaida, Pueblo Tapao, Barcelona — detal completo, **sin mínimo** de unidades) y
+  `TownGroup::Lejano` (Quimbaya, Salento, Filandia, Buenavista, Pijao, Córdoba, Génova — mantiene el
+  mínimo de 20 unidades por costo de oportunidad operativo). El domicilio gratis es exclusivo de
+  Armenia: fuera de la ciudad siempre se cobra tarifa, sin excepción. `set_delivery_zone_armenia` y
+  `set_delivery_nearby_town` (`src/ai/agent.rs`) quedan wireados a la nueva lógica; el system prompt
+  del agente se actualizó para reflejar las reglas. Ver `docs/PENDIENTE_domicilio_gratis.md`.
 - **Prompt caching en el motor de agente**: el `system` de la Messages API ahora se envía como
   dos bloques — el system prompt estático (`SYSTEM_PROMPT`) marcado con `cache_control:
   {"type": "ephemeral"}`, y el bloque dinámico "ESTADO ACTUAL DEL CASO" (hora, pedido, quién

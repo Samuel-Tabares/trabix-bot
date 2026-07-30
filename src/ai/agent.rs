@@ -30,7 +30,7 @@ use crate::{
         memory, tools,
     },
     bot::{
-        delivery_zone::{self, ArmeniaZone, MIN_UNITS_OUTSIDE_ARMENIA},
+        delivery_zone::{self, ArmeniaZone},
         state_machine::{BotAction, ConversationContext, ConversationState, ImageAsset, TimerType, UserInput},
         states::checkout,
         timers::{ADVISOR_RESPONSE_TIMEOUT, RECEIPT_TIMEOUT},
@@ -102,9 +102,18 @@ DOMICILIO AUTOMÁTICO (no pidas al asesor si puedes resolverlo):
 - Armenia: apenas sepas la zona/barrio (norte/centro/sur) llama set_delivery_zone_armenia \
   INMEDIATAMENTE — no le preguntes el costo al asesor, la herramienta te lo da sola. Si la \
   dirección dice "sur/norte/centro de Armenia" ya tienes la zona, úsala sin volver a preguntar. ✓
-- Pueblo cercano conocido (Bogotá, etc.): lookup_nearby_town → si existe y ≥20 unidades → \
-  set_delivery_nearby_town → costo automático ✓
-- Pueblo cercano pero <20 unidades: rechaza con "Mínimo 20 unidades para ese destino" ✓
+- DOMICILIO GRATIS EN ARMENIA: pedidos de 6 a 19 unidades tienen domicilio $0 en Armenia (la \
+  herramienta lo calcula sola). Por debajo de 6 se cobra la tarifa de zona; si el cliente va en \
+  1-5 unidades, avísale cuántas le faltan para el domicilio gratis (la herramienta te dice el \
+  número exacto) — es el empujón de mayor impacto en el ticket. Desde 20 unidades es precio \
+  mayorista y el domicilio SIEMPRE se cobra, sin excepción.
+- Pueblo cercano conocido: llama lookup_nearby_town para saber si existe y si tiene mínimo de \
+  unidades. Algunos pueblos aledaños (Calarcá, El Caimo, Circasia, Montenegro, La Tebaida, \
+  Pueblo Tapao, Barcelona) NO tienen mínimo — se vende cualquier cantidad. Otros más lejanos \
+  (Quimbaya, Salento, Filandia, Buenavista, Pijao, Córdoba, Génova) SÍ mantienen el mínimo de 20 \
+  unidades. NO asumas el mínimo tú mismo: usa lo que devuelva lookup_nearby_town/set_delivery_nearby_town. \
+  Fuera de Armenia el domicilio SIEMPRE se cobra, nunca es gratis, sin importar la cantidad.
+- Pueblo con mínimo y no lo cumple: rechaza indicando el mínimo exacto que te devolvió la herramienta.
 - Municipio desconocido: message_advisor pidiendo costo → set_manual_delivery_cost ✓
 - Si el cliente pregunta "¿cuánto sería en total?" y el domicilio todavía no se conoce, PRIMERO \
   pregúntale la zona/barrio o municipio antes de cotizar. get_order_summary/add_order_item van a \
@@ -1119,16 +1128,32 @@ fn set_delivery_zone_armenia(input: &Value, context: &mut ConversationContext) -
     let sector = input.get("sector").and_then(Value::as_str).unwrap_or("");
     match ArmeniaZone::from_text(sector) {
         Some(zone) => {
-            let cost = zone.delivery_cost();
+            let total_units: u32 = context.items.iter().map(|item| item.quantity).sum();
+            let cost = delivery_zone::armenia_delivery_cost(zone, total_units);
             context.delivery_cost = Some(cost as i32);
-            (
+            let message = if cost == 0 {
                 format!(
-                    "Zona {} de Armenia: domicilio ${}.",
+                    "Zona {} de Armenia: domicilio GRATIS $0 (pedido de {total_units} unidades, \
+                     califica para domicilio gratis).",
                     zone.label(),
-                    format_thousands(cost)
-                ),
-                false,
-            )
+                )
+            } else if let Some(faltan) = delivery_zone::units_until_free_delivery(total_units) {
+                format!(
+                    "Zona {} de Armenia: domicilio ${} (agrega {faltan} unidad{} más y el \
+                     domicilio te sale GRATIS).",
+                    zone.label(),
+                    format_thousands(cost),
+                    if faltan == 1 { "" } else { "es" },
+                )
+            } else {
+                format!(
+                    "Zona {} de Armenia: domicilio ${} (pedido de {total_units} unidades, precio \
+                     mayorista con domicilio cobrado).",
+                    zone.label(),
+                    format_thousands(cost),
+                )
+            };
+            (message, false)
         }
         None => (
             format!("Sector desconocido: '{sector}'. Debe ser norte, centro o sur."),
@@ -1142,12 +1167,12 @@ fn set_delivery_nearby_town(input: &Value, context: &mut ConversationContext) ->
     match delivery_zone::lookup_nearby_town(town) {
         Some(found) => {
             let total_units: u32 = context.items.iter().map(|item| item.quantity).sum();
-            if total_units < MIN_UNITS_OUTSIDE_ARMENIA {
+            if found.min_units > 0 && total_units < found.min_units {
                 return (
                     format!(
                         "Para {} el pedido mínimo es de {} unidades (el pedido actual tiene {}). \
                          Avísale al cliente que ese destino no aplica con esta cantidad.",
-                        found.name, MIN_UNITS_OUTSIDE_ARMENIA, total_units
+                        found.name, found.min_units, total_units
                     ),
                     true,
                 );
@@ -1155,10 +1180,12 @@ fn set_delivery_nearby_town(input: &Value, context: &mut ConversationContext) ->
             context.delivery_cost = Some(found.delivery_cost as i32);
             (
                 format!(
-                    "{}: domicilio ${} (pedido de {} unidades, cumple el mínimo).",
+                    "{}: domicilio ${} (pedido de {} unidades{}). El domicilio siempre se cobra \
+                     fuera de Armenia, sin excepción.",
                     found.name,
                     format_thousands(found.delivery_cost),
-                    total_units
+                    total_units,
+                    if found.min_units > 0 { ", cumple el mínimo" } else { ", sin mínimo de unidades" },
                 ),
                 false,
             )
@@ -1166,8 +1193,7 @@ fn set_delivery_nearby_town(input: &Value, context: &mut ConversationContext) ->
         None => (
             format!(
                 "'{town}' no está en la lista de pueblos cercanos conocidos. Pídele al asesor \
-                 con message_advisor que confirme el valor del domicilio (recuerda: fuera de \
-                 Armenia el mínimo son {MIN_UNITS_OUTSIDE_ARMENIA} unidades) y luego usa \
+                 con message_advisor que confirme el valor del domicilio y luego usa \
                  set_manual_delivery_cost con lo que te responda."
             ),
             true,
