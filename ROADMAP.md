@@ -3,7 +3,7 @@
 > Léeme al iniciar sesión, junto con `CLAUDE.md`. Este archivo dice **qué sigue y en qué orden**;
 > `CLAUDE.md` dice **cómo está construido**. Actualizar este archivo cuando algo se complete.
 >
-> Última revisión: 2026-07-30.
+> Última revisión: 2026-07-31.
 
 ## Contexto de negocio mínimo (para no tener que salir del repo)
 
@@ -22,159 +22,81 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
 
 ---
 
+## Ya shippeado (no repetir)
+
+- **Prompt caching** (v1.9.0): `cache_control` en el system prompt estático + tools de
+  `src/ai/agent.rs`. Ver `docs/PENDIENTE_prompt_caching.md`.
+- **Domicilio gratis Armenia (6–19u) + detal sin mínimo en pueblos aledaños** (v1.9.0):
+  `src/bot/delivery_zone.rs`. Ver `docs/PENDIENTE_domicilio_gratis.md`.
+- **BOT_ENGINE toggle eliminado**: el bot corre agente siempre; `ANTHROPIC_API_KEY` es obligatoria.
+  `reminder_actions()` (dead code real, no solo teórico) y sus helpers de botones huérfanos en
+  `timers.rs` también se borraron.
+- **`send_quick_replies`/`send_options_list`** conectados como tools del agente (hasta 3 botones /
+  10 filas — límites de WhatsApp), sobre los `BotAction::SendButtons`/`SendList` que ya existían.
+- **Migración `012`**: `DROP TABLE` de las tablas huérfanas del simulador que creó `005`.
+- **CTWA click ID — captura sin credenciales**: `ctwa_clid` se lee del `referral` del webhook y se
+  guarda en `customers` (migración `011`, se captura una sola vez, no se sobreescribe). Cliente CAPI
+  (`src/capi.rs`) construido y wireado en la confirmación de compra (`UpdateCustomerAndAnalytics` en
+  `src/engine.rs`) — hoy es un no-op silencioso porque falta configurar `META_WABA_ID` /
+  `META_CAPI_DATASET_ID` / `META_CAPI_ACCESS_TOKEN`.
+
+---
+
 ## Orden de ejecución
 
-Los ítems 1–3 son **independientes entre sí y no dependen de nadie**. El 4 depende de una decisión
-que se toma en `crm-app`. El 5 es mecánico.
+### 1. CTWA + Conversions API — falta solo credenciales
 
-### 1. Prompt caching — máxima prioridad
+**Todo el código está listo** (captura de `ctwa_clid`, migración, cliente CAPI fail-silent, wireado
+al momento real de compra). Lo único que falta:
 
-**Por qué primero:** es lo único de toda la lista que se paga solo, no depende de terceros, y se
-hace en una sesión. Ahorro estimado **$300.000–350.000 COP por ciclo de pauta** — el doble de lo que
-se ahorraría renegociando la tasa del inversionista.
-
-**Estado actual (verificado):** `cache_control` no aparece en `src/ai/`. El system prompt
-(~11.400 caracteres, `src/ai/agent.rs`) y ~10 definiciones de tools se reenvían completos, a precio
-completo, **en cada turno**. Con ~15 llamadas por conversación que compra, se paga el mismo bloque
-quince veces. Costo hoy: ~$1.650 COP por conversación que compra, ~$550 por la que no —
-**~$460.000 por ciclo de 640 conversaciones**, ~28% de lo que se gasta en pauta.
-
-Esto es un **costo variable que escala linealmente con la inversión en anuncios**, y se paga en
-*todas* las conversaciones, no solo en las que compran.
-
-**Qué hacer:**
-1. Marcar cacheable el bloque estático: system prompt + definiciones de tools.
-2. Respetar el orden: lo estático primero, lo dinámico después. El bloque **"ESTADO ACTUAL DEL
-   CASO"** cambia cada turno → va **fuera** del segmento cacheado.
-3. Medir antes/después: gasto de la consola de Anthropic ÷ conversaciones del periodo.
-
-**Verificar al implementar:** el contrato exacto de caching en la API de Anthropic vigente (usar la
-skill `claude-api`, no memoria). El estimado de costo de arriba puede errar por 3× — contrastar con
-la consola real.
-
-**Después, no ahora:** evaluar Haiku 4.5 para turnos rutinarios reservando Sonnet para los de
-criterio comercial. Solo con caching ya medido y datos de conversión que permitan comparar.
-
-Detalle completo: `../docs/PENDIENTE_prompt_caching.md`.
-
----
-
-### 2. Domicilio gratis Armenia + detal en pueblos aledaños
-
-**Aprobado por Samuel el 2026-07-30, sin implementar.** Es **prerequisito de lanzar la pauta**: los
-creativos y el plan de ads ya prometen *"6 por $36.000 con domicilio gratis"*, y el bot todavía
-cobra domicilio en esos pedidos. Lanzar antes de esto = anunciar algo que el bot no cumple.
-
-**Regla exacta a implementar:**
-
-| Cantidad | Zona | Domicilio |
-|---|---|---|
-| 1–5 u | Armenia | Tarifa de zona (norte $6.000 / centro $8.000 / sur $10.000) |
-| **6–19 u** | **Armenia** | **GRATIS** |
-| 20+ u | Armenia | Precio mayorista + domicilio cobrado |
-| **Cualquiera** | **Grupo A** | Tarifa cobrada, **sin mínimo de unidades** |
-| 20+ u | Grupo B | Tarifa cobrada, **mínimo 20 u se mantiene** |
-
-**Grupo A** (se elimina el mínimo): Calarcá $15.000 · El Caimo $15.000 · Circasia $16.000 ·
-Montenegro $16.000 · La Tebaida $16.000 · Pueblo Tapao $20.000 · Barcelona $21.000.
-
-**Grupo B** (mínimo 20 u intacto): Quimbaya $32.000 · Salento $40.000 · Filandia $45.000 ·
-Buenavista $45.000 · Pijao $45.000 · Córdoba $48.000 · Génova $48.000.
-
-**El domicilio gratis es exclusivo de Armenia.** En todos los pueblos siempre se cobra tarifa.
-
-**Por qué el Grupo B conserva el mínimo:** no es margen, es **costo de oportunidad operativo** — un
-viaje a Génova bloquea al domiciliario más de una hora mientras los pedidos de Armenia esperan.
-
-**Por qué no hay riesgo financiero en quitar el mínimo del Grupo A:** el cliente paga el domicilio.
-Un pedido con mala relación precio/domicilio simplemente no convierte; no genera pérdida.
-
-**Notas técnicas obligatorias:**
-- Es **código determinista** en `src/bot/delivery_zone.rs` (hoy `MIN_UNITS_OUTSIDE_ARMENIA = 20`)
-  más las tools. **No se resuelve escribiéndolo en el system prompt.**
-- El guard anti-alucinación bloquea cualquier cifra `$X.XXX` que no venga textual en un tool-result
-  → la tool de cálculo **debe devolver el domicilio en $0 explícitamente** para que el agente lo
-  pueda comunicar.
-- `checkout::render_summary` ya distingue "domicilio desconocido" (`None`) de "conocido y vale $0"
-  (`Some(0)`) — ese caso ya está contemplado.
-- Actualizar `config/messages.toml`. El mensaje de mayor impacto en ticket promedio es
-  **"te faltan N unidades para domicilio gratis"**.
-
-**Verificación de que no se abre un hueco de precio:** 19 u al detal = $116.000 con domicilio gratis;
-20 u mayorista = $98.000 + domicilio. El mayorista sigue conviniéndole al cliente. Correcto.
-
-Detalle completo: `../docs/PENDIENTE_domicilio_gratis.md`.
-
----
-
-### 3. CTWA click ID + Conversions API de Meta
-
-**Aprobado, sin implementar.** Es el cambio de mayor impacto sobre el **rendimiento** de la pauta.
-
-**El problema:** Meta no ve nada de lo que pasa dentro de WhatsApp. Un anuncio click-to-WhatsApp
-optimiza por defecto hacia *"conversaciones iniciadas"*, no hacia compras — el algoritmo busca gente
-barata que abra chats, no compradores. Resultado típico: muchas conversaciones, pocos pedidos, y la
-conclusión equivocada de que "la pauta no sirve". **Sin esto, escalar presupuesto solo escala el
-desperdicio.**
-
-**Qué hacer:**
-1. **Capturar el click ID.** El webhook de Meta trae un objeto `referral` en el primer mensaje de
-   quien llega por un anuncio, con un identificador de clic (`ctwa_clid`). Leerlo en
-   `src/routes/webhook.rs` y guardarlo en `customers` (columna nueva, nullable).
-2. **Reportar la compra.** Cuando `finalize_checkout` confirma un pedido, enviar un evento
-   `Purchase` a la Conversions API con ese click ID, el valor real de la venta y `COP`.
-3. **Cambiar el evento de optimización** en Meta de "Conversaciones" a "Compras" cuando haya volumen
+1. **Samuel consigue Dataset ID + access token** desde Meta Business Manager. Flujo (WhatsApp
+   Business Messaging, distinto del Pixel de sitio web):
+   - Permisos `whatsapp_business_management` + `whatsapp_business_manage_events` en la app de
+     desarrollador (Advanced Access).
+   - Confirmar "Marketing API Access Tier" (gate de Meta: 1.500 llamadas exitosas en 15 días — puede
+     ya estar satisfecho una vez la pauta esté corriendo).
+   - `POST https://graph.facebook.com/v21.0/{WABA_ID}/dataset?access_token={TOKEN}` → devuelve
+     `dataset_id`. El `WABA_ID` es el mismo que usa la suscripción del webhook.
+   - Token: Business Settings → System Users → generar uno con esos dos scopes, sin expiración.
+2. Cargar `META_WABA_ID`, `META_CAPI_DATASET_ID`, `META_CAPI_ACCESS_TOKEN` en Railway.
+3. Verificar en la consola de Meta (Events Manager → dataset) que empiezan a llegar eventos
+   `Purchase` tras un pedido confirmado real.
+4. **Cambiar el evento de optimización** en Meta de "Conversaciones" a "Compras" cuando haya volumen
    (~50 compras/semana).
-
-**Requisitos duros:**
-- **Dataset ID + access token** desde Meta Business Manager — **los tiene que conseguir Samuel**,
-  no se puede avanzar sin eso.
-- Migración append-only (la última es `010_create_message_events.sql` → la siguiente es `011`).
-- El cliente HTTP hacia la CAPI **debe fallar en silencio y loguear**. Nunca puede tumbar ni demorar
-  la confirmación de un pedido — es telemetría, no ruta crítica.
-- Deduplicación por `event_id` para que un reintento no reporte la venta dos veces.
-
-**Verificar al implementar:** el nombre exacto del campo y el schema del evento en la documentación
-vigente de Meta. La mecánica es estable, el schema cambia.
 
 Detalle completo: `../docs/PENDIENTE_capi_meta.md`.
 
 ---
 
-### 4. Limpieza del motor determinístico — BLOQUEADA por una decisión
+### 2. Limpieza del motor determinístico — decisión tomada, ejecución en dos partes
 
-**No arrancar sin resolver primero la pregunta del asesor.** La decisión se toma en `crm-app`, no
-aquí (ver `../crm-app/ROADMAP.md`): ¿el bot deja de mandarle WhatsApp al asesor y solo escribe una
-señal de "necesita humano" que `crm-app` muestra en su bandeja, o `crm-app` es solo una vista de
-lectura y el WhatsApp al asesor se mantiene?
+**Decisión de Samuel (2026-07-31):** el bot deja de mandarle WhatsApp al asesor; `crm-app` pasa a
+ser la única superficie de trabajo del asesor.
 
-`src/bot/states/advisor.rs` (~2.100 líneas) + `relay.rs` (~268) **no son código legacy**: son la
-única vía de escalamiento a humano en producción hoy. Borrarlos sin resolver esa pregunta rompe el
-canal.
+**Bloqueada de verdad:** tocar `src/bot/states/advisor.rs` (~2.100 líneas) o `relay.rs` (~268)
+requiere que `crm-app` tenga envío saliente funcionando primero (`crm-app/src/server/inbox/send.ts`,
+hoy deshabilitado a propósito) — si no, el asesor se queda sin forma de responderle al cliente. Ese
+trabajo es en el repo `crm-app`, no aquí. Ver `../crm-app/ROADMAP.md`.
 
-Lo que **sí** se puede hacer sin esa decisión (~2.700–3.000 líneas muertas): borrar `menu.rs`,
-`customer_data.rs`, `transition()` de `state_machine.rs`, los handlers FSM de `checkout.rs`, y el
-toggle `BOT_ENGINE` completo. **Antes de borrar cualquier cosa, hacer grep de qué importa
-`src/ai/agent.rs` de cada archivo** — no confiar en listas escritas antes de esta sesión.
+**Lo que se puede seguir sacando en este repo sin esperar esa decisión** (borrado ya empezó esta
+sesión, ver "Ya shippeado" arriba, pero queda trabajo real): hallazgo clave de esta sesión — el plan
+original ("borrar por archivo si `src/ai/` no lo importa") **estaba mal**: `transition()` sigue
+siendo código vivo hoy para ~15 estados de hand-off (`WaitAdvisorResponse`, `RelayMode`,
+`SelectReferralOption`, etc. — lista completa en el doc de abajo), y varias funciones `*_actions` de
+`menu.rs`/`checkout.rs`/`order.rs`/`data_collect.rs`/`scheduling.rs`/`customer_data.rs` las comparten
+con `advisor.rs`. El borrado real que queda es **función por función, no archivo por archivo**.
 
-Plan detallado, incluyendo qué funciones **mantener** de cada archivo mixto:
-`docs/CLEANUP_deterministic_engine.md`.
-
-**Ganancia independiente que no espera a nada:** `src/whatsapp/buttons.rs` ya tiene
-`send_buttons`/`send_list` implementados pero marcados dead-code — `src/ai/agent.rs` nunca los llama.
-Conectarlos como tools del agente (botones/listas interactivas) es aditivo y de bajo riesgo.
+Plan corregido y lista de funciones candidatas (`handle_review_checkout`,
+`handle_select_payment_method`, `handle_main_menu`, etc. — los handlers de estados agent-owned, que
+sí parecen genuinamente muertos pero faltan verificar con grep antes de borrar):
+`docs/CLEANUP_deterministic_engine.md` (reescrito esta sesión con los hallazgos).
 
 ---
 
-### 5. Cortar release — mecánico
+### 3. Cosas menores sueltas
 
-`CHANGELOG.md` tiene ~50 líneas en `[Unreleased]` (sabor tamarindo, regla sin licor al detal,
-mínimo 24h en programados, upgrade de modelo, `message_events`) mientras `Cargo.toml` sigue en
-`1.8.0`. Hay una release sin cortar. Bump + tag `vX.Y.Z` según las convenciones de `CLAUDE.md`.
-
-**Migración muerta:** `migrations/005_create_simulator_tables.sql` creó tablas del simulador
-(removido en v1.8.0) que ya no referencia nadie. **No editar esa migración** (append-only) — crear
-una nueva que haga `DROP TABLE`.
+- Docs obsoletos (`docs/archive/MASTER_PROMPT.md`, etc.) — ya archivados, candidatos a borrar
+  cuando alguien pase por ahí. Cero urgencia.
 
 ---
 

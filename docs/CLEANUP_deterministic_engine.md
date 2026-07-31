@@ -1,117 +1,126 @@
-# Limpieza del motor determinístico — guía para la próxima sesión
+# Limpieza del motor determinístico — estado real (actualizado 2026-07-31)
 
-No ejecutar en la sesión que escribió este documento (2026-07-25, actualizado 2026-07-26) — es la
-referencia para cuando se aborde la limpieza. Contexto inmediato: el bot solo va a correr con
-`BOT_ENGINE=agent` de ahora en adelante (Samuel confirmó que el motor determinístico no se vuelve a
-usar y que no se necesita red de rollback).
+Este documento reemplaza la versión de 2026-07-25/26. Esa versión asumía que borrar el FSM
+determinístico era tan simple como "grep qué importa `src/ai/agent.rs` de cada archivo y borrar el
+resto". Al ejecutar esa verificación en esta sesión se encontró que el supuesto es **falso**: hay
+una segunda vía de alcance, `src/bot/inactivity.rs` y `transition()` mismo, que mantiene vivo mucho
+más código FSM del que el análisis original contemplaba. Ver sección 1.
 
-## 0. Arquitectura futura del sistema — por qué esto le da forma a la limpieza
+## 0. Lo que SÍ se ejecutó en esta sesión (seguro, verificado)
 
-Decisión de arquitectura (2026-07-26, no se ejecuta todavía, es la referencia para diseñar la
-limpieza y el trabajo posterior): **no se migra código de `trabix-bot` hacia `crm-app`**.
-`accountability_app/`, `website/` y `trabix-bot/` siguen siendo proyectos independientes, cada uno
-con su stack y propósito propios — pero los tres quedan **interconectados a través de `crm-app/`**,
-que se convierte en el hub central operativo (absorbiendo eventualmente lo financiero/producción de
-`accountability_app`, ver `crm-app/CLAUDE.md`).
+1. **Se eliminó el toggle `BOT_ENGINE`** (`src/config.rs`, `src/engine.rs`, `src/bot/timers.rs`,
+   `.env.example`, tests). El bot ahora corre agente siempre; `ANTHROPIC_API_KEY` es obligatoria.
+   Esto era seguro porque `transition()` ya se ejecutaba para los mismos estados sin importar el
+   valor del toggle (ver punto 1 abajo) — quitar el toggle no cambia ningún comportamiento
+   observable, solo colapsa una rama que ya era inalcanzable en producción (`BOT_ENGINE` siempre
+   fue `agent` desde el rollout).
+2. **Se borró `reminder_actions()`** (`src/bot/inactivity.rs`) y los helpers de botones huérfanos
+   en `timers.rs` (`receipt_timeout_buttons`, `advisor_timeout_buttons`, `contact_timeout_buttons`,
+   `reply_button`). Esto SÍ era código muerto real: `reminder_actions` solo se llamaba desde la
+   rama `else` de `if state.config.bot_engine.is_agent() { texto } else { reminder_actions(...) }`
+   en `expire_conversation_abandon_with_source` — con el toggle fuera, esa rama ya no existe.
+3. **Migración `012_drop_simulator_tables.sql`**: `DROP TABLE` de lo que creó la migración `005`
+   (simulador, removido en v1.8.0). `005` se mantiene intacta (regla append-only).
+4. **`send_buttons`/`send_list` conectados como tools del agente** (`send_quick_replies` con hasta
+   3 botones, `send_options_list` con hasta 10 filas — límites duros de WhatsApp) en
+   `src/ai/agent.rs`. Antes eran dead-code (`#![allow(dead_code)]` en `src/whatsapp/buttons.rs`)
+   usados solo por el FSM determinístico.
 
-Eso redefine qué debe ser `trabix-bot` a largo plazo: **literalmente el bot, nada más**. Su trabajo
-es hablar con clientes por WhatsApp, capturar datos, y leer/escribir información en la app central
-— todo lo que haría una persona operando WhatsApp más campañas de marketing y finanzas, pero vía
-integración (tools/API hacia la app central), no duplicando esa lógica de negocio dentro del bot.
-Concretamente, a futuro (fuera de esta limpieza, es la dirección de largo plazo):
-- El bot deja de ser dueño exclusivo de datos que la app central también necesita (pricing
-  versionado, tiers de embajador, etc.) — hoy vive en `src/bot/pricing.rs` y config propia; a futuro
-  podría consultarlos vía la app central en vez de mantener su propia copia.
-- El flujo de asesor (punto 3 abajo) se resuelve en esta dirección: el humano trabaja desde
-  `crm-app` (su bandeja/CRM), no recibiendo WhatsApp aparte — pero el mecanismo concreto (¿el bot
-  sigue enviando WhatsApp al asesor además de escribir en `crm-app`, o `crm-app` pasa a ser la única
-  superficie?) sigue sin decidir, ver punto 3.
+## 1. Por qué NO se borró el resto (menu.rs, customer_data.rs, handlers FSM) — hallazgo clave
 
-Esta sección es visión, no una tarea de esta limpieza — los puntos 1-6 de abajo (borrado de FSM
-muerto) son válidos y ejecutables independientemente de cuándo se aborde esta migración más grande.
+`transition()` (`src/bot/state_machine.rs`) **sigue siendo código vivo en producción, sin
+importar el toggle**, porque `should_use_agent()` (`src/engine.rs`) solo desvía al agente cuando el
+estado actual está en `is_agent_owned_state()`. Varios estados quedan **fuera** de esa lista y por
+lo tanto siguen yendo a `transition()` cuando el CLIENTE escribe estando en ellos:
 
-## 1. FSM muerto a borrar (~2,700–3,000 líneas)
+`SelectReferralOption`, `WaitReferralCode`, `WaitAdvisorResponse`, `NegotiateHour`,
+`OfferHourToClient`, `WaitClientHour`, `WaitAdvisorHourDecision`, `WaitAdvisorConfirmHour`,
+`WaitAdvisorMayor`, `RelayMode`, `ContactAdvisorName`, `ContactAdvisorPhone`, `WaitAdvisorContact`,
+`LeaveMessage`, `OrderComplete`.
 
-Antes de borrar cualquier cosa en `checkout.rs`, `order.rs`, `data_collect.rs`, `scheduling.rs`:
-**grep primero** qué funciones importa `src/ai/agent.rs` de cada archivo — no asumir la lista de
-abajo sigue vigente si el código cambió entre esta nota y la sesión de limpieza.
+Es decir: mientras un caso espera respuesta del asesor, está negociando hora, o está en modo relay,
+si el CLIENTE (no el asesor) escribe algo, ese mensaje se procesa vía `transition()` →
+`checkout::handle_wait_advisor_response`, `advisor::handle_client_waiting_state`,
+`relay::handle_relay_mode`, `checkout::handle_order_complete`, etc. Esto es verdad **hoy**, con el
+toggle ya eliminado — no es un artefacto del `BOT_ENGINE` viejo.
 
-| Archivo | Líneas | Acción |
-|---|---|---|
-| `src/bot/states/menu.rs` | 284 | Borrar completo — sin imports desde `src/ai/`. |
-| `src/bot/states/customer_data.rs` | 506 | Borrar completo — sin imports desde `src/ai/`. |
-| `src/bot/state_machine.rs` | 851 | Borrar `transition()` (FSM de cliente, dead una vez agent-only). **Mantener** `transition_advisor()` — no es legacy, ver punto 3. Auditar el resto del archivo (tipos compartidos como `BotAction` pueden seguir en uso por el motor de agente). |
-| `src/bot/states/checkout.rs` | 1,234 | Mixto. Borrar handlers FSM (`handle_review_checkout`, `handle_select_payment_method`, `handle_wait_receipt`, ~600 líneas). **Mantener**: `render_summary`, `render_items`, `current_order_totals`, `snapshot_from_totals`, `order_confirmation_analytics_action` — usados por `src/ai/agent.rs`. |
-| `src/bot/states/order.rs` | 676 | Mixto. **Mantener** `flavor_by_id`, `validate_quantity` (usados por `src/ai/tools.rs`) — confirmar si hay más antes de borrar el resto. |
-| `src/bot/states/data_collect.rs` | 281 | Mixto. **Mantener** `validate_address`/`validate_name`/`validate_phone` (usados por `src/ai/tools.rs`). |
-| `src/bot/states/scheduling.rs` | 506 | Mixto. **Mantener**: `current_bogota_now()` (confirmado en `src/ai/agent.rs` líneas 638, 980, 2556, 2572), `is_within_business_hours`, `immediate_delivery_hours_text` (usados por el agente) — mover a un módulo compartido (ej. `src/bot/scheduling_helpers.rs`) en vez de dejarlos huérfanos dentro de un archivo cuya parte FSM se borra. |
+Segunda vía de alcance, independiente de la primera: antes de esta sesión, `src/bot/inactivity.rs`
+tenía `reminder_actions()`, que despachaba por *cada* `ConversationState` determinístico
+(`MainMenu`, `ReviewCheckout`, `SelectType`, `CollectName`, etc.) hacia `menu::`, `checkout::`,
+`order::`, `data_collect::`, `scheduling::`, `customer_data::`, `advisor::` — y esa función SÍ se
+llamaba en producción (rama `else` del inactivity timer) hasta que se borró en el punto 0.2. Con
+`reminder_actions` fuera, esta segunda vía de alcance desaparece — pero mientras existió, cualquier
+intento de borrar esos módulos habría roto el recordatorio de inactividad del cliente.
 
-**No tocar** (infraestructura compartida por ambos motores, no es legacy):
-`src/bot/pricing.rs` (481), `src/bot/delivery_zone.rs` (151), `src/bot/timers.rs` (1,445),
-`src/bot/inactivity.rs` (224).
+**Conclusión:** con el toggle y `reminder_actions` fuera, la superficie de código FSM que sigue
+viva se redujo a la primera vía (`transition()` para los ~15 estados no agent-owned de arriba) más
+lo que las funciones `*_actions` de esos módulos comparten con `advisor.rs` (p. ej.
+`advisor.rs` llama `checkout::payment_entry_state_and_actions` directamente, sin pasar por
+`transition()`). Pero **archivo por archivo** (`menu.rs`, `customer_data.rs`, `order.rs`,
+`data_collect.rs`, `scheduling.rs`, `checkout.rs`) siguen mezclando funciones vivas y muertas, y
+distinguirlas requiere el mismo ejercicio de trazar cada función que se hizo en esta sesión para
+`inactivity.rs` — no se alcanzó a completar para los seis archivos en esta sesión.
 
-## 2. Borrar el toggle `BOT_ENGINE`
+## 2. Qué queda pendiente y cómo abordarlo correctamente
 
-- `src/config.rs`: enum `BotEngine`, función `from_env()` (línea ~11), variante `Deterministic` —
-  colapsar a un solo modo (agente), sin rama determinística.
-- `src/engine.rs:922`: chequeo `state.config.bot_engine.is_agent()` — eliminar la bifurcación,
-  dejar el único camino.
-- `trabix-bot/.env.example`: quitar el bloque de comentario sobre `BOT_ENGINE=deterministic` /
-  rollback instantáneo (ya no aplica).
-- `general_info/current_runtime_reference.md`: actualizar cualquier sección que documente el
-  toggle o el motor determinístico como opción activa.
+**No repetir el error del documento anterior**: no asumir que "sin imports desde `src/ai/`" =
+"código muerto". El criterio correcto es "sin ningún llamador vivo", y hay que verificarlo con
+`grep -rn "nombre_de_la_función" src/` para cada función candidata, no por archivo.
 
-## 3. Flujo de asesor — dirección decidida, mecanismo concreto NO es borrado simple
+Plan sugerido para la próxima sesión de limpieza:
 
-`src/bot/states/advisor.rs` (2,100 líneas) + `src/bot/states/relay.rs` (268 líneas) = 2,368
-líneas. **No es código legacy** — es la única vía de escalamiento a humano hoy, para ambos
-motores (`is_agent_owned_state()` en `src/engine.rs:888` excluye explícitamente estos estados, así
-que siempre corren por el FSM determinístico sin importar `BOT_ENGINE`).
+1. Para cada archivo mixto (`checkout.rs`, `order.rs`, `data_collect.rs`, `scheduling.rs`,
+   `customer_data.rs`, `menu.rs`), listar sus funciones `pub fn` y `grep -rn` cada una por fuera del
+   propio archivo.
+2. Clasificar cada función en tres grupos:
+   - **Viva vía `transition()`** para uno de los ~15 estados no agent-owned (sección 1) → no tocar.
+   - **Viva vía otro módulo** (`advisor.rs`, `src/ai/agent.rs`, `src/ai/tools.rs`) → no tocar.
+   - **Sin llamadores fuera de su propio archivo, y solo alcanzable antes desde `reminder_actions`
+     o desde un `handle_*` que ya está en el grupo muerto** → candidata a borrar.
+3. Los `handle_*` que despachan estados agent-owned (`handle_review_checkout`,
+   `handle_select_payment_method`, `handle_wait_receipt`, `handle_main_menu`, `handle_view_menu`,
+   `handle_view_schedule`, `handle_select_type/flavor/quantity/add_more/confirm_restart_order`,
+   `handle_collect_name/phone/address`, `handle_when_delivery/check_schedule/out_of_hours/
+   select_date/select_time/confirm_schedule`, `handle_confirm_customer_data/
+   select_customer_data_field/edit_customer_*`, `confirm_checkout`) son los primeros candidatos
+   fuertes: solo los llama `transition()`, y `transition()` nunca los alcanza en producción porque
+   sus estados son todos agent-owned. **Verificar con grep antes de borrar, no confiar en esta
+   lista** — puede haber cambiado desde que se escribió.
+4. Los `*_actions` builders (p. ej. `review_checkout_actions`, `select_payment_method_actions`,
+   `main_menu_actions`) probablemente sobreviven más tiempo: varios se comparten entre `transition()`
+   (para los estados no agent-owned) y `advisor.rs`. Revisar cada uno individualmente.
+5. `transition()` en sí **no se puede borrar completo** — solo se puede achicar su `match` a los
+   ~15 estados no agent-owned una vez que los handlers de los estados agent-owned se confirmen
+   muertos y se borren. El `match` deja de ser exhaustivo sobre variantes agent-owned; hay que
+   decidir si se colapsan con `_ => unreachable!()` o si el enum `ConversationState` se separa en
+   dos (estados-agente vs estados-handoff) — esto último es un cambio de diseño más grande, fuera
+   de alcance de una limpieza mecánica.
 
-Dirección ya decidida (ver punto 0): el asesor trabaja desde `crm-app` en vez de recibir WhatsApp
-aparte. Lo que falta decidir, y por eso este archivo NO se toca todavía, es el mecanismo concreto:
-- ¿El bot deja de enviarle WhatsApp al asesor por completo y solo escribe en `message_events` +
-  alguna señal de "necesita humano" que `crm-app` muestre en su bandeja? (`crm-app` ya lee
-  `message_events` en tiempo casi real — ver `crm-app/src/server/inbox/`.)
-- ¿O el bot sigue notificando al asesor por WhatsApp como hoy, y `crm-app` es solo una vista
-  adicional de solo lectura, sin reemplazar el canal?
-- Si `crm-app` pasa a ser la superficie real de escalamiento, su envío saliente (hoy deshabilitado
-  a propósito, `crm-app/src/server/inbox/send.ts`) tiene que resolverse primero — el asesor
-  necesita poder responderle al cliente desde ahí.
+## 3. Flujo de asesor — decisión tomada, ejecución sigue bloqueada
 
-Decidir esto **antes** de tocar `advisor.rs`/`relay.rs` — si se borra en la misma pasada que el
-punto 1 sin resolver esta pregunta, se rompe el único canal de escalamiento humano en producción.
+**Decisión (2026-07-31, Samuel):** el bot deja de mandarle WhatsApp al asesor; `crm-app` pasa a ser
+la única superficie donde el asesor trabaja el caso.
 
-## 4. Migración 005 muerta
+**Por qué no se ejecuta todavía:** `crm-app/src/server/inbox/send.ts` (envío saliente) sigue
+deshabilitado a propósito — sin eso, el asesor no tiene cómo responderle al cliente desde `crm-app`.
+Construir ese envío saliente es trabajo en el repo `crm-app`, no en `trabix-bot`, y es prerequisito
+antes de tocar `src/bot/states/advisor.rs` (~2.100 líneas) o `relay.rs` (~268 líneas) aquí. Ver
+`../crm-app/ROADMAP.md`.
 
-`migrations/005_create_simulator_tables.sql` (tablas `simulator_sessions`/`simulator_messages`/
-`simulator_media`) — cero referencias en `src/`, sobrante del simulador removido en v1.8.0.
-**No editar la migración** (regla de append-only del repo) — crear una nueva migración numerada
-que haga `DROP TABLE` de lo que 005 creó.
+Una vez que `crm-app` tenga envío saliente:
+- El bot deja de usar `BindAdvisorSession`/`SendText` hacia el asesor y en su lugar escribe una
+  señal de "necesita humano" (probablemente ya cubierto por `message_events` + un campo de estado
+  que `crm-app` pueda leer).
+- `advisor.rs`/`relay.rs` se reemplazan o se reducen a lo mínimo que siga necesitando el motor de
+  agente (si algo).
+- Esto también cambia qué estados quedan "no agent-owned" en la sección 1 — varios de los
+  `Wait*`/`Negotiate*`/`Relay*` de esa lista podrían desaparecer si el hand-off completo pasa a
+  `crm-app`. Re-derivar la lista de la sección 1 cuando esto se ejecute, no reusarla de memoria.
+
+## 4. Migración `005` muerta — resuelto (ver sección 0.3)
 
 ## 5. Docs obsoletos
 
-- `docs/archive/MASTER_PROMPT.md`, `MASTER_PROMPT_PRODUCCION.md`, `AI_AGENT_FAQ.md`, `todo.md` —
-  candidatos a borrar (docs pre-agente, ya superados por `general_info/current_runtime_reference.md`).
-- `general_info/current_runtime_reference.md` — revisar el archivo completo (no solo referencias
-  puntuales al simulador) por si quedan secciones desalineadas con el estado actual del motor.
-
-## 6. Ganancia independiente — no depende de la limpieza de arriba
-
-`src/whatsapp/buttons.rs` ya tiene `send_buttons`/`send_list` implementados pero marcados
-`#![allow(dead_code)]` — `src/ai/agent.rs` nunca los llama; solo el FSM determinístico los usa hoy
-(vía `BotAction::SendButtons/SendList` en `src/engine.rs`). Conectarlos como nuevas tools del
-agente de IA (botones/listas interactivas en vez de solo texto) es bajo riesgo, aditivo, y se puede
-hacer en cualquier momento — no hace falta esperar a esta limpieza ni a la decisión del punto 3.
-
-## Orden recomendado para la sesión de limpieza
-
-1. Resolver la pregunta del punto 3 primero (con Samuel) — determina si `advisor.rs`/`relay.rs` se
-   tocan en esta sesión o quedan intactos.
-2. Punto 1 (FSM muerto) + punto 2 (toggle `BOT_ENGINE`) — pueden ir juntos, mismo cambio conceptual.
-3. Punto 4 (migración 005) y punto 5 (docs) — mecánico, bajo riesgo, en cualquier momento.
-4. Punto 6 (botones/listas) — independiente, se puede adelantar incluso antes de esta sesión si hay
-   tiempo suelto.
-
-Después de cada cambio: `cargo check` + `cargo test`, y actualizar `CHANGELOG.md` según las
-convenciones de commit del repo (`trabix-bot/CLAUDE.md`, sección "Commit conventions").
+Sin cambios respecto a la nota anterior: `docs/archive/MASTER_PROMPT.md`,
+`MASTER_PROMPT_PRODUCCION.md`, `AI_AGENT_FAQ.md`, `todo.md` siguen siendo candidatos a borrar
+(ya archivados, no se tocaron en esta sesión).

@@ -50,16 +50,18 @@ Componentes principales:
 - `migrations/`
   - esquema PostgreSQL
 
-## Motor De Agente IA (`BOT_ENGINE=agent`)
+## Motor De Agente IA
 
-El motor de agente corre en el runtime productivo. Reglas operativas:
+El motor de agente es el único runtime (el toggle `BOT_ENGINE` se eliminó — no hay rollback a un
+motor determinista global, `ANTHROPIC_API_KEY` es obligatoria para arrancar).
 
-- `BOT_ENGINE` sin definir = motor determinista. Quitar la variable en Railway y redeploy es el
-  rollback completo: las tablas son compartidas y no hay nada que migrar de vuelta.
-- `BOT_ENGINE=agent` exige `ANTHROPIC_API_KEY`.
 - El agente es dueño de los estados de autoservicio del cliente (menu, pedido, datos, checkout,
-  `ask_delivery_cost`, `select_payment_method`, `wait_receipt`). Los estados de negociacion de
-  hora, esperas de asesor legadas y relay siguen 100% deterministas.
+  `ask_delivery_cost`, `select_payment_method`, `wait_receipt`) — ver `is_agent_owned_state()` en
+  `src/engine.rs`. Los estados de negociacion de hora, esperas de asesor legadas y relay siguen
+  100% deterministas (`transition()` en `src/bot/state_machine.rs`) — esto es estructural, no un
+  modo alternativo: un mensaje del CLIENTE mientras el caso espera al asesor, negocia hora, o está
+  en relay, siempre pasa por el FSM determinista, sin importar nada más. Detalle completo de qué
+  código FSM sigue vivo por esta vía en `docs/CLEANUP_deterministic_engine.md`.
 
 Protecciones activas en modo agente:
 
@@ -152,8 +154,9 @@ Auditoria de alcanzabilidad del relay (2026-07-15): en modo agente NO existe cam
   es `HardReset` (pedido a `manual_followup` + reset a `main_menu`), nunca relay ni
   `negotiate_hour` (la rama `AutoCannot` -> `negotiate_hour` solo aplica a
   `wait_advisor_response`, inalcanzable en modo agente).
-- unica excepcion intencional: conversaciones que ya estaban en estados deterministas cuando se
-  activo `BOT_ENGINE=agent` siguen su flujo determinista completo, incluido relay.
+- unica excepcion intencional: conversaciones que caen en un estado no agent-owned (esperas de
+  asesor, negociacion de hora, relay — ver `is_agent_owned_state()`) siguen su flujo determinista
+  completo mientras esten ahi, incluido relay.
 
 ## Ruteo Real Del Webhook
 
@@ -721,9 +724,11 @@ Variables y datos operativos clave:
 - `WHATSAPP_APP_SECRET`
 - `ADVISOR_PHONE`
 - `MENU_IMAGE_MEDIA_ID`
-- `BOT_ENGINE` (`deterministic` por defecto; `agent` activa el motor IA)
-- `ANTHROPIC_API_KEY` (obligatoria con `BOT_ENGINE=agent`)
+- `ANTHROPIC_API_KEY` (obligatoria — sin ella el bot no arranca)
 - `AGENT_DAILY_LLM_CALL_LIMIT` (opcional, kill-switch global de llamadas LLM por dia)
+- `META_WABA_ID`, `META_CAPI_DATASET_ID`, `META_CAPI_ACCESS_TOKEN` (opcionales; sin las tres, el
+  reporte de compras a la Conversions API de Meta es un no-op silencioso — ver
+  `docs/PENDIENTE_capi_meta.md`)
 
 Notas actuales:
 
