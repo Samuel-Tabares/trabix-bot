@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-07-31
+
 ### Added
 - **CTWA click ID + Conversions API de Meta (plumbing completo, falta solo credenciales)**:
   `ctwa_clid` se captura del objeto `referral` en el primer mensaje de un cliente que llega por un
