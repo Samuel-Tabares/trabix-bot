@@ -317,7 +317,7 @@ pub fn snapshot_from_totals(
 /// ya acumulado y no vuelve a contar `times_used`; si es la primera vez, envía
 /// el total completo (ver docs/canary-fixes-2026-07-19.md hallazgo A).
 pub fn order_confirmation_analytics_action(context: &ConversationContext) -> Option<BotAction> {
-    context.current_order_id?;
+    let order_id = context.current_order_id?;
     let totals = current_order_totals(context);
 
     let (total_spent_cop, total_units_purchased, discount_delta, commission_delta, times_used_inc) =
@@ -340,6 +340,7 @@ pub fn order_confirmation_analytics_action(context: &ConversationContext) -> Opt
 
     Some(BotAction::UpdateCustomerAndAnalytics {
         phone_number_meta: context.phone_number.clone(),
+        order_id,
         total_spent_cop,
         total_units_purchased,
         referral_code: context.referral_code.clone(),

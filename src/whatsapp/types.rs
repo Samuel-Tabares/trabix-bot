@@ -126,6 +126,22 @@ pub struct IncomingMessage {
     pub interactive: Option<InteractiveContent>,
     #[serde(default)]
     pub image: Option<ImageContent>,
+    #[serde(default)]
+    pub referral: Option<MessageReferral>,
+}
+
+/// Presente solo en el primer mensaje de un cliente que llegó por un anuncio
+/// click-to-WhatsApp (CTWA). `ctwa_clid` es lo que hay que reenviar a la
+/// Conversions API de Meta junto con la compra para cerrar el lazo de
+/// atribución (ver docs/PENDIENTE_capi_meta.md).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageReferral {
+    #[serde(default)]
+    pub source_type: Option<String>,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub ctwa_clid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -305,6 +321,7 @@ mod tests {
             }),
             interactive: None,
             image: None,
+            referral: None,
         }
     }
 

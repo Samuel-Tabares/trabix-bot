@@ -41,6 +41,7 @@ pub async fn process_customer_input(
     phone: String,
     profile_name: Option<String>,
     username: Option<String>,
+    ctwa_clid: Option<String>,
     input: UserInput,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let _case_lock = crate::lock_conversation(&state.conversation_locks, &phone).await;
@@ -62,7 +63,7 @@ pub async fn process_customer_input(
     // Primer contacto en motor agente: se responde con un saludo de bienvenida
     // FIJO (sin gastar una llamada al LLM). De ahí en adelante todo lo maneja
     // el LLM (ver docs/canary-fixes-2026-07-19.md item 3).
-    if should_use_agent(&state, &current_state) && !context.has_greeted {
+    if should_use_agent(&current_state) && !context.has_greeted {
         context.has_greeted = true;
         send_text(&state, &phone, &client_messages().agent.welcome).await?;
         log_outbound_text(&state, &phone, &phone, &client_messages().agent.welcome).await;
@@ -77,7 +78,7 @@ pub async fn process_customer_input(
         return Ok(());
     }
 
-    let (new_state, mut actions) = if should_use_agent(&state, &current_state) {
+    let (new_state, mut actions) = if should_use_agent(&current_state) {
         match crate::ai::agent::run_customer_turn(&state, &mut context, &current_state, &input)
             .await
         {
@@ -139,6 +140,7 @@ pub async fn process_customer_input(
         manual_name,
         username.as_deref(),
         context.delivery_address.as_deref(),
+        ctwa_clid.as_deref(),
     )
     .await?;
 
@@ -387,7 +389,7 @@ pub async fn process_advisor_input(
 
     let (current_state, mut context) =
         rehydrate_client_conversation(&state, &client_conversation).await?;
-    let (new_state, mut actions) = if should_use_agent(&state, &current_state) {
+    let (new_state, mut actions) = if should_use_agent(&current_state) {
         match crate::ai::agent::run_advisor_turn(&state, &mut context, &current_state, &input)
             .await
         {
@@ -840,6 +842,7 @@ pub async fn execute_actions(
             }
             BotAction::UpdateCustomerAndAnalytics {
                 phone_number_meta,
+                order_id,
                 total_spent_cop,
                 total_units_purchased,
                 referral_code,
@@ -849,6 +852,35 @@ pub async fn execute_actions(
             } => {
                 update_customer_totals(&state.pool, phone_number_meta, *total_spent_cop, *total_units_purchased)
                     .await?;
+
+                // Delta > 0 = venta nueva o ampliada; deltas <= 0 son
+                // modificaciones que reducen un pedido ya reportado, no una
+                // compra nueva que reportarle a Meta (ver docs/PENDIENTE_capi_meta.md).
+                // Corre en background: la CAPI es telemetría, nunca puede
+                // demorar la confirmación del pedido al cliente.
+                if *total_spent_cop > 0 {
+                    let capi = state.capi.clone();
+                    let pool = state.pool.clone();
+                    let phone = phone_number_meta.clone();
+                    let order_id = *order_id;
+                    let value_cop = *total_spent_cop;
+                    tokio::spawn(async move {
+                        let ctwa_clid = match crate::db::queries::get_customer(&pool, &phone).await
+                        {
+                            Ok(Some(customer)) => customer.ctwa_clid,
+                            Ok(None) => None,
+                            Err(err) => {
+                                tracing::warn!(
+                                    order_id,
+                                    error = %err,
+                                    "failed to look up ctwa_clid for CAPI purchase report"
+                                );
+                                None
+                            }
+                        };
+                        capi.report_purchase(order_id, ctwa_clid, value_cop).await;
+                    });
+                }
 
                 if let Some(code) = referral_code {
                     let discount_inc = referral_discount_cop.unwrap_or(0);
@@ -918,8 +950,8 @@ fn is_agent_owned_state(state: &ConversationState) -> bool {
     )
 }
 
-fn should_use_agent(state: &AppState, current_state: &ConversationState) -> bool {
-    state.config.bot_engine.is_agent() && is_agent_owned_state(current_state)
+fn should_use_agent(current_state: &ConversationState) -> bool {
+    is_agent_owned_state(current_state)
 }
 
 async fn load_or_create_conversation(

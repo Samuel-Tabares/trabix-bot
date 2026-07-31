@@ -56,11 +56,10 @@ pub enum ConversationState {
     WaitAdvisorContact,
     LeaveMessage,
     OrderComplete,
-    /// Estado propietario del agente de IA (Fase 1+): la conversacion vive
-    /// fuera de `transition()` mientras `BOT_ENGINE=agent` la controla. Solo
-    /// se persiste como marcador; `transition()` la trata como `MainMenu` si
-    /// llega a ejecutarse deterministicamente (p. ej. tras revertir
-    /// `BOT_ENGINE`).
+    /// Legacy: nada escribe este estado hoy (el motor de agente reutiliza los
+    /// nombres de estado FSM como marcador de persistencia, ver
+    /// `is_agent_owned_state` en `src/engine.rs`). Se mantiene solo para
+    /// deserializar filas viejas que puedan tenerlo grabado.
     AgentChat,
 }
 
@@ -373,6 +372,7 @@ pub enum BotAction {
     },
     UpdateCustomerAndAnalytics {
         phone_number_meta: String,
+        order_id: i32,
         /// Delta a sumar (puede ser negativo al reabrir/modificar un pedido ya
         /// confirmado). En la primera confirmación el delta es el total completo.
         total_spent_cop: i32,
@@ -656,10 +656,8 @@ pub fn transition(
         }
         ConversationState::RelayMode => relay::handle_relay_mode(input, context),
         ConversationState::OrderComplete => checkout::handle_order_complete(context),
-        // Nunca deberia ejecutarse en operacion normal: el engine desvia los
-        // turnos de cliente al agente de IA mientras el estado persistido es
-        // agent_chat. Si BOT_ENGINE vuelve a deterministic a mitad de una
-        // conversacion, degradar sin romper es mejor que un estado invalido.
+        // Legacy: nada escribe este estado hoy (ver comentario en el enum).
+        // Degradar a MainMenu es mejor que un estado invalido si aparece.
         ConversationState::AgentChat => menu::handle_main_menu(input, context),
     }
 }
@@ -767,6 +765,7 @@ mod tests {
             text: None,
             interactive: None,
             image: None,
+            referral: None,
         }
     }
 

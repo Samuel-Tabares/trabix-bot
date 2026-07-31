@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **CTWA click ID + Conversions API de Meta (plumbing completo, falta solo credenciales)**:
+  `ctwa_clid` se captura del objeto `referral` en el primer mensaje de un cliente que llega por un
+  anuncio click-to-WhatsApp (`src/whatsapp/types.rs`, `src/routes/webhook.rs`) y se guarda una sola
+  vez en `customers.ctwa_clid` (migración `011`, nunca se sobreescribe). Nuevo `src/capi.rs`
+  (`CapiClient`) reporta un evento `Purchase` a la Conversions API de Meta en el momento real de
+  confirmación de compra (`BotAction::UpdateCustomerAndAnalytics` en `src/engine.rs`, solo cuando el
+  delta de venta es positivo) — corre en background (`tokio::spawn`), nunca bloquea ni demora la
+  confirmación del pedido, y falla en silencio si `META_WABA_ID`/`META_CAPI_DATASET_ID`/
+  `META_CAPI_ACCESS_TOKEN` no están configuradas. Ver `docs/PENDIENTE_capi_meta.md`.
+- **`send_quick_replies`/`send_options_list`** como tools del agente de IA (`src/ai/agent.rs`),
+  sobre los `BotAction::SendButtons`/`SendList` que ya existían pero nunca llamaba el motor de
+  agente. Hasta 3 botones o 10 filas de lista (límites duros de WhatsApp), con validación de
+  longitud de título/descripción.
+
+### Changed
+- **Se eliminó el toggle `BOT_ENGINE`**: el bot corre el motor de agente siempre;
+  `ANTHROPIC_API_KEY` pasa a ser obligatoria para arrancar. El toggle ya no cambiaba ningún
+  comportamiento observable en producción — se elimina la rama muerta, no una feature.
+
+### Removed
+- `reminder_actions()` (`src/bot/inactivity.rs`) y sus helpers de botones huérfanos en
+  `src/bot/timers.rs` — código muerto real: solo se llamaban desde la rama determinista del timer
+  de inactividad, inalcanzable desde que el bot corre agente siempre.
+- Migración `012`: `DROP TABLE` de las tablas huérfanas del simulador que creó `005` (removido en
+  v1.8.0).
+
 ## [1.9.0] - 2026-07-31
 
 ### Added

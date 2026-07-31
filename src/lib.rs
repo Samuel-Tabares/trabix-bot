@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod bot;
+pub mod capi;
 pub mod config;
 pub mod db;
 pub mod engine;
@@ -78,4 +79,5 @@ pub struct AppState {
     pub conversation_locks: ConversationLocks,
     pub llm_budget: ai::budget::LlmBudgetHandle,
     pub webhook_dedup: WebhookDedupCache,
+    pub capi: capi::CapiClient,
 }

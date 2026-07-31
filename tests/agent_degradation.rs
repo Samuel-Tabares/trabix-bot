@@ -1,9 +1,9 @@
 //! Camino de error del motor de agente (FASE 2 del rollout a producción):
 //! si el turno del agente falla, el cliente recibe el mensaje fijo de
 //! `[agent].llm_failure_customer`, el asesor recibe el contexto del caso y
-//! el estado de la conversación NO cambia. Aquí el fallo se inyecta dejando
-//! `anthropic_api_key = None` con `BOT_ENGINE=agent`, que hace fallar
-//! `run_customer_turn` antes de tocar la red.
+//! el estado de la conversación NO cambia. Aquí el fallo se inyecta con una
+//! `anthropic_api_key` inválida de prueba, que hace fallar la llamada real a
+//! la API de Anthropic dentro de `run_customer_turn`.
 //!
 //! Tras eliminar el simulador ya no hay una capa que capture los mensajes
 //! salientes sin llamar a Meta, así que este test verifica la invariante
@@ -18,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use granizado_bot::{
     bot::state_machine::UserInput,
     bot::timers::new_timer_map,
-    config::{BotEngine, Config},
+    config::Config,
     db::queries::get_conversation,
     engine::process_customer_input,
     messages::{set_client_messages, ClientMessages},
@@ -53,9 +53,11 @@ async fn setup_state() -> AppState {
         whatsapp_verify_token: "test-verify".to_string(),
         whatsapp_app_secret: "test-secret".to_string(),
         menu_image_media_id: "test-media-id".to_string(),
-        bot_engine: BotEngine::Agent,
-        anthropic_api_key: None,
+        anthropic_api_key: "test-anthropic-key".to_string(),
         agent_daily_llm_call_limit: None,
+        meta_waba_id: None,
+        capi_dataset_id: None,
+        capi_access_token: None,
     };
 
     AppState {
@@ -63,6 +65,7 @@ async fn setup_state() -> AppState {
             config.whatsapp_token.clone(),
             config.whatsapp_phone_id.clone(),
         ),
+        capi: granizado_bot::capi::CapiClient::new(None, None, None),
         config,
         pool,
         timers: new_timer_map(),
@@ -90,6 +93,7 @@ async fn agent_failure_does_not_propagate_or_change_state() {
         state.clone(),
         phone.clone(),
         Some("Cliente Prueba".to_string()),
+        None,
         None,
         UserInput::TextMessage("Hola, quiero un granizado".to_string()),
     )

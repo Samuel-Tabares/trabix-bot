@@ -1,29 +1,6 @@
 use std::{env, error::Error, fmt, net::IpAddr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BotEngine {
-    Deterministic,
-    Agent,
-}
-
-impl BotEngine {
-    fn from_env() -> Result<Self, ConfigError> {
-        match env::var("BOT_ENGINE")
-            .unwrap_or_else(|_| "deterministic".to_string())
-            .trim()
-        {
-            "deterministic" => Ok(Self::Deterministic),
-            "agent" => Ok(Self::Agent),
-            value => Err(ConfigError::InvalidEngine(value.to_string())),
-        }
-    }
-
-    pub fn is_agent(&self) -> bool {
-        matches!(self, Self::Agent)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub database_url: String,
     pub advisor_phone: String,
@@ -35,16 +12,17 @@ pub struct Config {
     pub whatsapp_verify_token: String,
     pub whatsapp_app_secret: String,
     pub menu_image_media_id: String,
-    pub bot_engine: BotEngine,
-    pub anthropic_api_key: Option<String>,
+    pub anthropic_api_key: String,
     pub agent_daily_llm_call_limit: Option<u64>,
+    pub meta_waba_id: Option<String>,
+    pub capi_dataset_id: Option<String>,
+    pub capi_access_token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
     MissingVar(&'static str),
     InvalidPort(String),
-    InvalidEngine(String),
     InvalidLlmCallLimit(String),
 }
 
@@ -53,7 +31,6 @@ impl fmt::Display for ConfigError {
         match self {
             Self::MissingVar(var) => write!(f, "missing required environment variable {var}"),
             Self::InvalidPort(value) => write!(f, "invalid PORT value: {value}"),
-            Self::InvalidEngine(value) => write!(f, "invalid BOT_ENGINE value: {value}"),
             Self::InvalidLlmCallLimit(value) => {
                 write!(f, "invalid AGENT_DAILY_LLM_CALL_LIMIT value: {value}")
             }
@@ -67,12 +44,6 @@ impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
         load_dotenv();
 
-        let bot_engine = BotEngine::from_env()?;
-        let anthropic_api_key = match bot_engine {
-            BotEngine::Agent => Some(read_required("ANTHROPIC_API_KEY")?),
-            BotEngine::Deterministic => read_optional("ANTHROPIC_API_KEY"),
-        };
-
         Ok(Self {
             database_url: read_required("DATABASE_URL")?,
             advisor_phone: read_required("ADVISOR_PHONE")?,
@@ -84,9 +55,11 @@ impl Config {
             whatsapp_verify_token: read_required("WHATSAPP_VERIFY_TOKEN")?,
             whatsapp_app_secret: read_required("WHATSAPP_APP_SECRET")?,
             menu_image_media_id: read_required("MENU_IMAGE_MEDIA_ID")?,
-            bot_engine,
-            anthropic_api_key,
+            anthropic_api_key: read_required("ANTHROPIC_API_KEY")?,
             agent_daily_llm_call_limit: read_llm_call_limit()?,
+            meta_waba_id: read_optional("META_WABA_ID"),
+            capi_dataset_id: read_optional("META_CAPI_DATASET_ID"),
+            capi_access_token: read_optional("META_CAPI_ACCESS_TOKEN"),
         })
     }
 }
@@ -140,7 +113,7 @@ fn read_bind_ip() -> IpAddr {
 mod tests {
     use std::sync::{Mutex, OnceLock};
 
-    use super::{BotEngine, Config, ConfigError};
+    use super::{Config, ConfigError};
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -159,7 +132,6 @@ mod tests {
             "WHATSAPP_APP_SECRET",
             "MENU_IMAGE_MEDIA_ID",
             "BIND_IP",
-            "BOT_ENGINE",
             "ANTHROPIC_API_KEY",
         ] {
             std::env::remove_var(key);
@@ -186,43 +158,27 @@ mod tests {
     }
 
     #[test]
-    fn defaults_to_deterministic_engine() {
+    fn requires_anthropic_api_key() {
         let _guard = env_lock().lock().expect("env lock");
         clear_env();
         std::env::set_var("DATABASE_URL", "postgres://local");
         std::env::set_var("ADVISOR_PHONE", "573001234567");
         set_whatsapp_vars();
 
-        let config = Config::from_env().expect("config should load");
-        assert_eq!(config.bot_engine, BotEngine::Deterministic);
-        assert_eq!(config.anthropic_api_key, None);
-    }
-
-    #[test]
-    fn agent_engine_requires_anthropic_api_key() {
-        let _guard = env_lock().lock().expect("env lock");
-        clear_env();
-        std::env::set_var("BOT_ENGINE", "agent");
-        std::env::set_var("DATABASE_URL", "postgres://local");
-        std::env::set_var("ADVISOR_PHONE", "573001234567");
-        set_whatsapp_vars();
-
-        let err = Config::from_env().expect_err("agent engine should require ANTHROPIC_API_KEY");
+        let err = Config::from_env().expect_err("config should require ANTHROPIC_API_KEY");
         assert!(matches!(err, ConfigError::MissingVar("ANTHROPIC_API_KEY")));
     }
 
     #[test]
-    fn agent_engine_loads_with_api_key() {
+    fn loads_with_api_key() {
         let _guard = env_lock().lock().expect("env lock");
         clear_env();
-        std::env::set_var("BOT_ENGINE", "agent");
         std::env::set_var("DATABASE_URL", "postgres://local");
         std::env::set_var("ADVISOR_PHONE", "573001234567");
         std::env::set_var("ANTHROPIC_API_KEY", "sk-test");
         set_whatsapp_vars();
 
-        let config = Config::from_env().expect("agent engine should load");
-        assert_eq!(config.bot_engine, BotEngine::Agent);
-        assert_eq!(config.anthropic_api_key.as_deref(), Some("sk-test"));
+        let config = Config::from_env().expect("config should load");
+        assert_eq!(config.anthropic_api_key.as_str(), "sk-test");
     }
 }

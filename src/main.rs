@@ -35,6 +35,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.whatsapp_token.clone(),
         config.whatsapp_phone_id.clone(),
     );
+    let capi = granizado_bot::capi::CapiClient::new(
+        config.capi_dataset_id.clone(),
+        config.capi_access_token.clone(),
+        config.meta_waba_id.clone(),
+    );
 
     let app_state = AppState {
         llm_budget: granizado_bot::ai::budget::new_llm_budget_handle(
@@ -44,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: config.clone(),
         pool,
         transport,
+        capi,
         timers: new_timer_map(),
         conversation_locks: granizado_bot::new_conversation_locks(),
     };

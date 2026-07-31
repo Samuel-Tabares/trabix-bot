@@ -44,6 +44,7 @@ async fn test_customer_totals_update_on_order_confirmation() {
         None,
         None,
         None,
+        None,
     )
     .await
     .expect("create customer");

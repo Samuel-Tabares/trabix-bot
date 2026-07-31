@@ -1,0 +1,2 @@
+ALTER TABLE customers
+ADD COLUMN ctwa_clid VARCHAR(255);

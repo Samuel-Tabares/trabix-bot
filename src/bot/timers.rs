@@ -15,10 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     bot::{
-        inactivity::{
-            reminder_actions, CONVERSATION_REMINDER_TIMEOUT,
-        },
-        state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
+        inactivity::CONVERSATION_REMINDER_TIMEOUT,
+        state_machine::{BotAction, ConversationContext, TimerType},
         states::advisor,
     },
     db::{
@@ -34,7 +32,6 @@ use crate::{
     },
     logging::mask_phone,
     messages::client_messages,
-    whatsapp::types::{Button, ButtonReplyPayload},
     AppState,
 };
 
@@ -563,25 +560,15 @@ async fn expire_receipt_timer_with_source(
         source = %source.as_str(),
         "receipt timer expired"
     );
-    let mut actions = vec![BotAction::SendText {
+    // El texto ya describe las opciones y la respuesta la interpreta el LLM
+    // (ver docs/canary-fixes-2026-07-19.md item 3) — no se mandan botones.
+    let actions = vec![BotAction::SendText {
         to: phone_number.clone(),
         body: client_messages()
             .timers_customer
             .receipt_timeout_text
             .clone(),
     }];
-    // En motor agente no se mandan botones: el texto ya describe las opciones y
-    // la respuesta la interpreta el LLM (ver docs/canary-fixes-2026-07-19.md item 3).
-    if !state.config.bot_engine.is_agent() {
-        actions.push(BotAction::SendButtons {
-            to: phone_number.clone(),
-            body: client_messages()
-                .timers_customer
-                .receipt_timeout_buttons_body
-                .clone(),
-            buttons: receipt_timeout_buttons(),
-        });
-    }
     dispatch_timer_actions(&state, &phone_number, &actions).await?;
 
     Ok(())
@@ -679,21 +666,10 @@ async fn expire_advisor_timer_with_source(
 
             match conversation.state.as_str() {
                 "wait_advisor_contact" => {
-                    let contact_body =
-                        client_messages().timers_customer.contact_timeout_body.clone();
-                    // Motor agente: solo texto (la respuesta la interpreta el LLM).
-                    // Determinista: mismo cuerpo pero con botones interactivos.
-                    let action = if state.config.bot_engine.is_agent() {
-                        BotAction::SendText {
-                            to: phone_number.clone(),
-                            body: contact_body,
-                        }
-                    } else {
-                        BotAction::SendButtons {
-                            to: phone_number.clone(),
-                            body: contact_body,
-                            buttons: contact_timeout_buttons(),
-                        }
+                    // Solo texto: la respuesta la interpreta el LLM (motor agente).
+                    let action = BotAction::SendText {
+                        to: phone_number.clone(),
+                        body: client_messages().timers_customer.contact_timeout_body.clone(),
                     };
                     dispatch_timer_actions(&state, &phone_number, &[action]).await?;
                 }
@@ -705,20 +681,10 @@ async fn expire_advisor_timer_with_source(
                     } else {
                         &client_messages().timers_customer.advisor_timeout_text
                     };
-                    let mut actions = vec![BotAction::SendText {
+                    let actions = vec![BotAction::SendText {
                         to: phone_number.clone(),
                         body: timeout_text.clone(),
                     }];
-                    if !state.config.bot_engine.is_agent() {
-                        actions.push(BotAction::SendButtons {
-                            to: phone_number.clone(),
-                            body: client_messages()
-                                .timers_customer
-                                .advisor_timeout_buttons_body
-                                .clone(),
-                            buttons: advisor_timeout_buttons(),
-                        });
-                    }
                     dispatch_timer_actions(&state, &phone_number, &actions).await?;
                 }
             }
@@ -835,45 +801,15 @@ async fn expire_conversation_abandon_with_source(
     // Recordatorio una sola vez; después el bot sigue esperando input sin
     // resetear la conversación (FASE 5: no existe reset por inactividad).
     if !state_data.conversation_abandon_reminder_sent {
-        let context = ConversationContext::from_persisted(
-            conversation.phone_number.clone(),
-            state.config.advisor_phone.clone(),
-            conversation.customer_name.clone(),
-            conversation.customer_phone.clone(),
-            conversation.delivery_address.clone(),
-            &state_data,
-        );
-        let current_state = match ConversationState::from_storage_key(&conversation.state, &context)
-        {
-            Ok(state) => state,
-            Err(err) => {
-                tracing::error!(
-                    phone = %conversation.phone_number,
-                    error = %err,
-                    "failed to rehydrate state for inactivity reminder"
-                );
-                reset_conversation(&state.pool, &phone_number).await?;
-                clear_advisor_threads_for_target(&state, &phone_number).await?;
-                return Ok(());
-            }
-        };
-
-        // En motor agente los recordatorios de estado son deterministas y
-        // reinyectan BOTONES/listas (checkout::select_payment_method_actions,
-        // etc.), justo lo que el agente tiene prohibido usar — por eso en la
-        // prueba apareció el botón de pago. Con el agente el recordatorio es un
-        // texto suave y neutro; la conversación la retoma el LLM.
-        let actions = if state.config.bot_engine.is_agent() {
-            vec![BotAction::SendText {
-                to: phone_number.clone(),
-                body: client_messages()
-                    .timers_customer
-                    .agent_inactivity_nudge_text
-                    .clone(),
-            }]
-        } else {
-            reminder_actions(&current_state, &context)
-        };
+        // Texto suave y neutro: la conversación la retoma el LLM, que no debe
+        // recibir botones/listas reinyectados (ver docs/canary-fixes-2026-07-19.md item 3).
+        let actions = vec![BotAction::SendText {
+            to: phone_number.clone(),
+            body: client_messages()
+                .timers_customer
+                .agent_inactivity_nudge_text
+                .clone(),
+        }];
         tracing::info!(
             phone = %mask_phone(&phone_number),
             timer_type = %TimerType::ConversationAbandon.as_str(),
@@ -1006,61 +942,6 @@ pub fn rehydrate_context_for_timer(
     )
 }
 
-fn receipt_timeout_buttons() -> Vec<Button> {
-    vec![
-        reply_button(
-            "change_payment_method",
-            &client_messages()
-                .checkout
-                .receipt_timeout_change_payment_button,
-        ),
-        reply_button(
-            "cancel_order",
-            &client_messages().checkout.receipt_timeout_cancel_button,
-        ),
-    ]
-}
-
-fn advisor_timeout_buttons() -> Vec<Button> {
-    vec![
-        reply_button(
-            "advisor_timeout_schedule",
-            &client_messages()
-                .timers_customer
-                .advisor_timeout_schedule_button,
-        ),
-        reply_button(
-            "advisor_timeout_retry",
-            &client_messages()
-                .timers_customer
-                .advisor_timeout_retry_button,
-        ),
-        reply_button(
-            "advisor_timeout_menu",
-            &client_messages()
-                .timers_customer
-                .advisor_timeout_menu_button,
-        ),
-    ]
-}
-
-fn contact_timeout_buttons() -> Vec<Button> {
-    vec![
-        reply_button(
-            "leave_message",
-            &client_messages()
-                .timers_customer
-                .contact_timeout_leave_message_button,
-        ),
-        reply_button(
-            "back_main_menu",
-            &client_messages()
-                .timers_customer
-                .contact_timeout_menu_button,
-        ),
-    ]
-}
-
 async fn bind_advisor_session_for_timer(
     state: &AppState,
     advisor_phone: &str,
@@ -1073,16 +954,6 @@ async fn bind_advisor_session_for_timer(
     }
 
     Ok(())
-}
-
-fn reply_button(id: &str, title: &str) -> Button {
-    Button {
-        kind: "reply".to_string(),
-        reply: ButtonReplyPayload {
-            id: id.to_string(),
-            title: title.to_string(),
-        },
-    }
 }
 
 fn phone_marker(phone: &str) -> String {

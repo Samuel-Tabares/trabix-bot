@@ -148,6 +148,10 @@ async fn process_incoming_message(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let from = message.from.clone();
     let message_id = message.id.clone();
+    let ctwa_clid = message
+        .referral
+        .as_ref()
+        .and_then(|referral| referral.ctwa_clid.clone());
 
     if crate::is_duplicate_message(&state.webhook_dedup, &message_id).await {
         tracing::info!(
@@ -195,7 +199,15 @@ async fn process_incoming_message(
             .as_ref()
             .and_then(|contact| contact.username.as_deref())
             .map(|u| u.to_string());
-        process_customer_input(state, from, profile_name, username, extracted.input).await?;
+        process_customer_input(
+            state,
+            from,
+            profile_name,
+            username,
+            ctwa_clid,
+            extracted.input,
+        )
+        .await?;
     }
 
     Ok(())

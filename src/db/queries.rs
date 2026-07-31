@@ -447,7 +447,7 @@ pub async fn get_customer(pool: &PgPool, phone_number_meta: &str) -> Result<Opti
         r#"
         SELECT phone_number_meta, phone_number_manual, customer_name_meta, customer_name_manual,
                customer_username, delivery_address_last, total_spent_cop, total_units_purchased,
-               first_contact_at, last_contact_at, created_at, updated_at
+               first_contact_at, last_contact_at, created_at, updated_at, ctwa_clid
         FROM customers
         WHERE phone_number_meta = $1
         "#,
@@ -465,25 +465,29 @@ pub async fn create_or_update_customer(
     customer_name_manual: Option<&str>,
     customer_username: Option<&str>,
     delivery_address_last: Option<&str>,
+    ctwa_clid: Option<&str>,
 ) -> Result<Customer, sqlx::Error> {
     sqlx::query_as::<_, Customer>(
         r#"
         INSERT INTO customers (
             phone_number_meta, phone_number_manual, customer_name_meta, customer_name_manual,
-            customer_username, delivery_address_last, first_contact_at, last_contact_at
+            customer_username, delivery_address_last, ctwa_clid, first_contact_at, last_contact_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
         ON CONFLICT (phone_number_meta) DO UPDATE SET
             phone_number_manual = COALESCE($2, customers.phone_number_manual),
             customer_name_meta = COALESCE($3, customers.customer_name_meta),
             customer_name_manual = COALESCE($4, customers.customer_name_manual),
             customer_username = COALESCE($5, customers.customer_username),
             delivery_address_last = COALESCE($6, customers.delivery_address_last),
+            -- El ctwa_clid se captura una sola vez (primer contacto por
+            -- anuncio) y nunca se sobreescribe en mensajes siguientes.
+            ctwa_clid = COALESCE(customers.ctwa_clid, $7),
             last_contact_at = NOW(),
             updated_at = NOW()
         RETURNING phone_number_meta, phone_number_manual, customer_name_meta, customer_name_manual,
                   customer_username, delivery_address_last, total_spent_cop, total_units_purchased,
-                  first_contact_at, last_contact_at, created_at, updated_at
+                  first_contact_at, last_contact_at, created_at, updated_at, ctwa_clid
         "#,
     )
     .bind(phone_number_meta)
@@ -492,6 +496,7 @@ pub async fn create_or_update_customer(
     .bind(customer_name_manual)
     .bind(customer_username)
     .bind(delivery_address_last)
+    .bind(ctwa_clid)
     .fetch_one(pool)
     .await
 }

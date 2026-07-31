@@ -36,6 +36,7 @@ use crate::{
         timers::{ADVISOR_RESPONSE_TIMEOUT, RECEIPT_TIMEOUT},
     },
     db::models::OrderItemData,
+    whatsapp::types::{Button, ButtonReplyPayload, ListRow, ListSection},
     AppState,
 };
 
@@ -275,12 +276,7 @@ async fn run_case_turn(
         ));
     }
 
-    let api_key = state
-        .config
-        .anthropic_api_key
-        .clone()
-        .ok_or("ANTHROPIC_API_KEY not configured for agent engine")?;
-    let client = AnthropicClient::new(api_key);
+    let client = AnthropicClient::new(state.config.anthropic_api_key.clone());
 
     let mut history = memory::load_messages(&state.pool, &phone).await?;
     history.push(Message {
@@ -829,6 +825,8 @@ fn dispatch_tool(
                 },
             )
         }
+        "send_quick_replies" => send_quick_replies(id, input, context),
+        "send_options_list" => send_options_list(id, input, context),
         "message_advisor" => {
             let text = input.get("text").and_then(Value::as_str).unwrap_or("").to_string();
             if text.trim().is_empty() {
@@ -1286,6 +1284,129 @@ fn confirm_order_bookkeeping(context: &mut ConversationContext) -> (bool, Vec<Bo
     context.confirmed_order_snapshot = Some(checkout::snapshot_from_totals(context, &totals));
     context.order_confirmed = true;
     (is_modification, actions)
+}
+
+const MAX_QUICK_REPLY_BUTTONS: usize = 3;
+const MAX_LIST_ROWS: usize = 10;
+
+/// Hasta 3 botones de respuesta rápida (límite duro de WhatsApp). El modelo
+/// elige `id` y `title` libremente; cuando el cliente toca uno, vuelve como
+/// `UserInput::ButtonPress(id)` -> "[seleccionó: {id}]" en el historial (ver
+/// `format_inbound_message`), así que un id descriptivo es lo que le permite
+/// al modelo interpretar la respuesta sin ambigüedad.
+fn send_quick_replies(id: &str, input: &Value, context: &ConversationContext) -> ToolOutcome {
+    let text = input.get("text").and_then(Value::as_str).unwrap_or("");
+    if text.trim().is_empty() {
+        return ToolOutcome::Result(error_result(id, "El texto no puede estar vacío."));
+    }
+
+    let Some(options) = input.get("options").and_then(Value::as_array) else {
+        return ToolOutcome::Result(error_result(id, "Falta \"options\" (lista de botones)."));
+    };
+    if options.is_empty() || options.len() > MAX_QUICK_REPLY_BUTTONS {
+        return ToolOutcome::Result(error_result(
+            id,
+            format!("\"options\" debe tener entre 1 y {MAX_QUICK_REPLY_BUTTONS} botones (límite de WhatsApp)."),
+        ));
+    }
+
+    let mut buttons = Vec::with_capacity(options.len());
+    for option in options {
+        let option_id = option.get("id").and_then(Value::as_str).unwrap_or("");
+        let title = option.get("title").and_then(Value::as_str).unwrap_or("");
+        if option_id.trim().is_empty() || title.trim().is_empty() {
+            return ToolOutcome::Result(error_result(id, "Cada opción necesita \"id\" y \"title\"."));
+        }
+        if title.chars().count() > 20 {
+            return ToolOutcome::Result(error_result(
+                id,
+                format!("El título \"{title}\" supera los 20 caracteres que permite WhatsApp."),
+            ));
+        }
+        buttons.push(Button {
+            kind: "reply".to_string(),
+            reply: ButtonReplyPayload {
+                id: option_id.to_string(),
+                title: title.to_string(),
+            },
+        });
+    }
+
+    ToolOutcome::ResultWithAction(
+        ok_result(id, "Botones enviados al cliente."),
+        BotAction::SendButtons {
+            to: context.phone_number.clone(),
+            body: text.to_string(),
+            buttons,
+        },
+    )
+}
+
+/// Lista desplegable de hasta 10 opciones (límite duro de WhatsApp) para
+/// cuando hay más alternativas de las que caben en botones. Mismo contrato
+/// de `id`/`title` que `send_quick_replies`.
+fn send_options_list(id: &str, input: &Value, context: &ConversationContext) -> ToolOutcome {
+    let text = input.get("text").and_then(Value::as_str).unwrap_or("");
+    let button_text = input.get("button_text").and_then(Value::as_str).unwrap_or("");
+    if text.trim().is_empty() || button_text.trim().is_empty() {
+        return ToolOutcome::Result(error_result(id, "Faltan \"text\" y/o \"button_text\"."));
+    }
+    if button_text.chars().count() > 20 {
+        return ToolOutcome::Result(error_result(
+            id,
+            "\"button_text\" supera los 20 caracteres que permite WhatsApp.",
+        ));
+    }
+
+    let Some(options) = input.get("options").and_then(Value::as_array) else {
+        return ToolOutcome::Result(error_result(id, "Falta \"options\" (filas de la lista)."));
+    };
+    if options.is_empty() || options.len() > MAX_LIST_ROWS {
+        return ToolOutcome::Result(error_result(
+            id,
+            format!("\"options\" debe tener entre 1 y {MAX_LIST_ROWS} filas (límite de WhatsApp)."),
+        ));
+    }
+
+    let mut rows = Vec::with_capacity(options.len());
+    for option in options {
+        let option_id = option.get("id").and_then(Value::as_str).unwrap_or("");
+        let title = option.get("title").and_then(Value::as_str).unwrap_or("");
+        let description = option.get("description").and_then(Value::as_str).unwrap_or("");
+        if option_id.trim().is_empty() || title.trim().is_empty() {
+            return ToolOutcome::Result(error_result(id, "Cada fila necesita \"id\" y \"title\"."));
+        }
+        if title.chars().count() > 24 {
+            return ToolOutcome::Result(error_result(
+                id,
+                format!("El título \"{title}\" supera los 24 caracteres que permite WhatsApp."),
+            ));
+        }
+        if description.chars().count() > 72 {
+            return ToolOutcome::Result(error_result(
+                id,
+                "La descripción de una fila supera los 72 caracteres que permite WhatsApp.",
+            ));
+        }
+        rows.push(ListRow {
+            id: option_id.to_string(),
+            title: title.to_string(),
+            description: description.to_string(),
+        });
+    }
+
+    ToolOutcome::ResultWithAction(
+        ok_result(id, "Lista enviada al cliente."),
+        BotAction::SendList {
+            to: context.phone_number.clone(),
+            body: text.to_string(),
+            button_text: button_text.to_string(),
+            sections: vec![ListSection {
+                title: "Opciones".to_string(),
+                rows,
+            }],
+        },
+    )
 }
 
 fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome {
@@ -2088,6 +2209,60 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "send_quick_replies".to_string(),
+            description: "Envía al CLIENTE un texto con hasta 3 botones de respuesta rápida (límite de WhatsApp). Úsala para decisiones cerradas de pocas opciones (sí/no, elegir entre 2-3 alternativas) en vez de pedirle que escriba la respuesta. Si el cliente toca un botón, ves \"[seleccionó: <id>]\" — elige ids que tú mismo puedas interpretar después.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string" },
+                    "options": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 3,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": { "type": "string" },
+                                "title": { "type": "string", "description": "Máximo 20 caracteres." }
+                            },
+                            "required": ["id", "title"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["text", "options"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDefinition {
+            name: "send_options_list".to_string(),
+            description: "Envía al CLIENTE un texto con un botón que despliega una lista de hasta 10 opciones (límite de WhatsApp). Úsala cuando haya más alternativas de las que caben en send_quick_replies (ej. varios sabores). Si el cliente elige una fila, ves \"[seleccionó: <id>]\".".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string" },
+                    "button_text": { "type": "string", "description": "Texto del botón que abre la lista, máximo 20 caracteres." },
+                    "options": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 10,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": { "type": "string" },
+                                "title": { "type": "string", "description": "Máximo 24 caracteres." },
+                                "description": { "type": "string", "description": "Opcional, máximo 72 caracteres." }
+                            },
+                            "required": ["id", "title"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["text", "button_text", "options"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDefinition {
             name: "message_advisor".to_string(),
             description: "Envía un mensaje de texto al ASESOR humano. Úsala siempre que quieras decirle algo al asesor.".to_string(),
             input_schema: json!({
@@ -2379,6 +2554,103 @@ mod tests {
             ContentBlock::ToolResult { content, .. } => content.clone(),
             _ => panic!("expected a ToolResult content block"),
         }
+    }
+
+    #[test]
+    fn send_quick_replies_sends_buttons_action() {
+        let context = test_context();
+        let input = json!({
+            "text": "¿Contra entrega o transferencia?",
+            "options": [
+                { "id": "cash_on_delivery", "title": "Contra entrega" },
+                { "id": "pay_now", "title": "Transferencia" }
+            ]
+        });
+
+        let outcome = send_quick_replies("id_1", &input, &context);
+
+        match outcome {
+            ToolOutcome::ResultWithAction(_, BotAction::SendButtons { to, body, buttons }) => {
+                assert_eq!(to, context.phone_number);
+                assert_eq!(body, "¿Contra entrega o transferencia?");
+                assert_eq!(buttons.len(), 2);
+                assert_eq!(buttons[0].reply.id, "cash_on_delivery");
+            }
+            _ => panic!("expected SendButtons action"),
+        }
+    }
+
+    #[test]
+    fn send_quick_replies_rejects_more_than_three_options() {
+        let context = test_context();
+        let input = json!({
+            "text": "elige uno",
+            "options": [
+                { "id": "a", "title": "A" },
+                { "id": "b", "title": "B" },
+                { "id": "c", "title": "C" },
+                { "id": "d", "title": "D" }
+            ]
+        });
+
+        let outcome = send_quick_replies("id_1", &input, &context);
+
+        assert!(tool_result_text(&outcome).contains("botones"));
+    }
+
+    #[test]
+    fn send_quick_replies_rejects_title_over_20_chars() {
+        let context = test_context();
+        let input = json!({
+            "text": "elige uno",
+            "options": [{ "id": "a", "title": "un título demasiado largo para un botón" }]
+        });
+
+        let outcome = send_quick_replies("id_1", &input, &context);
+
+        assert!(tool_result_text(&outcome).contains("20 caracteres"));
+    }
+
+    #[test]
+    fn send_options_list_sends_list_action() {
+        let context = test_context();
+        let input = json!({
+            "text": "Elige tu sabor",
+            "button_text": "Ver sabores",
+            "options": [
+                { "id": "flavor_a", "title": "Maracumango", "description": "Con licor" },
+                { "id": "flavor_b", "title": "Bonbonbum" }
+            ]
+        });
+
+        let outcome = send_options_list("id_1", &input, &context);
+
+        match outcome {
+            ToolOutcome::ResultWithAction(_, BotAction::SendList { to, button_text, sections, .. }) => {
+                assert_eq!(to, context.phone_number);
+                assert_eq!(button_text, "Ver sabores");
+                assert_eq!(sections[0].rows.len(), 2);
+                assert_eq!(sections[0].rows[1].description, "");
+            }
+            _ => panic!("expected SendList action"),
+        }
+    }
+
+    #[test]
+    fn send_options_list_rejects_more_than_ten_rows() {
+        let context = test_context();
+        let options: Vec<_> = (0..11)
+            .map(|i| json!({ "id": format!("id_{i}"), "title": format!("Opción {i}") }))
+            .collect();
+        let input = json!({
+            "text": "elige uno",
+            "button_text": "Ver opciones",
+            "options": options
+        });
+
+        let outcome = send_options_list("id_1", &input, &context);
+
+        assert!(tool_result_text(&outcome).contains("filas"));
     }
 
     #[test]
