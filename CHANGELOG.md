@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-31
+
 ### Added
 - **Domicilio gratis en Armenia (6-19 unidades) + detal sin mínimo en pueblos aledaños**:
   `delivery_zone::armenia_delivery_cost` cobra $0 de domicilio en Armenia para pedidos de 6 a 19
