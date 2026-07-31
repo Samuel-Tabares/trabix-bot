@@ -14,7 +14,7 @@ All notable changes to this project will be documented in this file.
   (`CapiClient`) reporta un evento `Purchase` a la Conversions API de Meta en el momento real de
   confirmación de compra (`BotAction::UpdateCustomerAndAnalytics` en `src/engine.rs`, solo cuando el
   delta de venta es positivo) — corre en background (`tokio::spawn`), nunca bloquea ni demora la
-  confirmación del pedido, y falla en silencio si `META_WABA_ID`/`META_CAPI_DATASET_ID`/
+  confirmación del pedido, y falla en silencio si `WABA_ID`/`META_CAPI_DATASET_ID`/
   `META_CAPI_ACCESS_TOKEN` no están configuradas. Ver `docs/PENDIENTE_capi_meta.md`.
 - **`send_quick_replies`/`send_options_list`** como tools del agente de IA (`src/ai/agent.rs`),
   sobre los `BotAction::SendButtons`/`SendList` que ya existían pero nunca llamaba el motor de

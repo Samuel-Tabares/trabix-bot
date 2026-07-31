@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let capi = granizado_bot::capi::CapiClient::new(
         config.capi_dataset_id.clone(),
         config.capi_access_token.clone(),
-        config.meta_waba_id.clone(),
+        config.waba_id.clone(),
     );
 
     let app_state = AppState {

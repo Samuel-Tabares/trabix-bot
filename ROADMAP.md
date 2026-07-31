@@ -37,7 +37,7 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
 - **CTWA click ID — captura sin credenciales**: `ctwa_clid` se lee del `referral` del webhook y se
   guarda en `customers` (migración `011`, se captura una sola vez, no se sobreescribe). Cliente CAPI
   (`src/capi.rs`) construido y wireado en la confirmación de compra (`UpdateCustomerAndAnalytics` en
-  `src/engine.rs`) — hoy es un no-op silencioso porque falta configurar `META_WABA_ID` /
+  `src/engine.rs`) — hoy es un no-op silencioso porque falta configurar `WABA_ID` /
   `META_CAPI_DATASET_ID` / `META_CAPI_ACCESS_TOKEN`.
 
 ---
@@ -58,7 +58,7 @@ al momento real de compra). Lo único que falta:
    - `POST https://graph.facebook.com/v21.0/{WABA_ID}/dataset?access_token={TOKEN}` → devuelve
      `dataset_id`. El `WABA_ID` es el mismo que usa la suscripción del webhook.
    - Token: Business Settings → System Users → generar uno con esos dos scopes, sin expiración.
-2. Cargar `META_WABA_ID`, `META_CAPI_DATASET_ID`, `META_CAPI_ACCESS_TOKEN` en Railway.
+2. Cargar `WABA_ID`, `META_CAPI_DATASET_ID`, `META_CAPI_ACCESS_TOKEN` en Railway.
 3. Verificar en la consola de Meta (Events Manager → dataset) que empiezan a llegar eventos
    `Purchase` tras un pedido confirmado real.
 4. **Cambiar el evento de optimización** en Meta de "Conversaciones" a "Compras" cuando haya volumen

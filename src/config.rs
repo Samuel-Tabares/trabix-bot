@@ -14,7 +14,7 @@ pub struct Config {
     pub menu_image_media_id: String,
     pub anthropic_api_key: String,
     pub agent_daily_llm_call_limit: Option<u64>,
-    pub meta_waba_id: Option<String>,
+    pub waba_id: Option<String>,
     pub capi_dataset_id: Option<String>,
     pub capi_access_token: Option<String>,
 }
@@ -57,7 +57,7 @@ impl Config {
             menu_image_media_id: read_required("MENU_IMAGE_MEDIA_ID")?,
             anthropic_api_key: read_required("ANTHROPIC_API_KEY")?,
             agent_daily_llm_call_limit: read_llm_call_limit()?,
-            meta_waba_id: read_optional("META_WABA_ID"),
+            waba_id: read_optional("WABA_ID"),
             capi_dataset_id: read_optional("META_CAPI_DATASET_ID"),
             capi_access_token: read_optional("META_CAPI_ACCESS_TOKEN"),
         })

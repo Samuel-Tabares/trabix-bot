@@ -55,7 +55,7 @@ async fn setup_state() -> AppState {
         menu_image_media_id: "test-media-id".to_string(),
         anthropic_api_key: "test-anthropic-key".to_string(),
         agent_daily_llm_call_limit: None,
-        meta_waba_id: None,
+        waba_id: None,
         capi_dataset_id: None,
         capi_access_token: None,
     };

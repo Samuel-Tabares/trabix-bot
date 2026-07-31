@@ -726,7 +726,7 @@ Variables y datos operativos clave:
 - `MENU_IMAGE_MEDIA_ID`
 - `ANTHROPIC_API_KEY` (obligatoria — sin ella el bot no arranca)
 - `AGENT_DAILY_LLM_CALL_LIMIT` (opcional, kill-switch global de llamadas LLM por dia)
-- `META_WABA_ID`, `META_CAPI_DATASET_ID`, `META_CAPI_ACCESS_TOKEN` (opcionales; sin las tres, el
+- `WABA_ID`, `META_CAPI_DATASET_ID`, `META_CAPI_ACCESS_TOKEN` (opcionales; sin las tres, el
   reporte de compras a la Conversions API de Meta es un no-op silencioso — ver
   `docs/PENDIENTE_capi_meta.md`)
 
