@@ -57,7 +57,20 @@ silencio (no responde, no toca ningún caso) pero para Meta cuenta como mensaje 
 la ventana. Si la ventana ya venció (el asesor dejó de recibir avisos), basta con que envíe
 cualquier mensaje al bot para reabrirla.
 
-## Consola de conversaciones (`crm-web/` en Railway)
+## Consolas de conversaciones (dos, a propósito y por poco tiempo)
+
+Desde 2026-08-01 hay dos consolas corriendo sobre el mismo Postgres: `crm-web` (la vieja, solo
+lectura) y `crm-app` (la nueva, con envío saliente). **`crm-web` se mantiene solo como red de
+seguridad** hasta que el envío saliente de `crm-app` esté probado punta a punta con un cliente real.
+Apenas eso pase: `railway remove --service crm` y borrar esta sección.
+
+- `crm-app`: `https://crm-app-production-405d.up.railway.app`, servicio `crm-app` del mismo
+  proyecto. Deploy manual desde `../crm-app`: `railway up --service crm-app --detach`. Envía
+  WhatsApp llamando a `POST /internal/advisor/send` de este bot con el header `X-Internal-Token`
+  (mismo valor que `INTERNAL_API_TOKEN` acá). Si el envío empieza a fallar con `not_connected`, lo
+  primero a revisar es que esos dos valores sigan siendo idénticos.
+
+### La consola vieja (`crm-web/` en Railway)
 
 - URL: `https://crm-production-618e.up.railway.app` — servicio `crm` en el mismo proyecto
   Railway del bot, lee la misma Postgres por red interna (`DATABASE_URL = ${{Postgres.DATABASE_URL}}`).
