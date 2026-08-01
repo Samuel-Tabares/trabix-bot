@@ -13,14 +13,13 @@ It reuses one core runtime for:
 - timers and timeout recovery
 - pricing and checkout behavior
 
-## Engines
+## Engine
 
-Two engines are selected via `BOT_ENGINE` (see `general_info/current_runtime_reference.md`):
+One engine, no toggle (see `general_info/current_runtime_reference.md`): the Claude tool-calling
+engine in `src/ai/` (`claude-sonnet-4-5`) drives the customer self-service states and requires
+`ANTHROPIC_API_KEY` to boot. Pricing, delivery zones, and referrals stay deterministic via tools.
 
-- `deterministic` (default when the variable is unset): the original non-LLM state machine.
-  Removing `BOT_ENGINE` in Railway and redeploying is the instant rollback path.
-- `agent`: the Claude Haiku tool-calling engine in `src/ai/` for customer self-service states.
-  Requires `ANTHROPIC_API_KEY`. Pricing, delivery zones, and referrals stay deterministic via tools.
+`BOT_ENGINE` was removed in v1.10.0 and there is no rollback to the original non-LLM state machine.
 
 ## Run
 

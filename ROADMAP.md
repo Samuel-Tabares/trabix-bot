@@ -27,16 +27,24 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
 - **`POST /internal/advisor/send`** (v1.11.0): endpoint interno autenticado con `X-Internal-Token`
   (`INTERNAL_API_TOKEN`, opcional → sin ella el endpoint queda deshabilitado en 503) para que
   `crm-app` mande WhatsApp al cliente a través del bot, sin volverse un segundo escritor sobre la
-  conversación. Contrato completo en `docs/internal_advisor_send.md`. **Falta operarlo:** generar el
-  token (`openssl rand -hex 32`) y cargarlo en Railway, tanto en el bot como en `crm-app` cuando se
-  despliegue.
+  conversación. Contrato completo en `docs/internal_advisor_send.md`. **Ya operativo:**
+  `INTERNAL_API_TOKEN` cargada en Railway en el bot y en `crm-app`, y el camino corrió de verdad en
+  producción el 2026-08-01 (`message_events` id 32: `actor='advisor'`, `payload.source='crm-app'`,
+  `wa_message_id` real de Meta). `crm-app` lo llama por la **red privada**
+  (`http://trabix-bot.railway.internal:8080`), así que ese tráfico ya no sale a internet.
+  ⚠️ **Pendiente de seguridad:** el endpoint sigue expuesto igual — el dominio público del bot
+  enruta `/internal/*` porque el mismo listener sirve `/webhook` (verificado: 401 desde internet).
+  Lo único que lo protege es el token. El cierre real es un **segundo listener** (otro puerto, p.ej.
+  8081) que sirva solo `/internal/*`: Railway expone un solo puerto al edge público, así que ese
+  queda accesible únicamente por la red privada. Cambio chico en `src/main.rs` + `src/routes/mod.rs`.
 - **Prompt caching** (v1.9.0): `cache_control` en el system prompt estático + tools de
   `src/ai/agent.rs`. Ver `docs/PENDIENTE_prompt_caching.md`.
 - **Domicilio gratis Armenia (6–19u) + detal sin mínimo en pueblos aledaños** (v1.9.0):
   `src/bot/delivery_zone.rs`. Ver `docs/PENDIENTE_domicilio_gratis.md`.
 - **BOT_ENGINE toggle eliminado**: el bot corre agente siempre; `ANTHROPIC_API_KEY` es obligatoria.
   `reminder_actions()` (dead code real, no solo teórico) y sus helpers de botones huérfanos en
-  `timers.rs` también se borraron.
+  `timers.rs` también se borraron. ⚠️ La variable `BOT_ENGINE=agent` **sigue cargada en Railway** y
+  ya no la lee nadie — borrarla en el próximo deploy del bot (no vale un redeploy solo para eso).
 - **`send_quick_replies`/`send_options_list`** conectados como tools del agente (hasta 3 botones /
   10 filas — límites de WhatsApp), sobre los `BotAction::SendButtons`/`SendList` que ya existían.
 - **Migración `012`**: `DROP TABLE` de las tablas huérfanas del simulador que creó `005`.

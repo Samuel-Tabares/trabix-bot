@@ -1,16 +1,14 @@
-# Runbook Operativo (modo agente en producción)
+# Runbook Operativo (motor de agente en producción)
 
-Guía corta para operar el bot con `BOT_ENGINE=agent` en Railway. Referencia completa del
-runtime en `current_runtime_reference.md`.
+Guía corta para operar el bot en Railway. Referencia completa del runtime en
+`current_runtime_reference.md`.
 
-## Rollback inmediato al motor determinista
+## No hay rollback al motor determinista
 
-1. En Railway → servicio del bot → Variables: **eliminar** `BOT_ENGINE` (o ponerla en
-   `deterministic`).
-2. Redeploy. Nada más: las tablas son compartidas, no hay migración de vuelta.
-3. Las conversaciones que estaban en estados del agente (`main_menu`, `ask_delivery_cost`,
-   `select_payment_method`, `wait_receipt`, etc.) siguen funcionando con los handlers
-   deterministas de esos mismos estados.
+El toggle `BOT_ENGINE` se eliminó en v1.10.0: el código ya no lo lee y borrar la variable en
+Railway **no hace nada**. El motor de agente es el único runtime. Si el agente falla, la
+degradación es la que describe "El bot no responde a un cliente" — el asesor recibe el aviso y
+atiende manualmente; no hay un motor alterno al que caer.
 
 ## El bot no responde a un cliente
 
