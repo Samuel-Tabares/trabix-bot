@@ -17,6 +17,9 @@ pub struct Config {
     pub waba_id: Option<String>,
     pub capi_dataset_id: Option<String>,
     pub capi_access_token: Option<String>,
+    /// Secreto compartido con `crm-app` para `POST /internal/advisor/send`.
+    /// Opcional a propósito: sin él el endpoint queda deshabilitado, nunca abierto.
+    pub internal_api_token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +63,7 @@ impl Config {
             waba_id: read_optional("WABA_ID"),
             capi_dataset_id: read_optional("META_CAPI_DATASET_ID"),
             capi_access_token: read_optional("META_CAPI_ACCESS_TOKEN"),
+            internal_api_token: read_optional("INTERNAL_API_TOKEN"),
         })
     }
 }

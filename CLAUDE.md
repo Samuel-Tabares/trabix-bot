@@ -45,7 +45,9 @@ at full price every turn. This is the bot's largest variable cost. Spec:
 ## Code layout
 
 - `src/routes/` — webhook verification (`verify.rs`), inbound webhook (`webhook.rs`), public
-  legal pages for Meta review (`legal.rs`).
+  legal pages for Meta review (`legal.rs`), and the internal outbound endpoint for `crm-app`
+  (`internal.rs`, `POST /internal/advisor/send` — shared-secret header, disabled unless
+  `INTERNAL_API_TOKEN` is set; contract in `docs/internal_advisor_send.md`).
 - `src/engine.rs` — shared inbound-processing/outbound-action path used by webhook and timers.
 - `src/whatsapp/` — Meta Cloud API client (also the `AppState.transport`), button/list builders,
   payload types.

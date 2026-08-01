@@ -32,6 +32,11 @@ Componentes principales:
   - `verify.rs`: verificacion de `GET /webhook`
   - `webhook.rs`: recepcion del webhook productivo y normalizacion de inputs
   - `legal.rs`: paginas publicas `/privacy-policy` y `/terms-of-service`
+  - `internal.rs`: `POST /internal/advisor/send`, salida de WhatsApp para `crm-app` autenticada con
+    el header `X-Internal-Token` (`INTERNAL_API_TOKEN`; sin la variable el endpoint responde 503).
+    No es un camino de webhook: no cambia el estado de la conversacion ni pausa timers, solo toma el
+    lock del caso, envia texto y traza en `message_events` (`channel='client'`, `actor='advisor'`,
+    `payload.source='crm-app'`). Contrato: `docs/internal_advisor_send.md`
 - `src/engine.rs`
   - procesamiento compartido de cliente/asesor
   - ejecucion compartida de acciones para webhook y timers

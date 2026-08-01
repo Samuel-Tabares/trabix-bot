@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-08-01
+
+### Added
+- **`POST /internal/advisor/send`** (`src/routes/internal.rs`): endpoint interno para que `crm-app`
+  mande WhatsApp al cliente **sin volverse un segundo escritor** sobre la conversación — el bot
+  sigue siendo el único dueño de la sesión de Meta y el único que traza. Autenticado con el header
+  `X-Internal-Token` contra la nueva variable opcional `INTERNAL_API_TOKEN` (comparación de tiempo
+  constante); si la variable no está configurada el endpoint responde `503`, o sea queda
+  deshabilitado y nunca abierto. Toma el mismo lock de conversación que el motor de agente, exige
+  que la conversación exista (guard contra mandar a un número arbitrario), y escribe la traza en
+  `message_events` con `channel='client'`, `actor='advisor'` y
+  `payload={"source":"crm-app","sent_by":...}`. Los errores salen como `{code, message}` con
+  códigos alineados a `SendError` de `crm-app`; en particular distingue `window_closed` (Meta
+  131047/470, ventana de 24h vencida → hace falta plantilla) de `meta_error`/`meta_unavailable`.
+  La traza y el `last_message_at` son best-effort: si fallan, la respuesta sigue siendo `200`
+  porque el mensaje ya salió y reintentar duplicaría el envío al cliente.
+  Contrato completo: `docs/internal_advisor_send.md`.
+
+### Notes
+- No se tocó `src/bot/states/advisor.rs` ni `relay.rs`: el flujo viejo (bot → WhatsApp del asesor)
+  sigue intacto en producción. Este endpoint es un camino nuevo en paralelo, prerrequisito del
+  envío saliente de `crm-app`.
+
 ## [1.10.0] - 2026-07-31
 
 ### Added

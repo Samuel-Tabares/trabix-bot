@@ -58,6 +58,7 @@ async fn setup_state() -> AppState {
         waba_id: None,
         capi_dataset_id: None,
         capi_access_token: None,
+        internal_api_token: None,
     };
 
     AppState {

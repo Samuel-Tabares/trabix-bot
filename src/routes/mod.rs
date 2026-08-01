@@ -1,8 +1,9 @@
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 
 use crate::AppState;
 
+pub mod internal;
 pub mod legal;
 pub mod verify;
 pub mod webhook;
@@ -15,4 +16,5 @@ pub fn router() -> Router<AppState> {
             "/webhook",
             get(verify::verify_webhook).post(webhook::receive_webhook),
         )
+        .route("/internal/advisor/send", post(internal::advisor_send))
 }

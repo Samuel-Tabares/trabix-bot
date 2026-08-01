@@ -3,7 +3,7 @@
 > Léeme al iniciar sesión, junto con `CLAUDE.md`. Este archivo dice **qué sigue y en qué orden**;
 > `CLAUDE.md` dice **cómo está construido**. Actualizar este archivo cuando algo se complete.
 >
-> Última revisión: 2026-07-31.
+> Última revisión: 2026-08-01.
 
 ## Contexto de negocio mínimo (para no tener que salir del repo)
 
@@ -24,6 +24,12 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
 
 ## Ya shippeado (no repetir)
 
+- **`POST /internal/advisor/send`** (v1.11.0): endpoint interno autenticado con `X-Internal-Token`
+  (`INTERNAL_API_TOKEN`, opcional → sin ella el endpoint queda deshabilitado en 503) para que
+  `crm-app` mande WhatsApp al cliente a través del bot, sin volverse un segundo escritor sobre la
+  conversación. Contrato completo en `docs/internal_advisor_send.md`. **Falta operarlo:** generar el
+  token (`openssl rand -hex 32`) y cargarlo en Railway, tanto en el bot como en `crm-app` cuando se
+  despliegue.
 - **Prompt caching** (v1.9.0): `cache_control` en el system prompt estático + tools de
   `src/ai/agent.rs`. Ver `docs/PENDIENTE_prompt_caching.md`.
 - **Domicilio gratis Armenia (6–19u) + detal sin mínimo en pueblos aledaños** (v1.9.0):
@@ -73,10 +79,18 @@ Detalle completo: `../docs/PENDIENTE_capi_meta.md`.
 **Decisión de Samuel (2026-07-31):** el bot deja de mandarle WhatsApp al asesor; `crm-app` pasa a
 ser la única superficie de trabajo del asesor.
 
-**Bloqueada de verdad:** tocar `src/bot/states/advisor.rs` (~2.100 líneas) o `relay.rs` (~268)
-requiere que `crm-app` tenga envío saliente funcionando primero (`crm-app/src/server/inbox/send.ts`,
-hoy deshabilitado a propósito) — si no, el asesor se queda sin forma de responderle al cliente. Ese
-trabajo es en el repo `crm-app`, no aquí. Ver `../crm-app/ROADMAP.md`.
+**Bloqueada de verdad, pero ya con el primer eslabón puesto:** el lado bot del mecanismo existe
+desde v1.11.0 (`POST /internal/advisor/send`, ver arriba). Lo que sigue faltando antes de tocar
+`src/bot/states/advisor.rs` (~2.100 líneas) o `relay.rs` (~268) es que `crm-app` esté **desplegada**
+y que `crm-app/src/server/inbox/send.ts` llame de verdad a ese endpoint, probado punta a punta en
+producción — si no, el asesor se queda sin forma de responderle al cliente. Ese trabajo es en el
+repo `crm-app`, no aquí. Ver `../crm-app/ROADMAP.md`.
+
+Cuando llegue el momento del corte, además de borrar código hay dos comportamientos que hoy el
+endpoint interno **no** cubre y que habrá que decidir: (a) silenciar al bot mientras un humano tiene
+el caso — hoy el agente sigue respondiéndole al cliente aunque el asesor esté escribiendo desde la
+consola — y (b) pausar el timer de inactividad en esa situación. Hacerlo como cutover por fases
+(los dos caminos vivos, monitorear, después cortar), no como borrado de golpe.
 
 **Lo que se puede seguir sacando en este repo sin esperar esa decisión** (borrado ya empezó esta
 sesión, ver "Ya shippeado" arriba, pero queda trabajo real): hallazgo clave de esta sesión — el plan
