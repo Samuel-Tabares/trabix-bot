@@ -61,12 +61,13 @@ El motor de agente es el único runtime (el toggle `BOT_ENGINE` se eliminó — 
 motor determinista global, `ANTHROPIC_API_KEY` es obligatoria para arrancar).
 
 - El agente es dueño de los estados de autoservicio del cliente (menu, pedido, datos, checkout,
-  `ask_delivery_cost`, `select_payment_method`, `wait_receipt`) — ver `is_agent_owned_state()` en
-  `src/engine.rs`. Los estados de negociacion de hora, esperas de asesor legadas y relay siguen
-  100% deterministas (`transition()` en `src/bot/state_machine.rs`) — esto es estructural, no un
-  modo alternativo: un mensaje del CLIENTE mientras el caso espera al asesor, negocia hora, o está
-  en relay, siempre pasa por el FSM determinista, sin importar nada más. Detalle completo de qué
-  código FSM sigue vivo por esta vía en `docs/CLEANUP_deterministic_engine.md`.
+  `ask_delivery_cost`, `wait_business_hours`, `select_payment_method`, `wait_receipt`) — ver
+  `is_agent_owned_state()` en `src/engine.rs`. Los estados de negociacion de hora, esperas de
+  asesor legadas y relay siguen 100% deterministas (`transition()` en `src/bot/state_machine.rs`)
+  — esto es estructural, no un modo alternativo: un mensaje del CLIENTE mientras el caso espera al
+  asesor, negocia hora, o está en relay, siempre pasa por el FSM determinista, sin importar nada
+  más. Detalle completo de qué código FSM sigue vivo por esta vía en
+  `docs/CLEANUP_deterministic_engine.md`.
 
 Protecciones activas en modo agente:
 
@@ -95,13 +96,29 @@ Correcciones del canary 2026-07-19 (`docs/canary-fixes-2026-07-19.md`):
   $0" (`Some(0)`): si el domicilio no se conoce todavia, la cifra se etiqueta como "Subtotal de
   productos (sin domicilio aun, no es el total final)" en vez de "Total", para no cotizar un total
   incompleto como si fuera el final.
-- pedidos PROGRAMADOS nunca pasan por `confirm_advisor_availability` (se autoaceptan, regla de
-  negocio): esa tool ahora rechaza explicitamente cualquier llamada sobre un pedido con
-  `delivery_type=scheduled`. El auto-accept vive en `finalize_checkout` (si el domicilio ya se
-  conoce) y en `set_manual_delivery_cost` (si el domicilio llega despues, dato del asesor) — ambos
-  calculan el total, dejan el pedido en `draft_payment` y saltan directo a `select_payment_method`,
-  avisandole al asesor de forma informativa (no le preguntan disponibilidad). Solo los pedidos
-  INMEDIATOS siguen requiriendo `confirm_advisor_availability`.
+- **Fase 1 (v1.14.0): ningun pedido pasa por una confirmacion de disponibilidad del asesor.** La
+  tool `confirm_advisor_availability` se borro por completo (quedo sin call-sites reales). Regla
+  unificada, ver `can_auto_accept()` en `src/ai/agent.rs`: un pedido se autoacepta si es
+  `scheduled` (siempre) o si es `immediate` y `check_business_hours().is_open`. El auto-accept vive
+  en `finalize_checkout` (si el domicilio ya se conoce) y en `set_manual_delivery_cost` (si el
+  domicilio llega despues, dato del asesor) — ambos llaman `auto_accept_order` (antes
+  `auto_accept_scheduled_order`, generalizada), que calcula el total, deja el pedido en
+  `draft_payment` y salta directo a `select_payment_method`, avisandole al asesor de forma
+  informativa (nunca le pregunta disponibilidad).
+  - Pedido `immediate` **fuera de horario**: ya no se rechaza ni se fuerza a programar
+    (`checkout_precondition_error`/`set_delivery_immediate` ya no bloquean esto). Queda guardado
+    (`pending_advisor`) en el estado nuevo `ConversationState::WaitBusinessHours` — deliberadamente
+    distinto de `ask_delivery_cost` porque ese hereda el timeout de 10-30 min por inactividad
+    (`advisor_timeout_kind` → `HardReset`) que habria reseteado el pedido antes de que abrieramos.
+    Se resuelve solo cuando el sweep de 60s (`sweep_expired_timers`) detecta que
+    `check_business_hours().is_open` volvio a ser cierto (nuevo `TimerType::BusinessHoursReopen`,
+    `timers::expire_business_hours_timer_with_source`): si el domicilio ya se conocia, autoacepta
+    y avisa al cliente; si no, pasa a pedir el costo con el timer normal de 10 min (ya es horario
+    real). No hay duracion que trackear ni timer en vivo armado con `StartTimer` — el sweep ya
+    corria cada 60s para los demas timers.
+  - Fuera de alcance a proposito: destinos desconocidos (envio nacional). Siempre son `scheduled`,
+    ya auto-aceptan al conocerse el costo via `set_manual_delivery_cost` y ya quedan visibles como
+    `needs_human` en `crm-app` sin cambios — es el unico paso bloqueante que sigue en pie.
 - el atajo deterministico de comprobante (`try_handle_receipt_shortcut`, resend de la imagen al
   asesor) ya no depende solo de `current_state == wait_receipt`: tambien dispara si
   `payment_method == transfer` y todavia no hay `receipt_media_id`, para no perder el reenvio del

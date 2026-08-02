@@ -44,6 +44,13 @@ pub enum ConversationState {
     WaitReceipt,
     WaitAdvisorResponse,
     AskDeliveryCost,
+    /// Pedido INMEDIATO fuera de horario: ya se capturó completo, espera a
+    /// que abramos para autoaceptarse solo (ver `timers.rs`,
+    /// `TimerType::BusinessHoursReopen`). Deliberadamente distinto de
+    /// `AskDeliveryCost` para no heredar su timeout de 10-30 min por
+    /// inactividad (`advisor_timeout_kind`), que resetearía el pedido antes
+    /// de que abramos.
+    WaitBusinessHours,
     NegotiateHour,
     OfferHourToClient { proposed_hour: String },
     WaitClientHour,
@@ -95,6 +102,7 @@ impl ConversationState {
             Self::WaitReceipt => "wait_receipt",
             Self::WaitAdvisorResponse => "wait_advisor_response",
             Self::AskDeliveryCost => "ask_delivery_cost",
+            Self::WaitBusinessHours => "wait_business_hours",
             Self::NegotiateHour => "negotiate_hour",
             Self::OfferHourToClient { .. } => "offer_hour_to_client",
             Self::WaitClientHour => "wait_client_hour",
@@ -163,6 +171,7 @@ impl ConversationState {
             "wait_receipt" => Ok(Self::WaitReceipt),
             "wait_advisor_response" => Ok(Self::WaitAdvisorResponse),
             "ask_delivery_cost" => Ok(Self::AskDeliveryCost),
+            "wait_business_hours" => Ok(Self::WaitBusinessHours),
             "negotiate_hour" => Ok(Self::NegotiateHour),
             "offer_hour_to_client" => Ok(Self::OfferHourToClient {
                 proposed_hour: context
@@ -239,6 +248,7 @@ impl<'de> Deserialize<'de> for ConversationState {
             "wait_receipt" => Ok(Self::WaitReceipt),
             "wait_advisor_response" => Ok(Self::WaitAdvisorResponse),
             "ask_delivery_cost" => Ok(Self::AskDeliveryCost),
+            "wait_business_hours" => Ok(Self::WaitBusinessHours),
             "negotiate_hour" => Ok(Self::NegotiateHour),
             "offer_hour_to_client" => Ok(Self::OfferHourToClient {
                 proposed_hour: String::new(),
@@ -281,6 +291,7 @@ pub enum TimerType {
     ReceiptUpload,
     RelayInactivity,
     ConversationAbandon,
+    BusinessHoursReopen,
 }
 
 impl TimerType {
@@ -290,6 +301,7 @@ impl TimerType {
             Self::ReceiptUpload => "receipt_upload",
             Self::RelayInactivity => "relay_inactivity",
             Self::ConversationAbandon => "conversation_abandon",
+            Self::BusinessHoursReopen => "business_hours_reopen",
         }
     }
 }
@@ -648,6 +660,7 @@ pub fn transition(
         ConversationState::OfferHourToClient { .. }
         | ConversationState::WaitClientHour
         | ConversationState::AskDeliveryCost
+        | ConversationState::WaitBusinessHours
         | ConversationState::NegotiateHour
         | ConversationState::WaitAdvisorHourDecision { .. }
         | ConversationState::WaitAdvisorConfirmHour

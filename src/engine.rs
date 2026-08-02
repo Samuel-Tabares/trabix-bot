@@ -381,11 +381,12 @@ pub async fn process_advisor_input(
 ///   conversación está parada y manda el `case_phone` explícito.
 ///
 /// En los dos casos el mensaje entra al **motor de agente**, no directo al
-/// cliente. Eso importa: `confirm_advisor_availability` y
-/// `set_manual_delivery_cost` son pasos bloqueantes del flujo de pedido que solo
-/// existen si el agente interpreta la respuesta del asesor. Mandarle texto
-/// crudo al cliente (`POST /internal/advisor/send`) se salta el agente y deja el
-/// pedido colgado esperando una respuesta que nunca llega.
+/// cliente. Eso importa: `set_manual_delivery_cost` (el costo de domicilio de
+/// un municipio fuera de lista) es el único paso bloqueante del flujo de
+/// pedido que sigue en pie, y solo existe si el agente interpreta la
+/// respuesta del asesor. Mandarle texto crudo al cliente
+/// (`POST /internal/advisor/send`) se salta el agente y deja el pedido
+/// colgado esperando una respuesta que nunca llega.
 pub async fn process_advisor_turn_for_case(
     state: &AppState,
     target_phone: &str,
@@ -808,6 +809,18 @@ pub async fn execute_actions(
                                     );
                                 }
                             }
+                            TimerType::BusinessHoursReopen => {
+                                if let Err(err) = crate::bot::timers::expire_business_hours_timer(
+                                    app_state, phone,
+                                )
+                                .await
+                                {
+                                    tracing::error!(
+                                        error = %err,
+                                        "failed to expire business hours timer"
+                                    );
+                                }
+                            }
                         }
                     },
                 )
@@ -981,6 +994,7 @@ fn is_agent_owned_state(state: &ConversationState) -> bool {
             | ConversationState::EditCustomerAddress
             | ConversationState::ReviewCheckout
             | ConversationState::AskDeliveryCost
+            | ConversationState::WaitBusinessHours
             | ConversationState::SelectPaymentMethod
             | ConversationState::WaitReceipt
     )

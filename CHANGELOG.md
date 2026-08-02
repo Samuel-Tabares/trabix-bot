@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-08-02
+
+### Changed
+- **Fase 1: se elimina la pregunta bloqueante de disponibilidad inmediata.** Antes, cualquier
+  pedido `immediate` (dentro o fuera de horario) detenía el flujo esperando que el asesor
+  contestara `confirm_advisor_availability` ("¿puedes entregar ya?"), incluso cuando el domicilio
+  ya se conocía. Ahora:
+  - **Dentro de horario (8:00–23:00)** con domicilio ya conocido: `finalize_checkout` autoacepta
+    solo, igual que ya hacían los programados (`auto_accept_scheduled_order` se generalizó a
+    `auto_accept_order`, reusada por ambos casos). Si el domicilio no se conoce (municipio/zona
+    fuera de lista), se le pide el VALOR al asesor con `message_advisor` — nunca disponibilidad —
+    y `set_manual_delivery_cost` autoacepta apenas responde.
+  - **Fuera de horario**: ya no se rechaza (`checkout_precondition_error` y `set_delivery_immediate`
+    dejaron de bloquear `immediate` cerrado). El pedido completo queda guardado
+    (`pending_advisor`), el asesor recibe un aviso informativo (no una pregunta — deja el caso
+    visible como `needs_human` en `crm-app` sin depender de que conteste nada) y el cliente recibe
+    un mensaje claro de que se confirma automáticamente al abrir. Nuevo estado
+    `ConversationState::WaitBusinessHours` (deliberadamente distinto de `AskDeliveryCost`, que
+    hereda un timeout de 10-30 min por inactividad que habría reseteado el pedido antes de que
+    abriéramos) se resuelve solo vía el sweep de 60s ya existente
+    (`timers::expire_business_hours_timer_with_source`, nuevo `TimerType::BusinessHoursReopen`),
+    sin necesidad de calcular duraciones ni armar un timer en vivo.
+  - `confirm_advisor_availability` quedó sin call-sites reales y se borró por completo (tool
+    definition, dispatch, función y tests) — la vía de "el asesor rechaza el pedido" que ofrecía se
+    reemplaza por `cancel_order` o intervención directa del asesor.
+  - Fuera de alcance a propósito: destinos desconocidos (envío nacional). Siempre son pedidos
+    `scheduled`, ya auto-aceptan al conocerse el costo y ya quedan `needs_human` en `crm-app` sin
+    cambios — es el único paso bloqueante que sigue en pie, por decisión de negocio.
+
 ## [1.13.0] - 2026-08-02
 
 ### Added

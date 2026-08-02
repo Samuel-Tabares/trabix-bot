@@ -211,9 +211,8 @@ pub async fn advisor_send(
 ///   hablarle al cliente, no para contestarle al bot.
 /// - `reply` (esto) inyecta el mensaje en el turno de agente del asesor, igual
 ///   que si hubiera contestado por WhatsApp. Es lo único que dispara
-///   `confirm_advisor_availability` (¿puedes entregar ya?) y
 ///   `set_manual_delivery_cost` (¿cuánto vale el domicilio a este municipio?),
-///   que son pasos bloqueantes del flujo de pedido.
+///   el único paso bloqueante que le queda al flujo de pedido.
 ///
 /// El caso viene explícito en `case_phone` — la consola ya sabe en qué
 /// conversación está parada, así que no hace falta el mecanismo de botones que

@@ -140,7 +140,9 @@ Reglas que no puedes romper:
   que mencione una cifra no respaldada por una herramienta, así que inventar una nunca ayuda.
 - El horario de entrega inmediata y si está ABIERTO o CERRADO AHORA MISMO te lo da el bloque \
   ESTADO ACTUAL DEL CASO (línea "Hora actual en Armenia/Bogotá"). Úsalo SIEMPRE, nunca asumas ni \
-  respondas de memoria: si dice CERRADO, no ofrezcas entrega inmediata, ofrece programar.
+  respondas de memoria. Si dice CERRADO igual puedes ofrecer entrega inmediata (se autoacepta sola \
+  apenas abramos, ver PEDIDO INMEDIATO abajo); solo ofrece programar si el cliente prefiere una \
+  fecha/hora específica en vez de esperar a que abramos.
 - Antes de agregar un producto usa get_menu para conocer los flavor_id validos; no inventes ids.
 - SIN LICOR AGOTADO AL DETAL: por ahora los granizados sin licor (Manzana verde, Bonbonbum, \
   Maracumango, Blueberry en su versión sin licor) SOLO se venden al por mayor (mínimo 20 unidades \
@@ -169,25 +171,24 @@ Reglas que no puedes romper:
   enviar el pedido tal cual esta, con productos, nombre, telefono, direccion y tipo de entrega \
   completos. En ese mismo turno, ademas de llamar finalize_checkout, escribele al cliente \
   confirmandole que el pedido fue enviado.
-- PEDIDO INMEDIATO: NUNCA le preguntes al asesor si puede atender un pedido sin haber llamado \
-  finalize_checkout ANTES en ese mismo turno: sin finalize_checkout el pedido no existe en el \
-  sistema y la respuesta del asesor no se puede registrar. La secuencia obligatoria es: cliente \
-  confirma -> finalize_checkout -> message_advisor preguntando disponibilidad. Si el domicilio ya \
-  se conoce, solo pregunta si puede enviar el pedido (no le pidas el precio, ya lo sabes); si el \
-  domicilio no se conoce todavia (municipio fuera de la lista), pidele el valor. Cuando el asesor \
-  te responda que si puede, usa confirm_advisor_availability con available=true; si dice que no \
-  puede, usa confirm_advisor_availability con available=false.
+- PEDIDO INMEDIATO: nunca se le pregunta disponibilidad al asesor, ni dentro ni fuera de horario — \
+  esa pregunta ya no existe. Cuando el cliente confirme (tras la recapitulación), llama \
+  finalize_checkout directo, sin preguntarle nada al asesor antes. Tres resultados posibles, todos \
+  los maneja la herramienta sola: (1) horario ABIERTO y domicilio ya conocido → se autoacepta al \
+  instante, dile al cliente que ya puede elegir método de pago; (2) domicilio todavía no se conoce \
+  (municipio/zona fuera de lista) → la herramienta te dice que le pidas el VALOR al asesor con \
+  message_advisor (nunca disponibilidad) y llames set_manual_delivery_cost cuando responda, eso \
+  autoacepta solo; (3) horario CERRADO → la herramienta guarda el pedido igual, no lo rechaces ni \
+  lo fuerces a programar: dile al cliente que su pedido quedó registrado y se confirma \
+  AUTOMÁTICAMENTE apenas abramos, sin que tenga que volver a escribir ni hacer nada más.
 - PEDIDO PROGRAMADO: mínimo 24 HORAS de anticipación. Cuando el cliente dé la fecha/hora, \
   resuélvela tú a ISO (usando la fecha/hora actual del bloque ESTADO) y pásala a \
   set_delivery_schedule como date=YYYY-MM-DD y time=HH:MM 24h; si es muy pronto la herramienta te \
-  rechaza y te dice desde cuándo se puede — pídele al cliente una fecha más adelante. Un pedido \
-  programado NUNCA se confirma con el asesor — se autoacepta. NO uses \
-  confirm_advisor_availability para un pedido programado, esa herramienta la rechaza. Si al llamar \
-  finalize_checkout el domicilio ya se conoce, la herramienta autoacepta el pedido sola y te dice \
-  el total: ya puedes preguntarle al cliente el método de pago. Si el domicilio todavía no se \
-  conoce (municipio fuera de la lista), finalize_checkout te lo dice: pídele el VALOR del \
-  domicilio al asesor con message_advisor (no le preguntes disponibilidad) y cuando responda usa \
-  set_manual_delivery_cost — esa llamada autoacepta el pedido automáticamente, sin pasos extra.
+  rechaza y te dice desde cuándo se puede — pídele al cliente una fecha más adelante. Igual que el \
+  inmediato, nunca se le pregunta disponibilidad al asesor: si al llamar finalize_checkout el \
+  domicilio ya se conoce, se autoacepta sola y te dice el total (ya puedes preguntar método de \
+  pago); si no se conoce, pídele el VALOR al asesor con message_advisor y usa \
+  set_manual_delivery_cost cuando responda — autoacepta el pedido automáticamente, sin pasos extra.
 - Cuando el cliente elija metodo de pago, usa set_payment_method. Si elige pago por transferencia, \
   las instrucciones de transferencia (cuenta, llaves, banco) las envia automaticamente esa \
   herramienta en un mensaje aparte. NUNCA escribas tú los datos de cuenta/llaves/banco en tu \
@@ -299,7 +300,7 @@ async fn run_case_turn(
     let mut terminal: Option<(ConversationState, Vec<BotAction>)> = None;
     let mut effective_state = current_state.clone();
     // Al primer tool que cambia de estado (finalize_checkout,
-    // confirm_advisor_availability, set_payment_method, cancel_order) le
+    // set_manual_delivery_cost, set_payment_method, cancel_order) le
     // damos exactamente una ronda extra para que el modelo cierre con un
     // mensaje (p. ej. avisarle a la otra parte). Mas rondas despues de eso
     // solo dan pie a que el modelo siga hablando sobre un caso que ya
@@ -401,7 +402,7 @@ async fn run_case_turn(
                     // MAX_TOOL_ITERATIONS. Los guards de estado de los tools
                     // siguientes ven el estado YA cambiado (effective_state),
                     // para que cadenas como finalize_checkout ->
-                    // confirm_advisor_availability dentro del mismo turno no
+                    // set_manual_delivery_cost dentro del mismo turno no
                     // se rechacen por el estado persistido viejo.
                     effective_state = next_state.clone();
                     terminal = Some((next_state, Vec::new()));
@@ -595,18 +596,19 @@ fn build_dynamic_case_state(
     actor: Actor,
     current_state: &ConversationState,
 ) -> String {
-    let is_scheduled = context.delivery_type.as_deref() == Some("scheduled");
     let flow_hint = match current_state {
-        ConversationState::AskDeliveryCost if is_scheduled => {
-            "\nFase del flujo: pedido PROGRAMADO esperando el costo de domicilio (municipio/zona \
-             desconocida) — NUNCA uses confirm_advisor_availability aquí, los programados se \
-             autoaceptan. Pídele el valor al asesor y usa set_manual_delivery_cost cuando \
-             responda; eso autoacepta el pedido y avanza solo. El pedido NO está confirmado."
+        ConversationState::AskDeliveryCost => {
+            "\nFase del flujo: pedido esperando el costo de domicilio (municipio/zona \
+             desconocida) — no se pregunta disponibilidad, se autoacepta solo. Pídele el valor al \
+             asesor con message_advisor y usa set_manual_delivery_cost cuando responda; eso \
+             autoacepta el pedido y avanza solo. El pedido NO está confirmado."
                 .to_string()
         }
-        ConversationState::AskDeliveryCost => {
-            "\nFase del flujo: pedido INMEDIATO esperando que el ASESOR confirme disponibilidad \
-             (confirm_advisor_availability). El pedido NO está confirmado."
+        ConversationState::WaitBusinessHours => {
+            "\nFase del flujo: pedido INMEDIATO fuera de horario, ya guardado. Se autoacepta SOLO \
+             apenas abramos (no hace falta que nadie haga nada). Si el cliente escribe de nuevo, \
+             recuérdale con amabilidad que su pedido se confirma automáticamente al abrir; no \
+             vuelvas a pedirle datos ni llames finalize_checkout otra vez."
                 .to_string()
         }
         ConversationState::SelectPaymentMethod => {
@@ -852,34 +854,6 @@ fn dispatch_tool(
             )
         }
         "finalize_checkout" => finalize_checkout(id, context),
-        "confirm_advisor_availability" => {
-            if actor != Actor::Advisor {
-                return ToolOutcome::Result(error_result(
-                    id,
-                    "confirm_advisor_availability solo se puede usar interpretando un mensaje real del asesor.",
-                ));
-            }
-            // Visto en pruebas: el modelo a veces le pregunta disponibilidad
-            // al asesor sin haber llamado finalize_checkout, y cuando el
-            // asesor responde "sí puedo" este tool se rechazaba y el caso
-            // quedaba varado. Si el pedido está completo, la confirmación
-            // real del asesor implica que el pedido debe existir: se
-            // auto-finaliza aquí de forma determinista en vez de confiar en
-            // que el modelo siga la secuencia.
-            let needs_auto_finalize = *current_state != ConversationState::AskDeliveryCost;
-            if needs_auto_finalize {
-                if let Some(error) = checkout_precondition_error(context) {
-                    return ToolOutcome::Result(error_result(
-                        id,
-                        format!(
-                            "Este caso no está esperando confirmación de disponibilidad y el \
-                             pedido no se puede finalizar todavía: {error}"
-                        ),
-                    ));
-                }
-            }
-            confirm_advisor_availability(id, input, context, needs_auto_finalize)
-        }
         "set_payment_method" => {
             if actor != Actor::Customer {
                 return ToolOutcome::Result(error_result(
@@ -951,21 +925,24 @@ fn set_customer_field(input: &Value, context: &mut ConversationContext) -> (Stri
 }
 
 fn set_delivery_immediate(context: &mut ConversationContext) -> (String, bool) {
-    let status = tools::check_business_hours();
-    if !status.is_open {
-        return (
-            format!(
-                "No se puede: fuera de horario de entrega inmediata ({}). Ofrece programar fecha y hora.",
-                status.hours_text
-            ),
-            true,
-        );
-    }
-
     context.delivery_type = Some("immediate".to_string());
     context.scheduled_date = None;
     context.scheduled_time = None;
-    ("Entrega inmediata confirmada.".to_string(), false)
+    let status = tools::check_business_hours();
+    if status.is_open {
+        ("Entrega inmediata confirmada.".to_string(), false)
+    } else {
+        (
+            format!(
+                "Entrega inmediata registrada, pero AHORA MISMO está CERRADO ({}). Al finalizar el \
+                 pedido (finalize_checkout) quedará esperando y se autoaceptará solo apenas abramos \
+                 — explícale esto al cliente, no le ofrezcas programar en su lugar salvo que él lo \
+                 prefiera.",
+                status.hours_text
+            ),
+            false,
+        )
+    }
 }
 
 fn set_delivery_schedule(input: &Value, context: &mut ConversationContext) -> (String, bool) {
@@ -1212,14 +1189,13 @@ fn set_manual_delivery_cost(id: &str, input: &Value, context: &mut ConversationC
         ));
     };
 
-    // Si ya existe un pedido PROGRAMADO finalizado esperando justo este dato
-    // (el único que faltaba), autoaceptarlo aquí mismo: los programados
-    // nunca pasan por confirm_advisor_availability (ver
-    // docs/canary-fixes-2026-07-19.md #4/D). Si todavía no hay pedido
-    // (se está resolviendo la zona antes de finalize_checkout), solo se
-    // guarda el costo y el flujo normal continúa.
-    if context.delivery_type.as_deref() == Some("scheduled") && context.current_order_id.is_some() {
-        return auto_accept_scheduled_order(id, context, delivery_cost);
+    // Si ya existe un pedido finalizado esperando justo este dato (el único
+    // que faltaba), autoaceptarlo aquí mismo: programados siempre, inmediatos
+    // solo si hay horario abierto ahora mismo (ver `can_auto_accept`). Si
+    // todavía no hay pedido (se está resolviendo la zona antes de
+    // finalize_checkout), solo se guarda el costo y el flujo normal continúa.
+    if can_auto_accept(context) && context.current_order_id.is_some() {
+        return auto_accept_order(id, context, delivery_cost);
     }
 
     context.delivery_cost = Some(delivery_cost);
@@ -1459,15 +1435,17 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
         }
     }
 
-    // Regla de negocio: un pedido PROGRAMADO nunca se confirma con el asesor
-    // -- se autoacepta (ver docs/canary-fixes-2026-07-19.md #4/D). Si el
-    // domicilio ya se conoce en este punto, se salta directo a método de
-    // pago sin pasar por confirm_advisor_availability.
-    let is_scheduled = context.delivery_type.as_deref() == Some("scheduled");
-    if is_scheduled {
-        if let Some(delivery_cost) = context.delivery_cost {
-            return auto_accept_scheduled_order(id, context, delivery_cost);
-        }
+    // Regla de negocio: un pedido nunca se confirma preguntándole
+    // disponibilidad al asesor -- se autoacepta apenas se conoce el
+    // domicilio, siempre que sea PROGRAMADO (nunca requiere disponibilidad,
+    // ver docs/canary-fixes-2026-07-19.md #4/D) o INMEDIATO con horario de
+    // atención abierto ahora mismo. Un inmediato fuera de horario no se
+    // rechaza ni se autoacepta: queda esperando a que abramos.
+    if !can_auto_accept(context) {
+        return wait_for_business_hours(id, context);
+    }
+    if let Some(delivery_cost) = context.delivery_cost {
+        return auto_accept_order(id, context, delivery_cost);
     }
 
     context.advisor_timer_started_at = Some(chrono::Utc::now());
@@ -1488,14 +1466,10 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
         },
     ];
 
-    let message = if is_scheduled {
-        "Pedido programado enviado: falta el costo de domicilio (municipio/zona desconocida). \
-         Pídele al asesor el VALOR del domicilio con message_advisor (no le preguntes \
-         disponibilidad, los programados se autoaceptan) y usa set_manual_delivery_cost cuando \
-         responda."
-    } else {
-        "Pedido enviado a revisión del asesor."
-    };
+    let message = "Pedido enviado: falta el costo de domicilio (municipio/zona desconocida). \
+                    Pídele al asesor el VALOR del domicilio con message_advisor (no le preguntes \
+                    disponibilidad, se autoacepta apenas responda) y usa set_manual_delivery_cost \
+                    cuando responda.";
 
     ToolOutcome::ResultWithStateChange(
         ok_result(id, message),
@@ -1542,16 +1516,28 @@ fn compute_total_final(context: &ConversationContext, delivery_cost: i32) -> i32
         .saturating_add(delivery_cost)
 }
 
-/// Autoacepta un pedido PROGRAMADO apenas se conoce el domicilio: calcula el
-/// total, deja el pedido en draft_payment y avanza directo a método de pago
-/// sin pasar por confirm_advisor_availability (esa herramienta es solo para
-/// pedidos inmediatos, ver docs/canary-fixes-2026-07-19.md #4/D). El asesor
-/// solo recibe un aviso informativo, no se le pregunta nada.
-fn auto_accept_scheduled_order(
-    id: &str,
+/// True cuando el pedido puede saltarse la confirmación de disponibilidad del
+/// asesor y pasar directo a autoaceptarse apenas se conoce el domicilio:
+/// pedidos PROGRAMADOS siempre (nunca requieren disponibilidad, ver
+/// docs/canary-fixes-2026-07-19.md #4/D), y pedidos INMEDIATOS solo si hay
+/// horario de atención abierto ahora mismo (fuera de horario van por
+/// `wait_for_business_hours` en su lugar).
+fn can_auto_accept(context: &ConversationContext) -> bool {
+    context.delivery_type.as_deref() == Some("scheduled") || tools::check_business_hours().is_open
+}
+
+/// Autoacepta un pedido (programado, o inmediato con horario abierto) apenas
+/// se conoce el domicilio: calcula el total, deja el pedido en draft_payment
+/// y avanza directo a método de pago sin pasar por una confirmación de
+/// disponibilidad del asesor. El asesor solo recibe un aviso informativo, no
+/// se le pregunta nada. Devuelve el total final y las acciones, para que
+/// tanto el tool-call del agente (`auto_accept_order`) como la resolución por
+/// timer (`timers::expire_business_hours_timer_with_source`) reusen la misma
+/// lógica en vez de duplicarla.
+pub(crate) fn auto_accept_order_actions(
     context: &mut ConversationContext,
     delivery_cost: i32,
-) -> ToolOutcome {
+) -> (i32, Vec<BotAction>) {
     context.delivery_cost = Some(delivery_cost);
     let total_final = compute_total_final(context, delivery_cost);
     context.total_final = Some(total_final);
@@ -1579,7 +1565,61 @@ fn auto_accept_scheduled_order(
         BotAction::SendText {
             to: context.advisor_phone.clone(),
             body: format!(
-                "📅 Pedido PROGRAMADO auto-aceptado (no requiere confirmar disponibilidad):\n\n{}",
+                "✅ Pedido auto-aceptado (no requiere confirmar disponibilidad):\n\n{}",
+                advisor_case_summary(context)
+            ),
+        },
+    ]);
+
+    (total_final, actions)
+}
+
+fn auto_accept_order(id: &str, context: &mut ConversationContext, delivery_cost: i32) -> ToolOutcome {
+    let (total_final, actions) = auto_accept_order_actions(context, delivery_cost);
+
+    ToolOutcome::ResultWithStateChange(
+        ok_result(
+            id,
+            format!(
+                "Pedido auto-aceptado. Total final: ${}. El pedido AÚN NO está confirmado: \
+                 pregúntale al cliente el método de pago y llama set_payment_method cuando \
+                 responda.",
+                format_thousands(u32::try_from(total_final).unwrap_or(0))
+            ),
+        ),
+        ConversationState::SelectPaymentMethod,
+        actions,
+    )
+}
+
+/// Pedido INMEDIATO fuera de horario: no se rechaza ni se autoacepta, queda
+/// esperando a que abramos. El pedido completo ya se captura como
+/// `pending_advisor` desde ya (si aún no existía) y el asesor recibe un
+/// aviso informativo -- no una pregunta -- que lo deja visible como
+/// `needs_human` en la consola sin depender de que conteste nada. La
+/// resolución real ocurre en `timers::expire_business_hours_timer_with_source`,
+/// que corre en cuanto el sweep de 60s detecta que volvió a abrir (ver
+/// `ConversationState::WaitBusinessHours`).
+fn wait_for_business_hours(id: &str, context: &mut ConversationContext) -> ToolOutcome {
+    let hours = tools::check_business_hours();
+    let mut actions = Vec::new();
+    if context.current_order_id.is_none() {
+        actions.push(BotAction::FinalizeCurrentOrder {
+            status: "pending_advisor".to_string(),
+        });
+    }
+    actions.extend([
+        BotAction::BindAdvisorSession {
+            advisor_phone: context.advisor_phone.clone(),
+            target_phone: context.phone_number.clone(),
+        },
+        BotAction::SendText {
+            to: context.advisor_phone.clone(),
+            body: format!(
+                "🌙 Pedido inmediato fuera de horario ({}). Se autoacepta solo apenas abramos, sin \
+                 que tengas que responder nada. Puedes revisarlo en la consola si quieres \
+                 adelantarlo:\n\n{}",
+                hours.hours_text,
                 advisor_case_summary(context)
             ),
         },
@@ -1589,13 +1629,13 @@ fn auto_accept_scheduled_order(
         ok_result(
             id,
             format!(
-                "Pedido programado auto-aceptado. Total final: ${}. El pedido AÚN NO está \
-                 confirmado: pregúntale al cliente el método de pago y llama set_payment_method \
-                 cuando responda.",
-                format_thousands(u32::try_from(total_final).unwrap_or(0))
+                "Pedido guardado, fuera de horario ({}). Dile al cliente que su pedido quedó \
+                 registrado y se confirma AUTOMÁTICAMENTE apenas abramos, sin que tenga que hacer \
+                 nada más ni volver a escribir.",
+                hours.hours_text
             ),
         ),
-        ConversationState::SelectPaymentMethod,
+        ConversationState::WaitBusinessHours,
         actions,
     )
 }
@@ -1661,14 +1701,7 @@ fn checkout_precondition_error(context: &ConversationContext) -> Option<String> 
     }
 
     match context.delivery_type.as_deref() {
-        Some("immediate") => {
-            if !tools::check_business_hours().is_open {
-                missing.push(
-                    "entrega inmediata fuera de horario: ofrece programar fecha y hora en su lugar"
-                        .to_string(),
-                );
-            }
-        }
+        Some("immediate") => {}
         Some("scheduled") => {
             if context.scheduled_date.is_none() {
                 missing.push("fecha programada".to_string());
@@ -1688,108 +1721,6 @@ fn checkout_precondition_error(context: &ConversationContext) -> Option<String> 
             missing.join(", ")
         ))
     }
-}
-
-fn confirm_advisor_availability(
-    id: &str,
-    input: &Value,
-    context: &mut ConversationContext,
-    auto_finalize: bool,
-) -> ToolOutcome {
-    // Regla de negocio: un pedido PROGRAMADO nunca se confirma con el
-    // asesor -- se autoacepta (ver docs/canary-fixes-2026-07-19.md #4/D).
-    // Sin este guard, el modelo llegó a preguntarle disponibilidad al
-    // asesor para pedidos programados durante las pruebas del 2026-07-19.
-    if context.delivery_type.as_deref() == Some("scheduled") {
-        return ToolOutcome::Result(error_result(
-            id,
-            "confirm_advisor_availability no aplica a pedidos PROGRAMADOS: esos se autoaceptan, \
-             nunca se le pregunta disponibilidad al asesor. Si falta el domicilio, pídeselo al \
-             asesor y usa set_manual_delivery_cost. Si el domicilio ya se conoce, este pedido ya \
-             debió pasar directo a método de pago.",
-        ));
-    }
-
-    let available = input.get("available").and_then(Value::as_bool).unwrap_or(false);
-
-    context.advisor_timer_started_at = None;
-    context.advisor_timer_expired = false;
-
-    if !available {
-        let mut actions = vec![
-            BotAction::CancelTimer {
-                timer_type: TimerType::AdvisorResponse,
-                phone: context.phone_number.clone(),
-            },
-            BotAction::ClearAdvisorSession {
-                advisor_phone: context.advisor_phone.clone(),
-            },
-        ];
-        if context.current_order_id.is_some() {
-            actions.push(BotAction::UpsertDraftOrder {
-                status: "manual_followup".to_string(),
-            });
-        }
-        actions.push(BotAction::ResetConversation {
-            phone: context.phone_number.clone(),
-        });
-
-        return ToolOutcome::ResultWithStateChange(
-            ok_result(id, "Registrado: el asesor no puede atender este pedido."),
-            ConversationState::MainMenu,
-            actions,
-        );
-    }
-
-    let Some(delivery_cost) = context.delivery_cost else {
-        return ToolOutcome::Result(error_result(
-            id,
-            "Todavía no hay costo de domicilio definido. Usa set_delivery_zone_armenia, \
-             set_delivery_nearby_town o set_manual_delivery_cost primero.",
-        ));
-    };
-
-    let total_final = compute_total_final(context, delivery_cost);
-    context.total_final = Some(total_final);
-
-    let mut actions = Vec::new();
-    if auto_finalize && context.current_order_id.is_none() {
-        // El upsert de FinalizeCurrentOrder crea el pedido y deja
-        // context.current_order_id listo antes de que corra
-        // UpdateCurrentOrderDeliveryCost (execute_actions es secuencial).
-        actions.push(BotAction::FinalizeCurrentOrder {
-            status: "pending_advisor".to_string(),
-        });
-    }
-    actions.extend([
-        BotAction::UpdateCurrentOrderDeliveryCost {
-            delivery_cost,
-            total_final,
-            status: "draft_payment".to_string(),
-        },
-        BotAction::CancelTimer {
-            timer_type: TimerType::AdvisorResponse,
-            phone: context.phone_number.clone(),
-        },
-        BotAction::ClearAdvisorSession {
-            advisor_phone: context.advisor_phone.clone(),
-        },
-    ]);
-
-    ToolOutcome::ResultWithStateChange(
-        ok_result(
-            id,
-            format!(
-                "Disponibilidad confirmada. Total final: ${}. El pedido AÚN NO está confirmado: \
-                 pregúntale al cliente el método de pago (efectivo contra entrega o \
-                 transferencia) y llama set_payment_method cuando el CLIENTE responda. No le \
-                 digas al cliente que el pedido ya está confirmado o en camino todavía.",
-                format_thousands(u32::try_from(total_final).unwrap_or(0))
-            ),
-        ),
-        ConversationState::SelectPaymentMethod,
-        actions,
-    )
 }
 
 fn set_payment_method(id: &str, input: &Value, context: &mut ConversationContext) -> ToolOutcome {
@@ -2274,18 +2205,8 @@ fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "finalize_checkout".to_string(),
-            description: "Envía el pedido a revisión del asesor. Solo llamar después de que el cliente confirme explícitamente y con todos los datos completos.".to_string(),
+            description: "Finaliza el pedido: dentro de horario se autoacepta solo, fuera de horario queda guardado esperando a que abramos. Solo llamar después de que el cliente confirme explícitamente y con todos los datos completos.".to_string(),
             input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
-        },
-        ToolDefinition {
-            name: "confirm_advisor_availability".to_string(),
-            description: "Registra si el asesor confirmó que puede (o no) atender el pedido. Solo usar interpretando una respuesta real del asesor.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": { "available": { "type": "boolean" } },
-                "required": ["available"],
-                "additionalProperties": false
-            }),
         },
         ToolDefinition {
             name: "set_payment_method".to_string(),
@@ -2703,25 +2624,66 @@ mod tests {
         }
     }
 
-    #[test]
-    fn confirm_advisor_availability_rejects_scheduled_orders() {
-        let mut context = test_context();
-        context.delivery_cost = Some(15_000);
+    // Las siguientes pruebas dependen de la hora real de Bogotá
+    // (`tools::check_business_hours`, sin seam de reloj inyectable, mismo
+    // patrón que `check_business_hours_reports_hours_text` en tools.rs). En
+    // vez de asumir un valor fijo, toman una foto de `is_open` justo antes de
+    // llamar y verifican que el resultado sea consistente con esa foto — así
+    // cubren las dos ramas sin ser flakies según a qué hora corra `cargo test`.
 
-        let outcome = confirm_advisor_availability(
-            "id_1",
-            &json!({ "available": true }),
-            &mut context,
-            true,
-        );
+    #[test]
+    fn finalize_checkout_immediate_matches_current_business_hours() {
+        let mut context = test_context();
+        context.delivery_type = Some("immediate".to_string());
+        context.delivery_cost = Some(15_000);
+        let is_open = tools::check_business_hours().is_open;
+
+        let outcome = finalize_checkout("id_1", &mut context);
 
         match outcome {
-            ToolOutcome::Result(ContentBlock::ToolResult { content, is_error, .. }) => {
-                assert_eq!(is_error, Some(true));
-                assert!(content.contains("PROGRAMADOS"));
+            ToolOutcome::ResultWithStateChange(block, next_state, actions) => {
+                let ContentBlock::ToolResult { content, .. } = block else {
+                    panic!("expected tool result");
+                };
+                if is_open {
+                    assert_eq!(next_state, ConversationState::SelectPaymentMethod);
+                    assert!(content.contains("auto-aceptado"));
+                    assert!(!actions
+                        .iter()
+                        .any(|action| matches!(action, BotAction::StartTimer { .. })));
+                } else {
+                    assert_eq!(next_state, ConversationState::WaitBusinessHours);
+                    assert!(actions.iter().any(|action| matches!(
+                        action,
+                        BotAction::SendText { to, .. } if *to == context.advisor_phone
+                    )));
+                    // Ningún camino nuevo dispara un StartTimer: fuera de
+                    // horario se resuelve por el sweep, no por un timer en vivo.
+                    assert!(!actions
+                        .iter()
+                        .any(|action| matches!(action, BotAction::StartTimer { .. })));
+                }
             }
-            _ => panic!("expected a rejected tool result"),
+            _ => panic!("expected a state change"),
         }
+    }
+
+    #[test]
+    fn checkout_precondition_error_allows_immediate_regardless_of_hours() {
+        let mut context = test_context();
+        context.delivery_type = Some("immediate".to_string());
+
+        assert!(checkout_precondition_error(&context).is_none());
+    }
+
+    #[test]
+    fn set_delivery_immediate_always_succeeds_even_when_closed() {
+        let mut context = test_context();
+
+        let (_message, is_error) = set_delivery_immediate(&mut context);
+
+        assert!(!is_error);
+        assert_eq!(context.delivery_type.as_deref(), Some("immediate"));
     }
 
     #[test]

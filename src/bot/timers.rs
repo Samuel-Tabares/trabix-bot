@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     bot::{
         inactivity::CONVERSATION_REMINDER_TIMEOUT,
-        state_machine::{BotAction, ConversationContext, TimerType},
+        state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
         states::advisor,
     },
     db::{
@@ -100,6 +100,10 @@ fn timer_rule_for_start_timer(timer_type: &TimerType) -> Option<TimerRule> {
         TimerType::ConversationAbandon => Some(TimerRule::ConversationReminder),
         TimerType::AdvisorResponse => Some(TimerRule::AdvisorResponse),
         TimerType::RelayInactivity => None,
+        // No se arma vía StartTimer: se resuelve puramente por el sweep de
+        // 60s reconsultando check_business_hours (ver `timer_recovery`), no
+        // hay una duración fija que trackear.
+        TimerType::BusinessHoursReopen => None,
     }
 }
 
@@ -403,6 +407,17 @@ fn timer_recovery(
                 .unwrap_or(conversation.last_message_at),
             now,
         ),
+        // Sin duración que trackear: cada tick del sweep vuelve a preguntar
+        // si el horario ya abrió. No usa `timer_recovery_for` (no hay
+        // `started_at` relevante) — el pedido puede esperar horas, no hay
+        // "vencido por inactividad" aquí.
+        "wait_business_hours" => {
+            if crate::ai::tools::check_business_hours().is_open {
+                Some(TimerRecovery::Expired(TimerType::BusinessHoursReopen))
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -483,6 +498,12 @@ fn boot_expiration_action(
             // y no hay reset por inactividad.
             BootExpirationAction::MarkInactivityReminderSilently
         }
+        // No-op a propósito: en boot no se envían mensajes reales (ver los
+        // otros brazos), y acá SÍ hace falta mandar mensajes de verdad
+        // (avisarle al cliente que su pedido quedó confirmado). Se deja para
+        // el próximo tick del sweep normal (`sweep_expired_timers`, cada
+        // 60s), que ya corre apenas arranca el proceso.
+        TimerType::BusinessHoursReopen => BootExpirationAction::None,
     }
 }
 
@@ -510,6 +531,9 @@ async fn expire_timer_now(
         }
         TimerType::ConversationAbandon => {
             expire_conversation_abandon_with_source(state, phone_number, source).await
+        }
+        TimerType::BusinessHoursReopen => {
+            expire_business_hours_timer_with_source(state, phone_number, source).await
         }
     };
 
@@ -827,6 +851,108 @@ async fn expire_conversation_abandon_with_source(
     Ok(())
 }
 
+/// No se arma vía `BotAction::StartTimer` (`BusinessHoursReopen` no tiene
+/// duración fija, ver `timer_rule_for_start_timer`), pero se expone igual con
+/// el mismo shape que los demás `expire_*` para que `engine.rs` pueda cubrir
+/// el `match` exhaustivo de `TimerType` sin una rama muerta.
+pub async fn expire_business_hours_timer(
+    state: AppState,
+    phone_number: String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    expire_business_hours_timer_with_source(state, phone_number, TimerSource::Runtime).await
+}
+
+/// Reabrimos apenas el sweep detecta que volvió a abrir (`timer_recovery`,
+/// caso `wait_business_hours`). Reusa `auto_accept_order_actions` (agent.rs)
+/// -- la MISMA lógica que usa el tool-call del agente para no duplicarla --
+/// si el domicilio ya se conocía; si el pueblo seguía sin resolver, pasa a
+/// pedir el costo con el timer normal de 10 min (ahora sí hay atención real).
+async fn expire_business_hours_timer_with_source(
+    state: AppState,
+    phone_number: String,
+    source: TimerSource,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(conversation) = get_conversation(&state.pool, &phone_number).await? else {
+        return Ok(());
+    };
+
+    if conversation.state != "wait_business_hours" {
+        return Ok(());
+    }
+
+    // Guard contra condición de carrera al filo del horario: si para cuando
+    // corre esto ya volvió a cerrar, no hacer nada -- el próximo tick lo
+    // vuelve a intentar.
+    if !crate::ai::tools::check_business_hours().is_open {
+        return Ok(());
+    }
+
+    let state_data = conversation.state_data.0.clone();
+    let mut context = rehydrate_context_for_timer(
+        phone_number.clone(),
+        state.config.advisor_phone.clone(),
+        conversation.customer_name.clone(),
+        conversation.customer_phone.clone(),
+        conversation.delivery_address.clone(),
+        &state_data,
+    );
+
+    tracing::info!(
+        phone = %mask_phone(&phone_number),
+        timer_type = %TimerType::BusinessHoursReopen.as_str(),
+        source = %source.as_str(),
+        "business hours reopened, resolving waiting order"
+    );
+
+    let (next_state, actions) = if let Some(delivery_cost) = context.delivery_cost {
+        let (_total_final, mut accept_actions) =
+            crate::ai::agent::auto_accept_order_actions(&mut context, delivery_cost);
+        accept_actions.push(BotAction::SendText {
+            to: phone_number.clone(),
+            body: "✅ ¡Ya abrimos! Tu pedido quedó confirmado. Cuéntanos cómo prefieres pagar \
+                   (efectivo contra entrega o transferencia) y seguimos."
+                .to_string(),
+        });
+        (ConversationState::SelectPaymentMethod, accept_actions)
+    } else {
+        context.advisor_timer_started_at = Some(Utc::now());
+        context.advisor_timer_expired = false;
+        let ask_cost_actions = vec![
+            BotAction::StartTimer {
+                timer_type: TimerType::AdvisorResponse,
+                phone: phone_number.clone(),
+                duration: ADVISOR_RESPONSE_TIMEOUT,
+            },
+            BotAction::SendText {
+                to: state.config.advisor_phone.clone(),
+                body: format!(
+                    "☀️ Ya abrimos. El pedido inmediato {} sigue esperando el costo de domicilio \
+                     (municipio/zona desconocida) — contesta con el valor.",
+                    phone_marker(&phone_number)
+                ),
+            },
+            BotAction::SendText {
+                to: phone_number.clone(),
+                body: "✅ ¡Ya abrimos! Estamos confirmando el valor del domicilio para tu \
+                       pedido, en un momento te decimos el total."
+                    .to_string(),
+            },
+        ];
+        (ConversationState::AskDeliveryCost, ask_cost_actions)
+    };
+
+    update_state(
+        &state.pool,
+        &phone_number,
+        next_state.as_storage_key(),
+        &context.to_state_data(),
+    )
+    .await?;
+    dispatch_timer_actions(&state, &phone_number, &actions).await?;
+
+    Ok(())
+}
+
 fn timer_recovery_states() -> Vec<&'static str> {
     vec![
         "wait_receipt",
@@ -834,6 +960,7 @@ fn timer_recovery_states() -> Vec<&'static str> {
         "wait_advisor_mayor",
         "wait_advisor_contact",
         "ask_delivery_cost",
+        "wait_business_hours",
         "negotiate_hour",
         "wait_advisor_hour_decision",
         "wait_advisor_confirm_hour",
@@ -1312,5 +1439,39 @@ mod tests {
         let action = boot_expiration_action(&conversation, TimerType::ConversationAbandon);
 
         assert_eq!(action, BootExpirationAction::MarkInactivityReminderSilently);
+    }
+
+    // Depende de la hora real de Bogotá (sin seam de reloj, mismo patrón que
+    // las pruebas de `tools::check_business_hours` en agent.rs) — toma una
+    // foto de `is_open` y verifica que el resultado sea consistente con ella,
+    // en vez de asumir un valor fijo.
+    #[test]
+    fn timer_recovery_wait_business_hours_matches_check_business_hours() {
+        let now = chrono::Utc::now();
+        let conversation =
+            active_timer_conversation("wait_business_hours", ConversationStateData::default(), now);
+        let is_open = crate::ai::tools::check_business_hours().is_open;
+
+        let recovery = timer_recovery(&conversation, now);
+
+        if is_open {
+            assert_eq!(
+                recovery,
+                Some(TimerRecovery::Expired(TimerType::BusinessHoursReopen))
+            );
+        } else {
+            assert_eq!(recovery, None);
+        }
+    }
+
+    #[test]
+    fn boot_expiration_business_hours_reopen_is_a_noop() {
+        let now = chrono::Utc::now();
+        let conversation =
+            active_timer_conversation("wait_business_hours", ConversationStateData::default(), now);
+
+        let action = boot_expiration_action(&conversation, TimerType::BusinessHoursReopen);
+
+        assert_eq!(action, BootExpirationAction::None);
     }
 }
