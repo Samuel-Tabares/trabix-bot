@@ -23,9 +23,9 @@ atiende manualmente; no hay un motor alterno al que caer.
 
 ## Leer un caso atascado
 
-- Conversación completa (ambos carriles, cliente↔bot y bot↔asesor, cualquier motor): consola
-  desplegada `https://crm-production-618e.up.railway.app` (password = variable `CRM_PASSWORD`
-  del servicio `crm`) o directamente la tabla `message_events` (solo captura desde 2026-07-22).
+- Conversación completa (ambos carriles, cliente↔bot y bot↔asesor, cualquier motor): `crm-app`
+  (`https://crm-app-production-405d.up.railway.app`) o directamente la tabla `message_events`
+  (solo captura desde 2026-07-22).
 - Memoria cruda del agente LLM: tabla `agent_case_messages` (una fila por teléfono, JSONB con
   todos los turnos, incluye tool calls).
 - Estado actual: tabla `conversations` → columnas `state` y `state_data` (incluye
@@ -55,31 +55,18 @@ silencio (no responde, no toca ningún caso) pero para Meta cuenta como mensaje 
 la ventana. Si la ventana ya venció (el asesor dejó de recibir avisos), basta con que envíe
 cualquier mensaje al bot para reabrirla.
 
-## Consolas de conversaciones (dos, a propósito y por poco tiempo)
+## Consola de conversaciones (`crm-app`)
 
-Desde 2026-08-01 hay dos consolas corriendo sobre el mismo Postgres: `crm-web` (la vieja, solo
-lectura) y `crm-app` (la nueva, con envío saliente). **`crm-web` se mantiene solo como red de
-seguridad** hasta que el envío saliente de `crm-app` esté probado punta a punta con un cliente real.
-Apenas eso pase: `railway remove --service crm` y borrar esta sección.
+`crm-app` es la única consola operativa: `https://crm-app-production-405d.up.railway.app`, servicio
+`crm-app` del mismo proyecto Railway. Deploy manual desde `../crm-app`:
+`railway up --service crm-app --detach`. Envía WhatsApp llamando a `POST /internal/advisor/send`
+de este bot con el header `X-Internal-Token` (mismo valor que `INTERNAL_API_TOKEN` acá). Si el
+envío empieza a fallar con `not_connected`, lo primero a revisar es que esos dos valores sigan
+siendo idénticos.
 
-- `crm-app`: `https://crm-app-production-405d.up.railway.app`, servicio `crm-app` del mismo
-  proyecto. Deploy manual desde `../crm-app`: `railway up --service crm-app --detach`. Envía
-  WhatsApp llamando a `POST /internal/advisor/send` de este bot con el header `X-Internal-Token`
-  (mismo valor que `INTERNAL_API_TOKEN` acá). Si el envío empieza a fallar con `not_connected`, lo
-  primero a revisar es que esos dos valores sigan siendo idénticos.
-
-### La consola vieja (`crm-web/` en Railway)
-
-- URL: `https://crm-production-618e.up.railway.app` — servicio `crm` en el mismo proyecto
-  Railway del bot, lee la misma Postgres por red interna (`DATABASE_URL = ${{Postgres.DATABASE_URL}}`).
-- Acceso: un solo operador, password en la variable `CRM_PASSWORD` del servicio `crm` (cambiarla
-  ahí invalida las sesiones activas, porque la cookie es un hash del password).
-- Deploy: **manual**, no se autodespliega con push. Desde la raíz del repo:
-  `railway up --service crm --detach` (el servicio tiene `rootDirectory = crm-web`; requiere
-  `PORT=3000` ya configurado — el dominio apunta a ese puerto).
-- Si sale 502: revisar que `PORT=3000` siga en las variables del servicio.
-- La consola solo muestra `message_events` (captura desde 2026-07-22); si la tabla aún no
-  existiera, muestra estado vacío sin romper.
+La consola vieja (`crm-web`, servicio `crm`) se jubiló el 2026-08-02 tras probar el envío saliente
+de `crm-app` punta a punta en producción (Fase 4 del corte del canal del asesor, ver
+`../ROADMAP.md`).
 
 ## Control de gasto LLM
 
