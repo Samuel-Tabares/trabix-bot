@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-08-02
+
+### Added
+- **Backfill de `customers`** (migración `013`): la tabla se creó el 2026-07-15 y solo capturaba
+  desde ahí, pero los pedidos existen desde marzo — de los 17 teléfonos con pedido, solo **4** tenían
+  fila. Los otros 13 eran invisibles en la consola: no salían en contactos, no contaban para
+  recompra, no existían para ninguna métrica. Se reconstruye lo derivable de datos ya guardados
+  (teléfono, nombre, última dirección, primer/último contacto, y gasto/unidades **solo de pedidos
+  `confirmed`). `customer_username` y `ctwa_clid` quedan nulos a propósito: nunca se capturaron y
+  rellenarlos sería inventar datos. Idempotente (`ON CONFLICT DO NOTHING`), nunca pisa una fila
+  existente. Solo entran conversaciones con evidencia de ser cliente — así queda afuera la fila que
+  el bot crea para el número del **asesor**, que no es un cliente.
+
+### Changed
+- **El corte de Fase 4 ahora aplica en las dos direcciones.** Antes `ADVISOR_WHATSAPP_ENABLED=false`
+  solo silenciaba la salida hacia el asesor, pero el webhook seguía enrutando cualquier mensaje
+  entrante de ese número como "asesor". O sea: el número quedaba secuestrado como canal de control y
+  ni siquiera podía probar el bot como cliente. Ahora, con el canal apagado, ese número vuelve a ser
+  uno cualquiera y el bot le habla como cliente.
+
 ## [1.12.0] - 2026-08-02
 
 ### Fixed

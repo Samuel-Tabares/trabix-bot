@@ -164,7 +164,14 @@ async fn process_incoming_message(
 
     let extracted = extract_input(&message);
     let (message_type, content) = describe_input(&extracted.input);
-    let actor = if from == state.config.advisor_phone {
+    // El corte de Fase 4 va en las DOS direcciones. Con el canal apagado el
+    // asesor atiende desde `crm-app`, así que su número deja de ser un canal de
+    // control y vuelve a ser un número cualquiera: si escribe por WhatsApp, el
+    // bot le habla como cliente. Si solo se cortara la salida, ese número
+    // seguiría secuestrado como "asesor" y no podría ni probar el bot.
+    let treat_as_advisor = state.config.advisor_whatsapp_enabled
+        && from == state.config.advisor_phone;
+    let actor = if treat_as_advisor {
         "advisor"
     } else {
         "customer"
@@ -188,7 +195,7 @@ async fn process_incoming_message(
         );
     }
 
-    if from == state.config.advisor_phone {
+    if treat_as_advisor {
         process_advisor_input(state, extracted.input, extracted.reply_to_message_id).await?;
     } else {
         let profile_name = contact
