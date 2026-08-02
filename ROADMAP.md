@@ -53,6 +53,12 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
   (`src/capi.rs`) construido y wireado en la confirmación de compra (`UpdateCustomerAndAnalytics` en
   `src/engine.rs`) — hoy es un no-op silencioso porque falta configurar `WABA_ID` /
   `META_CAPI_DATASET_ID` / `META_CAPI_ACCESS_TOKEN`.
+- **Fase 2: toma de control humana con auto-devolución** (v1.15.0): `conversations.human_takeover_until`
+  (migración `014`), marcado por `POST /internal/advisor/send` (ventana deslizante, default 6h vía
+  `ADVISOR_TAKEOVER_HOURS`), consultado en `engine::process_customer_input` y en los 4
+  `expire_*_with_source` de `bot::timers` + la reconciliación de boot. `POST /internal/advisor/release`
+  la libera antes de tiempo. `POST /internal/advisor/reply` NO la dispara a propósito — ver
+  `docs/internal_advisor_send.md`. Del lado `crm-app` falta el composer (ver su propio ROADMAP).
 
 ---
 
@@ -94,11 +100,12 @@ y que `crm-app/src/server/inbox/send.ts` llame de verdad a ese endpoint, probado
 producción — si no, el asesor se queda sin forma de responderle al cliente. Ese trabajo es en el
 repo `crm-app`, no aquí. Ver `../crm-app/ROADMAP.md`.
 
-Cuando llegue el momento del corte, además de borrar código hay dos comportamientos que hoy el
-endpoint interno **no** cubre y que habrá que decidir: (a) silenciar al bot mientras un humano tiene
-el caso — hoy el agente sigue respondiéndole al cliente aunque el asesor esté escribiendo desde la
-consola — y (b) pausar el timer de inactividad en esa situación. Hacerlo como cutover por fases
-(los dos caminos vivos, monitorear, después cortar), no como borrado de golpe.
+**Resuelto (v1.15.0, Fase 2):** los dos comportamientos que le faltaban al endpoint interno —
+(a) silenciar al bot mientras un humano tiene el caso y (b) pausar el timer de inactividad en esa
+situación — ya están shippeados vía `conversations.human_takeover_until`. Ver "Ya shippeado" arriba
+y `docs/internal_advisor_send.md`. Sigue pendiente el cutover en sí (los dos caminos vivos,
+monitorear, después cortar) — eso sigue bloqueado en que `crm-app` termine de probar el envío
+saliente punta a punta, no en esto.
 
 **Lo que se puede seguir sacando en este repo sin esperar esa decisión** (borrado ya empezó esta
 sesión, ver "Ya shippeado" arriba, pero queda trabajo real): hallazgo clave de esta sesión — el plan

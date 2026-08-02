@@ -15,6 +15,7 @@ pub struct ActiveTimerConversation {
     pub customer_phone: Option<String>,
     pub delivery_address: Option<String>,
     pub last_message_at: chrono::DateTime<chrono::Utc>,
+    pub human_takeover_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub async fn get_conversation(
@@ -23,7 +24,7 @@ pub async fn get_conversation(
 ) -> Result<Option<Conversation>, sqlx::Error> {
     sqlx::query_as::<_, Conversation>(
         r#"
-        SELECT id, phone_number, state, state_data, customer_name, customer_phone, delivery_address, last_message_at, created_at
+        SELECT id, phone_number, state, state_data, customer_name, customer_phone, delivery_address, last_message_at, created_at, human_takeover_until
         FROM conversations
         WHERE phone_number = $1
         "#,
@@ -36,7 +37,7 @@ pub async fn get_conversation(
 pub async fn list_conversations(pool: &PgPool) -> Result<Vec<Conversation>, sqlx::Error> {
     sqlx::query_as::<_, Conversation>(
         r#"
-        SELECT id, phone_number, state, state_data, customer_name, customer_phone, delivery_address, last_message_at, created_at
+        SELECT id, phone_number, state, state_data, customer_name, customer_phone, delivery_address, last_message_at, created_at, human_takeover_until
         FROM conversations
         ORDER BY last_message_at DESC, id DESC
         "#,
@@ -53,13 +54,55 @@ pub async fn create_conversation(
         r#"
         INSERT INTO conversations (phone_number, state, state_data)
         VALUES ($1, 'main_menu', $2)
-        RETURNING id, phone_number, state, state_data, customer_name, customer_phone, delivery_address, last_message_at, created_at
+        RETURNING id, phone_number, state, state_data, customer_name, customer_phone, delivery_address, last_message_at, created_at, human_takeover_until
         "#,
     )
     .bind(phone_number)
     .bind(Json(ConversationStateData::default()))
     .fetch_one(pool)
     .await
+}
+
+/// Fase 2: se llama SOLO desde `POST /internal/advisor/send` (texto libre del
+/// asesor al cliente). `until` es una ventana deslizante: cada llamada nueva
+/// la reemplaza, no la acumula. `POST /internal/advisor/reply` NO llama esto
+/// a propósito — ese endpoint existe para que el bot SIGA el checkout
+/// automático después de que el asesor destraba una pregunta puntual.
+pub async fn set_human_takeover(
+    pool: &PgPool,
+    phone_number: &str,
+    until: chrono::DateTime<chrono::Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE conversations
+        SET human_takeover_until = $2
+        WHERE phone_number = $1
+        "#,
+    )
+    .bind(phone_number)
+    .bind(until)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Devuelve la conversación al bot antes de que venza la ventana de
+/// `set_human_takeover` — llamado desde `POST /internal/advisor/release`.
+pub async fn clear_human_takeover(pool: &PgPool, phone_number: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE conversations
+        SET human_takeover_until = NULL
+        WHERE phone_number = $1
+        "#,
+    )
+    .bind(phone_number)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 pub async fn update_state(
@@ -416,7 +459,7 @@ pub async fn list_active_timer_conversations(
 ) -> Result<Vec<ActiveTimerConversation>, sqlx::Error> {
     sqlx::query_as::<_, ActiveTimerConversation>(
         r#"
-        SELECT id, phone_number, state, state_data, customer_name, customer_phone, delivery_address, last_message_at
+        SELECT id, phone_number, state, state_data, customer_name, customer_phone, delivery_address, last_message_at, human_takeover_until
         FROM conversations
         WHERE state = ANY($1)
         "#,

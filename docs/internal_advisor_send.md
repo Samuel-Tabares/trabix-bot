@@ -90,12 +90,48 @@ La traza y el `last_message_at` son **best-effort**: si fallan, el endpoint igua
 porque el mensaje ya salió. Devolver error ahí haría que la consola reintente y el cliente reciba
 el mensaje dos veces.
 
+## Toma de control humana con auto-devolución (Fase 2, v1.15.0)
+
+Cada llamada a `advisor_send` (y **solo** a esta, ver por qué abajo) marca
+`conversations.human_takeover_until = now + ADVISOR_TAKEOVER_HOURS` (env nueva, default `6`,
+ventana deslizante — cada envío nuevo la reemplaza, no la acumula). Mientras esa columna sigue en el
+futuro:
+
+- `engine::process_customer_input` **no llama al agente** para ese cliente. El mensaje entrante
+  sigue quedando en `message_events` (sigue visible en `crm-app`), pero el bot no le contesta nada.
+- Los 4 timers que le mandan algo al cliente (`expire_advisor_timer`, `expire_relay_timer`,
+  `expire_conversation_abandon`, `expire_business_hours_timer`) se vuelven no-op mientras dure la
+  pausa, igual que la reconciliación de timers vencidos al boot.
+
+**Por qué `advisor_reply` NO dispara esto:** ese endpoint existe para que el asesor destrabe una
+pregunta puntual del agente (`confirm_advisor_availability`, `set_manual_delivery_cost`) y el bot
+**siga** el checkout automático después. Si también pausara, el bot no podría confirmar el pedido ni
+responder al "gracias" del cliente hasta que venza la ventana — rompería el propósito mismo del
+endpoint. `sendText` sí es un humano escribiéndole libremente al cliente, por fuera del guion del
+bot — eso sí es tomar el caso.
+
+### `POST /internal/advisor/release`
+
+Devuelve la conversación al bot antes de que venza la ventana, sin esperar las 6h. Mismo header
+`X-Internal-Token`.
+
+```jsonc
+{ "case_phone": "573001234567", "sent_by": "user_id del CRM" }
+```
+
+No manda nada a Meta ni escribe `message_events` — solo limpia `human_takeover_until`. Responde
+`{"ok": true}`, mismos códigos de error que `/reply` (`unauthorized`, `unknown_case`,
+`invalid_request`, `internal_error`).
+
+```bash
+curl -i -X POST https://<bot>/internal/advisor/release \
+  -H "Content-Type: application/json" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  -d '{"case_phone":"573001234567","sent_by":"curl"}'
+```
+
 ## Lo que este endpoint NO hace (todavía)
 
-- **No cambia el estado de la conversación.** El bot sigue en el estado donde estaba y va a seguir
-  respondiéndole al cliente. Silenciar al bot cuando un humano toma el caso es Phase 4, no esto.
-- **No pausa el timer de inactividad.** Si hay un recordatorio pendiente, va a dispararse aunque el
-  asesor esté escribiendo. También es Phase 4.
 - **No manda plantillas, ni imágenes, ni botones.** Solo texto libre dentro de la ventana de 24h.
 - **No toca `advisor.rs` ni `relay.rs`.** El flujo viejo (bot → WhatsApp del asesor) sigue intacto
   y en producción; este endpoint es un camino nuevo en paralelo.

@@ -136,6 +136,11 @@ pub struct Conversation {
     pub delivery_address: Option<String>,
     pub last_message_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    /// Fase 2: toma de control humana. `Some(until)` con `until` en el futuro
+    /// significa que un asesor mandó texto libre desde `crm-app` y el bot debe
+    /// callarse con este cliente hasta esa hora — ver `engine::process_customer_input`
+    /// y los guards en `bot::timers`.
+    pub human_takeover_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

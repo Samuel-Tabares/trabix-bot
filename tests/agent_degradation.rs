@@ -60,6 +60,7 @@ async fn setup_state() -> AppState {
         capi_access_token: None,
         internal_api_token: None,
         advisor_whatsapp_enabled: true,
+        advisor_takeover_hours: 6,
     };
 
     AppState {

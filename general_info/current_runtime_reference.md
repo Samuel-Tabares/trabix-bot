@@ -673,8 +673,28 @@ Campos importantes:
 - `customer_phone`
 - `delivery_address`
 - `last_message_at`
+- `human_takeover_until` (migración 014, Fase 2)
 
 `state` se persiste como string `snake_case`.
+
+### Toma De Control Humana (Fase 2)
+
+`human_takeover_until` es un timestamp opcional, no un estado (`state` no cambia). Solo lo escribe
+`POST /internal/advisor/send` (`crm-app`), cada vez que un asesor manda texto libre al cliente desde
+la consola — es la señal de "esto lo está atendiendo un humano", sin botón ni flag manual. Ventana
+deslizante: cada envío nuevo la reemplaza a `now + ADVISOR_TAKEOVER_HOURS` (env, default `6`, no
+acumula). `POST /internal/advisor/reply` deliberadamente NO la toca (existe para que el bot siga el
+checkout automático después de que el asesor destraba una pregunta puntual, ver
+`docs/internal_advisor_send.md`).
+
+Mientras `human_takeover_until` está en el futuro:
+
+- `engine::process_customer_input` no llama al agente para ese cliente (el mensaje entrante sigue
+  quedando en `message_events`, solo que el bot no lo procesa ni le agenda timers nuevos).
+- Los 4 `expire_*_with_source` de `bot::timers` (`advisor`, `relay`, `conversation_abandon`,
+  `business_hours`) y la reconciliación de timers vencidos al boot se vuelven no-op.
+
+`POST /internal/advisor/release` la limpia antes de tiempo (botón "Devolver al bot" en `crm-app`).
 
 ### `state_data`
 
@@ -751,6 +771,8 @@ Variables y datos operativos clave:
 - `WABA_ID`, `META_CAPI_DATASET_ID`, `META_CAPI_ACCESS_TOKEN` (opcionales; sin las tres, el
   reporte de compras a la Conversions API de Meta es un no-op silencioso — ver
   `docs/PENDIENTE_capi_meta.md`)
+- `ADVISOR_TAKEOVER_HOURS` (opcional, default `6` — cuántas horas dura la pausa del bot tras un
+  `sendText` desde `crm-app`; ver "Toma De Control Humana" arriba)
 
 Notas actuales:
 

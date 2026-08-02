@@ -32,6 +32,12 @@ pub struct Config {
     /// Es un flag de corte por fases: se apaga, se prueba, y si algo sale mal se
     /// vuelve a `true` sin desplegar código.
     pub advisor_whatsapp_enabled: bool,
+    /// Cuántas horas dura la pausa del bot tras un `sendText` desde `crm-app`
+    /// (Fase 2, toma de control humana). Ventana deslizante: cada `sendText`
+    /// nuevo la reemplaza por `now + N`, no la acumula. Default 6h si la
+    /// variable falta o no es un número válido — mismo criterio que
+    /// `advisor_whatsapp_enabled`: un typo no debe tumbar el arranque.
+    pub advisor_takeover_hours: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +83,7 @@ impl Config {
             capi_access_token: read_optional("META_CAPI_ACCESS_TOKEN"),
             internal_api_token: read_optional("INTERNAL_API_TOKEN"),
             advisor_whatsapp_enabled: read_bool("ADVISOR_WHATSAPP_ENABLED", true),
+            advisor_takeover_hours: read_u64("ADVISOR_TAKEOVER_HOURS", 6),
         })
     }
 }
@@ -107,6 +114,15 @@ fn read_bool(name: &'static str, default: bool) -> bool {
             "false" | "0" | "no" | "off" => false,
             _ => default,
         },
+        Err(_) => default,
+    }
+}
+
+/// Igual que `read_bool`: un valor ausente o no parseable cae al default en
+/// vez de tumbar el arranque.
+fn read_u64(name: &'static str, default: u64) -> u64 {
+    match env::var(name) {
+        Ok(value) => value.trim().parse::<u64>().unwrap_or(default),
         Err(_) => default,
     }
 }
@@ -165,6 +181,7 @@ mod tests {
             "BIND_IP",
             "ANTHROPIC_API_KEY",
             "ADVISOR_WHATSAPP_ENABLED",
+            "ADVISOR_TAKEOVER_HOURS",
         ] {
             std::env::remove_var(key);
         }
@@ -238,6 +255,41 @@ mod tests {
                 "'{value}' debería apagar el canal"
             );
         }
+    }
+
+    /// Igual criterio que `advisor_whatsapp_defaults_to_enabled`: si la variable
+    /// falta o llega con basura, la pausa cae al default en vez de tumbar el
+    /// arranque o quedar en un estado indefinido.
+    #[test]
+    fn advisor_takeover_hours_defaults_and_falls_back() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+        std::env::set_var("DATABASE_URL", "postgres://local");
+        std::env::set_var("ADVISOR_PHONE", "573001234567");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test");
+        set_whatsapp_vars();
+
+        assert_eq!(Config::from_env().expect("config").advisor_takeover_hours, 6);
+
+        std::env::set_var("ADVISOR_TAKEOVER_HOURS", "no-es-un-numero");
+        assert_eq!(
+            Config::from_env().expect("config").advisor_takeover_hours,
+            6,
+            "un valor no parseable debe caer al default"
+        );
+    }
+
+    #[test]
+    fn advisor_takeover_hours_can_be_overridden() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+        std::env::set_var("DATABASE_URL", "postgres://local");
+        std::env::set_var("ADVISOR_PHONE", "573001234567");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test");
+        set_whatsapp_vars();
+
+        std::env::set_var("ADVISOR_TAKEOVER_HOURS", "12");
+        assert_eq!(Config::from_env().expect("config").advisor_takeover_hours, 12);
     }
 
     #[test]

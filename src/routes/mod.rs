@@ -18,4 +18,5 @@ pub fn router() -> Router<AppState> {
         )
         .route("/internal/advisor/send", post(internal::advisor_send))
         .route("/internal/advisor/reply", post(internal::advisor_reply))
+        .route("/internal/advisor/release", post(internal::advisor_release))
 }

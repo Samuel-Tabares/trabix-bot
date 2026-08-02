@@ -3,6 +3,7 @@ use std::{
     io::{Error as IoError, ErrorKind},
 };
 
+use chrono::Utc;
 use serde_json::json;
 
 use crate::{
@@ -49,6 +50,24 @@ pub async fn process_customer_input(
     log_inbound_event(&state, &phone, CHANNEL_CLIENT, ACTOR_CLIENT, &input).await;
 
     let conversation = load_or_create_conversation(&state, &phone).await?;
+
+    // Fase 2: un asesor mandó texto libre desde crm-app (`set_human_takeover`,
+    // solo vía `POST /internal/advisor/send`) y el bot se calla con este
+    // cliente hasta que venza la ventana. El mensaje ya quedó en
+    // `message_events` (log_inbound_event arriba), así que sigue visible en la
+    // bandeja — solo se omite el turno de agente y no se agenda ningún timer.
+    if let Some(until) = conversation.human_takeover_until {
+        if until > Utc::now() {
+            tracing::info!(
+                phone = %mask_phone(&phone),
+                until = %until,
+                "conversación pausada por toma de control humana; se omite turno de agente"
+            );
+            update_last_message(&state.pool, &phone).await?;
+            return Ok(());
+        }
+    }
+
     let (current_state, mut context) = rehydrate_client_conversation(&state, &conversation).await?;
     let seeded = seed_customer_data(&mut context, &phone, profile_name.as_deref());
     if seeded.seeded_phone || seeded.seeded_name {

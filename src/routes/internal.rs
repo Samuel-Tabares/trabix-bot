@@ -16,12 +16,16 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
     bot::state_machine::UserInput,
-    db::queries::{get_conversation, record_message_event, update_last_message},
+    db::queries::{
+        clear_human_takeover, get_conversation, record_message_event, set_human_takeover,
+        update_last_message,
+    },
     logging::{mask_phone, preview_text},
     whatsapp::client::WhatsAppError,
     AppState,
@@ -40,6 +44,14 @@ pub struct AdvisorSendRequest {
     pub case_phone: String,
     pub body: String,
     /// Quién lo mandó desde la consola (usuario del CRM). Solo para la traza.
+    #[serde(default)]
+    pub sent_by: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdvisorReleaseRequest {
+    pub case_phone: String,
+    /// Quién lo liberó desde la consola. Solo para el log.
     #[serde(default)]
     pub sent_by: Option<String>,
 }
@@ -191,11 +203,23 @@ pub async fn advisor_send(
         tracing::warn!(error = %err, "failed to bump last_message_at after internal send");
     }
 
+    // Fase 2: un humano escribiendo texto libre desde la consola es la señal
+    // de toma de control, sin botón ni estado manual — ver
+    // docs/internal_advisor_send.md. Ventana deslizante: se reemplaza en cada
+    // envío, no se acumula. Deliberadamente NO se hace lo mismo en
+    // `advisor_reply`: ese endpoint existe para que el bot SIGA el checkout
+    // automático después de que el asesor destraba una pregunta puntual.
+    let takeover_until = Utc::now() + Duration::hours(state.config.advisor_takeover_hours as i64);
+    if let Err(err) = set_human_takeover(&state.pool, &case_phone, takeover_until).await {
+        tracing::warn!(error = %err, "failed to set human takeover window after internal send");
+    }
+
     tracing::info!(
         case_phone = %mask_phone(&case_phone),
         sent_by = %payload.sent_by.as_deref().unwrap_or("<desconocido>"),
         message_id = %wa_message_id.as_deref().unwrap_or("<none>"),
         preview = %preview_text(&body),
+        takeover_until = %takeover_until,
         "advisor message sent from crm-app"
     );
 
@@ -262,6 +286,42 @@ pub async fn advisor_reply(
         sent_by = %payload.sent_by.as_deref().unwrap_or("<desconocido>"),
         preview = %preview_text(&body),
         "advisor reply processed from crm-app"
+    );
+
+    Ok(Json(AdvisorReplyResponse { ok: true }))
+}
+
+/// Devuelve la conversación al bot antes de que venza la ventana de
+/// `set_human_takeover` (Fase 2). No manda nada a Meta ni escribe
+/// `message_events` — solo limpia `conversations.human_takeover_until`. Lo
+/// usa el botón "Devolver al bot" de `crm-app`.
+pub async fn advisor_release(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<AdvisorReleaseRequest>, JsonRejection>,
+) -> Result<Json<AdvisorReplyResponse>, ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+
+    let Json(payload) = payload
+        .map_err(|err| ApiError::InvalidRequest(format!("cuerpo JSON inválido: {err}")))?;
+
+    let case_phone = validate_phone(&payload.case_phone)?;
+
+    let conversation = get_conversation(&state.pool, &case_phone)
+        .await
+        .map_err(|err| ApiError::Internal(format!("error consultando la conversación: {err}")))?;
+    if conversation.is_none() {
+        return Err(ApiError::UnknownCase);
+    }
+
+    clear_human_takeover(&state.pool, &case_phone)
+        .await
+        .map_err(|err| ApiError::Internal(format!("error liberando la conversación: {err}")))?;
+
+    tracing::info!(
+        case_phone = %mask_phone(&case_phone),
+        sent_by = %payload.sent_by.as_deref().unwrap_or("<desconocido>"),
+        "conversation released back to bot from crm-app"
     );
 
     Ok(Json(AdvisorReplyResponse { ok: true }))

@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-08-02
+
+### Added
+- **Fase 2: toma de control humana con auto-devolución.** El bot le seguía respondiendo al cliente
+  aunque un asesor ya estuviera escribiéndole desde `crm-app` — dos voces en la misma conversación.
+  Ahora, cada `POST /internal/advisor/send` (texto libre del asesor al cliente) marca
+  `conversations.human_takeover_until = now + ADVISOR_TAKEOVER_HOURS` (env nueva, default `6h`,
+  ventana deslizante — se reemplaza en cada envío, no se acumula). Mientras esa columna sigue en el
+  futuro:
+  - `engine::process_customer_input` no llama al agente para ese cliente (el mensaje entrante sigue
+    quedando en `message_events`, visible en la bandeja, pero el bot no lo procesa ni agenda timers
+    nuevos).
+  - Los 4 `expire_*_with_source` de `bot::timers` (asesor, relay, inactividad genérica, reapertura
+    de horario) y la reconciliación de timers vencidos al boot se vuelven no-op mientras dure la
+    pausa.
+  - Nuevo `POST /internal/advisor/release` devuelve la conversación al bot antes de que venza la
+    ventana (botón "Devolver al bot" en `crm-app`).
+  - **`POST /internal/advisor/reply` deliberadamente NO dispara la pausa** — ese endpoint existe
+    para que el bot siga el checkout automático después de que el asesor destraba una pregunta
+    puntual (`confirm_advisor_availability`, `set_manual_delivery_cost`); pausarlo ahí rompería el
+    propósito del endpoint. Contrato completo en `docs/internal_advisor_send.md`.
+  - Migración `014_add_conversation_human_takeover.sql` (columna `human_takeover_until`, append-only).
+
 ## [1.14.0] - 2026-08-02
 
 ### Changed

@@ -213,6 +213,14 @@ async fn reconcile_boot_expired_timer(
     conversation: &crate::db::queries::ActiveTimerConversation,
     timer_type: TimerType,
 ) -> Result<(), sqlx::Error> {
+    // Caso borde de un redeploy en medio de una toma de control humana activa
+    // (Fase 2): sin este guard, un timer vencido podría resetear la
+    // conversación o mandarle algo al cliente saltándose la pausa. Se difiere:
+    // el próximo boot/sweep lo vuelve a evaluar cuando ya no aplique.
+    if human_takeover_active(conversation.human_takeover_until) {
+        return Ok(());
+    }
+
     match boot_expiration_action(conversation, timer_type.clone()) {
         BootExpirationAction::UpdateReceiptExpired => {
             let mut state_data = conversation.state_data.0.clone();
@@ -614,6 +622,10 @@ async fn expire_advisor_timer_with_source(
         return Ok(());
     };
 
+    if human_takeover_active(conversation.human_takeover_until) {
+        return Ok(());
+    }
+
     let Some(timeout_kind) = advisor_timeout_kind(conversation.state.as_str()) else {
         return Ok(());
     };
@@ -762,6 +774,10 @@ async fn expire_relay_timer_with_source(
         return Ok(());
     };
 
+    if human_takeover_active(conversation.human_takeover_until) {
+        return Ok(());
+    }
+
     if conversation.state != "relay_mode" {
         return Ok(());
     }
@@ -812,6 +828,10 @@ async fn expire_conversation_abandon_with_source(
     let Some(conversation) = get_conversation(&state.pool, &phone_number).await? else {
         return Ok(());
     };
+
+    if human_takeover_active(conversation.human_takeover_until) {
+        return Ok(());
+    }
 
     if !customer_inactivity_state(&conversation.state) {
         return Ok(());
@@ -875,6 +895,10 @@ async fn expire_business_hours_timer_with_source(
     let Some(conversation) = get_conversation(&state.pool, &phone_number).await? else {
         return Ok(());
     };
+
+    if human_takeover_active(conversation.human_takeover_until) {
+        return Ok(());
+    }
 
     if conversation.state != "wait_business_hours" {
         return Ok(());
@@ -1002,6 +1026,14 @@ enum AdvisorTimeoutKind {
     HardReset,
 }
 
+/// Fase 2: si un asesor tomó el caso desde `crm-app` (`set_human_takeover`),
+/// ningún timer de este archivo debe dispararle nada al cliente hasta que
+/// venza `until`. Compartido por los 4 `expire_*_with_source` y por la
+/// reconciliación de arranque.
+fn human_takeover_active(until: Option<DateTime<Utc>>) -> bool {
+    until.is_some_and(|until| until > Utc::now())
+}
+
 fn advisor_timeout_kind(state: &str) -> Option<AdvisorTimeoutKind> {
     match state {
         "wait_advisor_response" => Some(AdvisorTimeoutKind::AutoCannot),
@@ -1107,8 +1139,8 @@ mod tests {
     use sqlx::types::Json;
 
     use super::{
-        boot_expiration_action, timer_recovery, BootExpirationAction, TimerRecovery,
-        ADVISOR_RESPONSE_TIMEOUT,
+        boot_expiration_action, human_takeover_active, timer_recovery, BootExpirationAction,
+        TimerRecovery, ADVISOR_RESPONSE_TIMEOUT,
     };
     use crate::{
         bot::state_machine::TimerType,
@@ -1129,6 +1161,7 @@ mod tests {
             customer_phone: Some("3001234567".to_string()),
             delivery_address: Some("Cra 15 #20-30".to_string()),
             last_message_at,
+            human_takeover_until: None,
         }
     }
 
@@ -1473,5 +1506,13 @@ mod tests {
         let action = boot_expiration_action(&conversation, TimerType::BusinessHoursReopen);
 
         assert_eq!(action, BootExpirationAction::None);
+    }
+
+    #[test]
+    fn human_takeover_active_only_while_until_is_in_the_future() {
+        let now = chrono::Utc::now();
+        assert!(!human_takeover_active(None));
+        assert!(human_takeover_active(Some(now + ChronoDuration::hours(1))));
+        assert!(!human_takeover_active(Some(now - ChronoDuration::minutes(1))));
     }
 }
