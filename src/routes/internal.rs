@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
+    bot::state_machine::UserInput,
     db::queries::{get_conversation, record_message_event, update_last_message},
     logging::{mask_phone, preview_text},
     whatsapp::client::WhatsAppError,
@@ -46,6 +47,14 @@ pub struct AdvisorSendRequest {
 #[derive(Debug, Serialize)]
 pub struct AdvisorSendResponse {
     pub wa_message_id: Option<String>,
+}
+
+/// No devuelve `wa_message_id` a propósito: el turno del asesor puede generar
+/// cero, uno o varios mensajes al cliente (o ninguno, si el agente solo actualiza
+/// el estado del pedido). No hay un único id que devolver.
+#[derive(Debug, Serialize)]
+pub struct AdvisorReplyResponse {
+    pub ok: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -191,6 +200,72 @@ pub async fn advisor_send(
     );
 
     Ok(Json(AdvisorSendResponse { wa_message_id }))
+}
+
+/// Respuesta del asesor **hacia el bot**, no hacia el cliente.
+///
+/// La diferencia con `/internal/advisor/send` es la que decide si un pedido
+/// avanza o se queda colgado:
+///
+/// - `send` manda texto crudo al cliente y **se salta el agente**. Sirve para
+///   hablarle al cliente, no para contestarle al bot.
+/// - `reply` (esto) inyecta el mensaje en el turno de agente del asesor, igual
+///   que si hubiera contestado por WhatsApp. Es lo único que dispara
+///   `confirm_advisor_availability` (¿puedes entregar ya?) y
+///   `set_manual_delivery_cost` (¿cuánto vale el domicilio a este municipio?),
+///   que son pasos bloqueantes del flujo de pedido.
+///
+/// El caso viene explícito en `case_phone` — la consola ya sabe en qué
+/// conversación está parada, así que no hace falta el mecanismo de botones que
+/// usa el canal de WhatsApp para adivinar a qué cliente le está respondiendo.
+pub async fn advisor_reply(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<AdvisorSendRequest>, JsonRejection>,
+) -> Result<Json<AdvisorReplyResponse>, ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+
+    let Json(payload) = payload
+        .map_err(|err| ApiError::InvalidRequest(format!("cuerpo JSON inválido: {err}")))?;
+
+    let case_phone = validate_phone(&payload.case_phone)?;
+    let body = validate_body(&payload.body)?;
+
+    // Se valida ANTES de tomar el turno: el motor asume que el caso existe, y
+    // así la consola recibe un 404 limpio en vez de un error interno.
+    let conversation = get_conversation(&state.pool, &case_phone)
+        .await
+        .map_err(|err| ApiError::Internal(format!("error consultando la conversación: {err}")))?;
+    if conversation.is_none() {
+        return Err(ApiError::UnknownCase);
+    }
+
+    // El turno toma el lock de la conversación por dentro; acá no se toma para
+    // no bloquearse contra sí mismo.
+    crate::engine::process_advisor_turn_for_case(
+        &state,
+        &case_phone,
+        UserInput::TextMessage(body.clone()),
+        false,
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!(
+            case_phone = %mask_phone(&case_phone),
+            error = %err,
+            "internal advisor reply failed"
+        );
+        ApiError::Internal(format!("el turno del asesor falló: {err}"))
+    })?;
+
+    tracing::info!(
+        case_phone = %mask_phone(&case_phone),
+        sent_by = %payload.sent_by.as_deref().unwrap_or("<desconocido>"),
+        preview = %preview_text(&body),
+        "advisor reply processed from crm-app"
+    );
+
+    Ok(Json(AdvisorReplyResponse { ok: true }))
 }
 
 fn authorize(headers: &HeaderMap, configured: Option<&str>) -> Result<(), ApiError> {

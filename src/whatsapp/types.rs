@@ -109,7 +109,12 @@ pub struct Contact {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContactProfile {
-    pub name: String,
+    /// Opcional a propósito: Meta manda `"profile": {}` sin `name` cuando el
+    /// usuario no tiene nombre de perfil configurado. Con este campo obligatorio
+    /// serde reventaba el payload ENTERO y el mensaje del cliente se perdía sin
+    /// respuesta — el bot ni se enteraba de que había escrito.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -371,7 +376,7 @@ mod tests {
                         contacts: Some(vec![Contact {
                             wa_id: Some("573001111111".to_string()),
                             profile: Some(ContactProfile {
-                                name: "Ana Maria".to_string(),
+                                name: Some("Ana Maria".to_string()),
                             }),
                             username: None,
                         }]),
@@ -389,7 +394,7 @@ mod tests {
                 .contact
                 .as_ref()
                 .and_then(|contact| contact.profile.as_ref())
-                .map(|profile| profile.name.as_str()),
+                .and_then(|profile| profile.name.as_deref()),
             Some("Ana Maria")
         );
     }
@@ -404,7 +409,7 @@ mod tests {
                         contacts: Some(vec![Contact {
                             wa_id: Some("573009999999".to_string()),
                             profile: Some(ContactProfile {
-                                name: "Ana Maria".to_string(),
+                                name: Some("Ana Maria".to_string()),
                             }),
                             username: None,
                         }]),
@@ -422,7 +427,7 @@ mod tests {
                 .contact
                 .as_ref()
                 .and_then(|contact| contact.profile.as_ref())
-                .map(|profile| profile.name.as_str()),
+                .and_then(|profile| profile.name.as_deref()),
             Some("Ana Maria")
         );
     }
@@ -440,7 +445,7 @@ mod tests {
                         contacts: Some(vec![Contact {
                             wa_id: Some("573003333333".to_string()),
                             profile: Some(ContactProfile {
-                                name: "Ana Maria".to_string(),
+                                name: Some("Ana Maria".to_string()),
                             }),
                             username: None,
                         }]),
@@ -545,7 +550,7 @@ mod tests {
             .contact
             .as_ref()
             .and_then(|contact| contact.profile.as_ref())
-            .map(|profile| profile.name.as_str())
+            .and_then(|profile| profile.name.as_deref())
             == Some("Cliente Externo")));
         assert!(events[0].message.context.is_none());
         assert_eq!(
@@ -564,5 +569,45 @@ mod tests {
                 .and_then(|ctx| ctx.id.as_deref()),
             Some("")
         );
+    }
+
+    /// Regresión de un incidente real (2026-08-02): Meta mandó `"profile": {}`
+    /// sin `name` y, con el campo obligatorio, serde rechazaba el payload
+    /// COMPLETO (`missing field 'name'`). El webhook devolvía error y el mensaje
+    /// del cliente se perdía: nunca llegaba al motor, el cliente no recibía nada
+    /// y no quedaba ni rastro en `message_events`.
+    #[test]
+    fn parses_contact_without_profile_name() {
+        let raw = serde_json::json!({
+          "entry": [{
+            "changes": [{
+              "value": {
+                "contacts": [{
+                  "profile": {},
+                  "wa_id": "573001234567"
+                }],
+                "messages": [{
+                  "from": "573001234567",
+                  "id": "wamid-sin-nombre",
+                  "type": "text",
+                  "text": { "body": "Hola" }
+                }]
+              }
+            }]
+          }]
+        });
+
+        let payload: super::WebhookPayload =
+            serde_json::from_value(raw).expect("un perfil sin nombre no puede tumbar el payload");
+        let events = payload.message_events();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].message.from, "573001234567");
+        assert!(events[0]
+            .contact
+            .as_ref()
+            .and_then(|contact| contact.profile.as_ref())
+            .and_then(|profile| profile.name.as_deref())
+            .is_none());
     }
 }

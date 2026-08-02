@@ -17,4 +17,5 @@ pub fn router() -> Router<AppState> {
             get(verify::verify_webhook).post(webhook::receive_webhook),
         )
         .route("/internal/advisor/send", post(internal::advisor_send))
+        .route("/internal/advisor/reply", post(internal::advisor_reply))
 }

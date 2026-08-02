@@ -59,6 +59,7 @@ async fn setup_state() -> AppState {
         capi_dataset_id: None,
         capi_access_token: None,
         internal_api_token: None,
+        advisor_whatsapp_enabled: true,
     };
 
     AppState {

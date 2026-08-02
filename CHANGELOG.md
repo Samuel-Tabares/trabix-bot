@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-08-02
+
+### Fixed
+- **El bot perdía mensajes de clientes en silencio** (`src/whatsapp/types.rs`): `ContactProfile.name`
+  era obligatorio, pero Meta manda `"profile": {}` sin `name` cuando el usuario no tiene nombre de
+  perfil configurado. Serde rechazaba el **payload completo** (`missing field 'name' at line 1
+  column 260`), el webhook devolvía error y el mensaje nunca llegaba al motor: el cliente no recibía
+  respuesta y no quedaba ni rastro en `message_events`. Ahora el campo es `Option<String>`.
+  Detectado en producción el 2026-08-02 con clientes reales escribiendo. Test de regresión con el
+  payload exacto que fallaba.
+
+### Added
+- **Fase 4 — corte del canal directo bot→asesor, detrás de un flag.**
+  `ADVISOR_WHATSAPP_ENABLED` (default **`true`**, o sea sin cambio de comportamiento al desplegar).
+  En `false`, todo lo dirigido al `ADVISOR_PHONE` deja de salir a Meta pero **se sigue escribiendo
+  en `message_events`** con `channel='advisor'` — el asesor deja de recibir WhatsApp y pasa a
+  atender desde `crm-app`, sin que el bot pierda la traza ni cambie su lógica. El corte se hace en
+  `send_via_transport` (`src/engine.rs`), el único punto por el que pasa todo lo saliente, y
+  a propósito **después** de `log_outbound_event`. Un valor no reconocido cae al default: quedarse
+  sin canal humano por un typo sería peor que ignorar la variable.
+- **`POST /internal/advisor/reply`** (`src/routes/internal.rs`): la respuesta del asesor **hacia el
+  bot**, no hacia el cliente. Inyecta el mensaje en el turno de agente del asesor igual que si
+  hubiera contestado por WhatsApp. Es lo que hace que sigan funcionando
+  `confirm_advisor_availability` (¿puedes entregar ya?) y `set_manual_delivery_cost` (¿cuánto vale
+  el domicilio?), que son **pasos bloqueantes del flujo de pedido**. Sin esto, apagar el WhatsApp
+  del asesor dejaría esos pedidos colgados para siempre: `/internal/advisor/send` manda texto crudo
+  al cliente y se salta el agente, así que no sirve para contestarle al bot.
+- `engine::process_advisor_turn_for_case`: el turno del asesor sobre un caso concreto, extraído de
+  `process_advisor_input`. Las dos vías (WhatsApp y `crm-app`) solo difieren en cómo se resuelve el
+  caso — por botón/reply, o explícito en el request.
+
 ## [1.11.0] - 2026-08-01
 
 ### Added

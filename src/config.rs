@@ -20,6 +20,18 @@ pub struct Config {
     /// Secreto compartido con `crm-app` para `POST /internal/advisor/send`.
     /// Opcional a propósito: sin él el endpoint queda deshabilitado, nunca abierto.
     pub internal_api_token: Option<String>,
+    /// Corte del canal directo bot→WhatsApp del asesor (Fase 4).
+    ///
+    /// En `true` (default) el bot le sigue escribiendo al `ADVISOR_PHONE` por
+    /// WhatsApp, como siempre. En `false` esos mensajes **no salen a Meta** pero
+    /// sí se siguen escribiendo en `message_events` con `channel='advisor'`, que
+    /// es de donde `crm-app` los levanta. O sea: el asesor deja de recibir
+    /// WhatsApp y pasa a atender desde la consola, sin que el bot pierda la
+    /// traza ni cambie su lógica de negocio.
+    ///
+    /// Es un flag de corte por fases: se apaga, se prueba, y si algo sale mal se
+    /// vuelve a `true` sin desplegar código.
+    pub advisor_whatsapp_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +76,7 @@ impl Config {
             capi_dataset_id: read_optional("META_CAPI_DATASET_ID"),
             capi_access_token: read_optional("META_CAPI_ACCESS_TOKEN"),
             internal_api_token: read_optional("INTERNAL_API_TOKEN"),
+            advisor_whatsapp_enabled: read_bool("ADVISOR_WHATSAPP_ENABLED", true),
         })
     }
 }
@@ -82,6 +95,20 @@ fn read_required(name: &'static str) -> Result<String, ConfigError> {
 
 fn read_optional(name: &'static str) -> Option<String> {
     env::var(name).ok()
+}
+
+/// Un valor no reconocido cae al default en vez de tumbar el arranque: este flag
+/// controla si el asesor recibe WhatsApp, y quedarse sin bot por un typo en una
+/// variable sería peor que ignorarla.
+fn read_bool(name: &'static str, default: bool) -> bool {
+    match env::var(name) {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => true,
+            "false" | "0" | "no" | "off" => false,
+            _ => default,
+        },
+        Err(_) => default,
+    }
 }
 
 fn read_llm_call_limit() -> Result<Option<u64>, ConfigError> {
@@ -137,6 +164,7 @@ mod tests {
             "MENU_IMAGE_MEDIA_ID",
             "BIND_IP",
             "ANTHROPIC_API_KEY",
+            "ADVISOR_WHATSAPP_ENABLED",
         ] {
             std::env::remove_var(key);
         }
@@ -171,6 +199,45 @@ mod tests {
 
         let err = Config::from_env().expect_err("config should require ANTHROPIC_API_KEY");
         assert!(matches!(err, ConfigError::MissingVar("ANTHROPIC_API_KEY")));
+    }
+
+    /// El default importa: si esta variable se pierde o llega con basura, el
+    /// asesor tiene que seguir recibiendo WhatsApp. Quedarse sin canal humano en
+    /// silencio es el peor modo de falla de la Fase 4.
+    #[test]
+    fn advisor_whatsapp_defaults_to_enabled() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+        std::env::set_var("DATABASE_URL", "postgres://local");
+        std::env::set_var("ADVISOR_PHONE", "573001234567");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test");
+        set_whatsapp_vars();
+
+        assert!(Config::from_env().expect("config").advisor_whatsapp_enabled);
+
+        std::env::set_var("ADVISOR_WHATSAPP_ENABLED", "tal vez");
+        assert!(
+            Config::from_env().expect("config").advisor_whatsapp_enabled,
+            "un valor no reconocido debe caer al default, no apagar el canal"
+        );
+    }
+
+    #[test]
+    fn advisor_whatsapp_can_be_switched_off() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_env();
+        std::env::set_var("DATABASE_URL", "postgres://local");
+        std::env::set_var("ADVISOR_PHONE", "573001234567");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test");
+        set_whatsapp_vars();
+
+        for value in ["false", "0", "no", "off", "FALSE"] {
+            std::env::set_var("ADVISOR_WHATSAPP_ENABLED", value);
+            assert!(
+                !Config::from_env().expect("config").advisor_whatsapp_enabled,
+                "'{value}' debería apagar el canal"
+            );
+        }
     }
 
     #[test]

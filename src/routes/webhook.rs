@@ -194,7 +194,7 @@ async fn process_incoming_message(
         let profile_name = contact
             .as_ref()
             .and_then(|contact| contact.profile.as_ref())
-            .map(|profile| profile.name.clone());
+            .and_then(|profile| profile.name.clone());
         let username = contact
             .as_ref()
             .and_then(|contact| contact.username.as_deref())

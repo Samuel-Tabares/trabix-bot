@@ -366,6 +366,36 @@ pub async fn process_advisor_input(
         return Ok(());
     };
 
+    process_advisor_turn_for_case(&state, &target_phone, input, true).await
+}
+
+/// El turno del asesor sobre un caso concreto, sin la parte de "¿a qué cliente
+/// le está respondiendo?".
+///
+/// Existe separado porque hay dos formas de que llegue un mensaje del asesor y
+/// solo difieren en cómo se resuelve el caso:
+///
+/// - **WhatsApp** (`process_advisor_input`): el caso sale del botón que apretó
+///   o del mensaje al que le hizo reply.
+/// - **`crm-app`** (`POST /internal/advisor/reply`): la consola ya sabe en qué
+///   conversación está parada y manda el `case_phone` explícito.
+///
+/// En los dos casos el mensaje entra al **motor de agente**, no directo al
+/// cliente. Eso importa: `confirm_advisor_availability` y
+/// `set_manual_delivery_cost` son pasos bloqueantes del flujo de pedido que solo
+/// existen si el agente interpreta la respuesta del asesor. Mandarle texto
+/// crudo al cliente (`POST /internal/advisor/send`) se salta el agente y deja el
+/// pedido colgado esperando una respuesta que nunca llega.
+pub async fn process_advisor_turn_for_case(
+    state: &AppState,
+    target_phone: &str,
+    input: UserInput,
+    from_whatsapp: bool,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let state = state.clone();
+    let advisor_phone = state.config.advisor_phone.clone();
+    let target_phone = target_phone.to_string();
+
     let _case_lock = crate::lock_conversation(&state.conversation_locks, &target_phone).await;
 
     log_inbound_event(&state, &target_phone, CHANNEL_ADVISOR, ACTOR_ADVISOR, &input).await;
@@ -420,6 +450,7 @@ pub async fn process_advisor_input(
     ));
     tracing::info!(
         actor = "advisor",
+        source = if from_whatsapp { "whatsapp" } else { "crm-app" },
         advisor_phone = %mask_phone(&advisor_phone),
         target_phone = %mask_phone(&target_phone),
         from_state = %current_state.as_storage_key(),
@@ -459,7 +490,12 @@ pub async fn process_advisor_input(
         .await?;
     }
 
-    update_last_message(&state.pool, &advisor_phone).await?;
+    // `last_message_at` del asesor solo tiene sentido si de verdad hubo un
+    // mensaje suyo por WhatsApp: es lo que mantiene viva esa ventana de 24h.
+    // Desde `crm-app` no hay tal conversación, así que no se toca.
+    if from_whatsapp {
+        update_last_message(&state.pool, &advisor_phone).await?;
+    }
     update_last_message(&state.pool, &target_phone).await?;
     Ok(())
 }
@@ -1198,6 +1234,21 @@ async fn send_via_transport(
     body: Option<String>,
     payload: serde_json::Value,
 ) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
+    // Corte de Fase 4: con el canal directo apagado, nada dirigido al asesor
+    // sale a Meta. Se descarta acá, en el único punto por el que pasa TODO lo
+    // saliente, y a propósito DESPUÉS de `log_outbound_event` — el evento ya
+    // quedó en `message_events` con `channel='advisor'`, que es de donde
+    // `crm-app` arma la cola de casos. El asesor no recibe WhatsApp; la
+    // información no se pierde.
+    if !state.config.advisor_whatsapp_enabled && to == state.config.advisor_phone {
+        tracing::debug!(
+            advisor_phone = %mask_phone(to),
+            message_kind,
+            "advisor whatsapp disabled; message kept in trace only"
+        );
+        return Ok(None);
+    }
+
     let client = &state.transport;
     let message_id = match message_kind {
         "text" => {

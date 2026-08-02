@@ -111,3 +111,61 @@ curl -i -X POST https://<bot>/internal/advisor/send \
 
 Verificar después: el cliente recibe el mensaje en WhatsApp, y aparece una fila en `message_events`
 con `actor='advisor'`, `channel='client'` y `payload->>'source' = 'crm-app'`.
+
+---
+
+# `POST /internal/advisor/reply` (v1.12.0)
+
+El **otro** endpoint, y la distinción importa más de lo que parece.
+
+| | `/internal/advisor/send` | `/internal/advisor/reply` |
+|---|---|---|
+| A quién le habla | al **cliente** | al **bot** |
+| Pasa por el agente | no, texto crudo | **sí**, turno de agente |
+| Para qué sirve | escribirle al cliente | contestarle una pregunta al bot |
+
+El bot le hace preguntas al asesor que son **pasos bloqueantes del flujo de pedido**:
+
+- *"¿puedes entregar ya?"* → el agente espera para llamar `confirm_advisor_availability`.
+- *"¿cuánto vale el domicilio a este municipio?"* → espera para llamar `set_manual_delivery_cost`.
+
+Esas respuestas tienen que entrar **por el agente**. Si el asesor contesta con `send`, el cliente
+recibe un texto suelto pero el pedido queda colgado esperando una respuesta que nunca llega. Por eso
+existe `reply`.
+
+## Request
+
+```jsonc
+{
+  "case_phone": "573001234567",  // el caso; la consola ya sabe dónde está parada
+  "body": "sí, puedo entregar en 40 minutos",
+  "sent_by": "user_id del CRM"   // solo traza
+}
+```
+
+Mismo header `X-Internal-Token`, mismos códigos de error (`unauthorized`, `unknown_case`,
+`invalid_request`, `internal_error`). Diferencias:
+
+- **No devuelve `wa_message_id`.** Un turno de agente puede generar cero, uno o varios mensajes al
+  cliente — no hay un único id. Devuelve `{"ok": true}`.
+- **No devuelve `window_closed`.** Lo que se manda no va directo a Meta; los mensajes al cliente los
+  produce el agente y su envío se traza aparte.
+
+## Cómo se relaciona con `ADVISOR_WHATSAPP_ENABLED`
+
+Con el flag en `false`, el bot ya no le manda WhatsApp al asesor, pero **sigue escribiendo esas
+preguntas en `message_events`** con `channel='advisor'`. La consola las levanta de ahí (el caso
+queda marcado `needs_human`) y el asesor contesta con este endpoint. El circuito queda cerrado sin
+que el asesor toque WhatsApp.
+
+Con el flag en `true` (default) los dos caminos conviven: el asesor puede contestar por WhatsApp o
+desde la consola, y las dos vías escriben `actor='advisor'`, así que `needs_human` se apaga igual.
+
+## Prueba manual
+
+```bash
+curl -i -X POST https://<bot>/internal/advisor/reply \
+  -H "Content-Type: application/json" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  -d '{"case_phone":"573001234567","body":"sí, puedo entregar ya","sent_by":"curl"}'
+```
