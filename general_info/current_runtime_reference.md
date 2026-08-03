@@ -279,6 +279,29 @@ Los datos del cliente se persisten en columnas de `conversations`:
 - `customer_phone`
 - `delivery_address`
 
+### Direcciones Guardadas (Recompra, v1.16.0)
+
+Además de `customers.delivery_address_last` (texto libre, siempre el último, se sigue
+sobreescribiendo en cada turno sin cambios), el motor agente puede guardar hasta 4 direcciones
+reales por cliente en `customer_addresses` (migración `015`), cada una con su zona ya resuelta
+(`zone_kind`/`zone_value`, reconstruible con `bot::delivery_zone::ArmeniaZone::from_storage_key`/
+`lookup_nearby_town`) y un `last_delivery_cost_cop` de referencia (informativo — el costo real de
+un checkout SIEMPRE sale de una tool call en vivo, nunca de este snapshot).
+
+- `engine.rs` prefetchea la lista (`queries::list_customer_addresses`) antes de cada turno de
+  agente y la pasa como parámetro — no se persiste en `ConversationContext`/`state_data`.
+- Tool `list_saved_addresses`: formatea esa lista, sin tocar la DB.
+- Tool `select_saved_address(address_id)`: reutiliza una guardada, deja `pending_zone_kind/
+  value/label` en el contexto (sí persistidos en `state_data`, para sobrevivir hasta la
+  confirmación) y dispara `BotAction::TouchCustomerAddress` (bump de `last_used_at`). El modelo
+  igual debe llamar `set_delivery_zone_armenia`/`set_delivery_nearby_town` después para fijar el
+  costo real.
+- Al confirmar el pedido (`confirm_order_bookkeeping`, llamado desde el flujo de transferencia y
+  el de contraentrega), si hay `delivery_address` + zona pendiente resueltos se dispara
+  `BotAction::UpsertCustomerAddress`: `queries::upsert_customer_address` actualiza la dirección si
+  ya existía (mismo `address_key` normalizado) o inserta una nueva, descartando la de `created_at`
+  más antiguo si el cliente ya tenía las 4.
+
 ### Armado Del Pedido
 
 El loop actual es:

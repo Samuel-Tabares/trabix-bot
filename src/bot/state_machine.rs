@@ -396,6 +396,22 @@ pub enum BotAction {
         /// confirmación con código, 0 al re-confirmar una modificación.
         referral_times_used_inc: i32,
     },
+    /// Guarda/refresca una dirección en `customer_addresses` al confirmar un
+    /// pedido — ver `ai::agent::confirm_order_bookkeeping` y
+    /// `db::queries::upsert_customer_address`.
+    UpsertCustomerAddress {
+        customer_phone_meta: String,
+        address_text: String,
+        zone_kind: String,
+        zone_value: Option<String>,
+        zone_label: String,
+        delivery_cost_cop: i32,
+    },
+    /// Bump de `last_used_at` cuando el cliente reutiliza una dirección
+    /// guardada vía la tool `select_saved_address`.
+    TouchCustomerAddress {
+        id: i64,
+    },
     NoOp,
 }
 
@@ -441,6 +457,9 @@ pub struct ConversationContext {
     pub has_greeted: bool,
     pub meta_customer_name: Option<String>,
     pub meta_customer_phone: Option<String>,
+    pub pending_zone_kind: Option<String>,
+    pub pending_zone_value: Option<String>,
+    pub pending_zone_label: Option<String>,
 }
 
 impl ConversationContext {
@@ -493,6 +512,9 @@ impl ConversationContext {
             has_greeted: state_data.has_greeted,
             meta_customer_name: state_data.meta_customer_name.clone(),
             meta_customer_phone: state_data.meta_customer_phone.clone(),
+            pending_zone_kind: state_data.pending_zone_kind.clone(),
+            pending_zone_value: state_data.pending_zone_value.clone(),
+            pending_zone_label: state_data.pending_zone_label.clone(),
         }
     }
 
@@ -534,6 +556,9 @@ impl ConversationContext {
             has_greeted: self.has_greeted,
             meta_customer_name: self.meta_customer_name.clone(),
             meta_customer_phone: self.meta_customer_phone.clone(),
+            pending_zone_kind: self.pending_zone_kind.clone(),
+            pending_zone_value: self.pending_zone_value.clone(),
+            pending_zone_label: self.pending_zone_label.clone(),
         }
     }
 

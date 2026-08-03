@@ -23,9 +23,9 @@ use crate::{
     db::{
         models::{Conversation, ConversationStateData},
         queries::{
-            create_conversation, create_order, create_or_update_customer, create_or_update_referral_analytics, get_conversation, replace_order_items,
-            reset_conversation, update_customer_data, update_customer_totals, update_last_message, update_order,
-            update_order_delivery_cost, update_order_status, update_state,
+            create_conversation, create_order, create_or_update_customer, create_or_update_referral_analytics, get_conversation, list_customer_addresses, replace_order_items,
+            reset_conversation, touch_customer_address, update_customer_data, update_customer_totals, update_last_message, update_order,
+            update_order_delivery_cost, update_order_status, update_state, upsert_customer_address,
         },
     },
     logging::{log_bot_action, mask_phone, summarize_action_kinds},
@@ -98,8 +98,15 @@ pub async fn process_customer_input(
     }
 
     let (new_state, mut actions) = if should_use_agent(&current_state) {
-        match crate::ai::agent::run_customer_turn(&state, &mut context, &current_state, &input)
-            .await
+        let saved_addresses = list_customer_addresses(&state.pool, &phone).await.unwrap_or_default();
+        match crate::ai::agent::run_customer_turn(
+            &state,
+            &mut context,
+            &current_state,
+            &input,
+            &saved_addresses,
+        )
+        .await
         {
             Ok(result) => result,
             Err(err) => {
@@ -440,8 +447,17 @@ pub async fn process_advisor_turn_for_case(
     let (current_state, mut context) =
         rehydrate_client_conversation(&state, &client_conversation).await?;
     let (new_state, mut actions) = if should_use_agent(&current_state) {
-        match crate::ai::agent::run_advisor_turn(&state, &mut context, &current_state, &input)
+        let saved_addresses = list_customer_addresses(&state.pool, &target_phone)
             .await
+            .unwrap_or_default();
+        match crate::ai::agent::run_advisor_turn(
+            &state,
+            &mut context,
+            &current_state,
+            &input,
+            &saved_addresses,
+        )
+        .await
         {
             Ok(result) => result,
             Err(err) => {
@@ -972,6 +988,33 @@ pub async fn execute_actions(
                     has_referral_code = referral_code.is_some(),
                     "updated customer totals and referral analytics"
                 );
+            }
+            BotAction::UpsertCustomerAddress {
+                customer_phone_meta,
+                address_text,
+                zone_kind,
+                zone_value,
+                zone_label,
+                delivery_cost_cop,
+            } => {
+                upsert_customer_address(
+                    &state.pool,
+                    customer_phone_meta,
+                    address_text,
+                    zone_kind,
+                    zone_value.as_deref(),
+                    zone_label,
+                    *delivery_cost_cop,
+                )
+                .await?;
+                tracing::info!(
+                    phone = %mask_phone(customer_phone_meta),
+                    zone_label = %zone_label,
+                    "saved customer address"
+                );
+            }
+            BotAction::TouchCustomerAddress { id } => {
+                touch_customer_address(&state.pool, *id).await?;
             }
         }
     }

@@ -35,7 +35,7 @@ use crate::{
         states::checkout,
         timers::{ADVISOR_RESPONSE_TIMEOUT, RECEIPT_TIMEOUT},
     },
-    db::models::OrderItemData,
+    db::models::{CustomerAddress, OrderItemData},
     whatsapp::types::{Button, ButtonReplyPayload, ListRow, ListSection},
     AppState,
 };
@@ -98,6 +98,15 @@ REGLA MAYORISTA + REFERRAL:
   Si es inválido: ofrece reintentar o seguir sin código.
 - Si dice que NO tiene código: llama skip_referral_code (así el sistema te deja continuar al \
   cierre). En pedidos retail (menos de 20 del mismo tipo) el código NO aplica, no preguntes.
+
+DIRECCIONES GUARDADAS (recompra):
+- Antes de pedirle la dirección a un cliente, llama list_saved_addresses. Si devuelve al menos una, \
+  ofrécesela con send_options_list ("¿A cuál de estas direcciones te lo envío?" + "Otra dirección") \
+  en vez de pedirle que la escriba de nuevo. Si elige una, usa select_saved_address con su \
+  address_id — y AUN ASÍ llama después set_delivery_zone_armenia/set_delivery_nearby_town con la \
+  misma zona para fijar el costo real, nunca uses el costo que te muestra select_saved_address como \
+  definitivo. Si dice "otra dirección" o la lista viene vacía, sigue el flujo normal (pídesela y \
+  resuélvela con las tools de zona de abajo).
 
 DOMICILIO AUTOMÁTICO (no pidas al asesor si puedes resolverlo):
 - Armenia: apenas sepas la zona/barrio (norte/centro/sur) llama set_delivery_zone_armenia \
@@ -232,8 +241,9 @@ pub async fn run_customer_turn(
     context: &mut ConversationContext,
     current_state: &ConversationState,
     input: &UserInput,
+    saved_addresses: &[CustomerAddress],
 ) -> Result<(ConversationState, Vec<BotAction>), Box<dyn Error + Send + Sync>> {
-    run_case_turn(state, context, current_state, Actor::Customer, input).await
+    run_case_turn(state, context, current_state, Actor::Customer, input, saved_addresses).await
 }
 
 pub async fn run_advisor_turn(
@@ -241,8 +251,9 @@ pub async fn run_advisor_turn(
     context: &mut ConversationContext,
     current_state: &ConversationState,
     input: &UserInput,
+    saved_addresses: &[CustomerAddress],
 ) -> Result<(ConversationState, Vec<BotAction>), Box<dyn Error + Send + Sync>> {
-    run_case_turn(state, context, current_state, Actor::Advisor, input).await
+    run_case_turn(state, context, current_state, Actor::Advisor, input, saved_addresses).await
 }
 
 async fn run_case_turn(
@@ -251,6 +262,7 @@ async fn run_case_turn(
     current_state: &ConversationState,
     actor: Actor,
     input: &UserInput,
+    saved_addresses: &[CustomerAddress],
 ) -> Result<(ConversationState, Vec<BotAction>), Box<dyn Error + Send + Sync>> {
     if let Some((next_state, actions)) =
         try_handle_receipt_shortcut(context, current_state, actor, input)
@@ -372,7 +384,7 @@ async fn run_case_turn(
                 input = %tool_input,
                 "agent tool call"
             );
-            match dispatch_tool(&id, &name, &tool_input, context, actor, &effective_state) {
+            match dispatch_tool(&id, &name, &tool_input, context, actor, &effective_state, saved_addresses) {
                 ToolOutcome::Result(block) => tool_results.push(block),
                 ToolOutcome::ResultWithAction(block, action) => {
                     tool_results.push(block);
@@ -713,6 +725,7 @@ fn dispatch_tool(
     context: &mut ConversationContext,
     actor: Actor,
     current_state: &ConversationState,
+    saved_addresses: &[CustomerAddress],
 ) -> ToolOutcome {
     match name {
         "get_menu" => {
@@ -797,6 +810,8 @@ fn dispatch_tool(
         }
         "set_delivery_zone_armenia" => wrap(id, set_delivery_zone_armenia(input, context)),
         "set_delivery_nearby_town" => wrap(id, set_delivery_nearby_town(input, context)),
+        "list_saved_addresses" => list_saved_addresses(id, saved_addresses),
+        "select_saved_address" => select_saved_address(id, input, context, saved_addresses),
         "set_manual_delivery_cost" => {
             if actor != Actor::Advisor {
                 return ToolOutcome::Result(error_result(
@@ -1106,6 +1121,9 @@ fn set_delivery_zone_armenia(input: &Value, context: &mut ConversationContext) -
             let total_units: u32 = context.items.iter().map(|item| item.quantity).sum();
             let cost = delivery_zone::armenia_delivery_cost(zone, total_units);
             context.delivery_cost = Some(cost as i32);
+            context.pending_zone_kind = Some("armenia".to_string());
+            context.pending_zone_value = Some(zone.storage_key().to_string());
+            context.pending_zone_label = Some(format!("Armenia - {}", zone.label()));
             let message = if cost == 0 {
                 format!(
                     "Zona {} de Armenia: domicilio GRATIS $0 (pedido de {total_units} unidades, \
@@ -1153,6 +1171,9 @@ fn set_delivery_nearby_town(input: &Value, context: &mut ConversationContext) ->
                 );
             }
             context.delivery_cost = Some(found.delivery_cost as i32);
+            context.pending_zone_kind = Some("nearby_town".to_string());
+            context.pending_zone_value = Some(found.key.to_string());
+            context.pending_zone_label = Some(found.name.to_string());
             (
                 format!(
                     "{}: domicilio ${} (pedido de {} unidades{}). El domicilio siempre se cobra \
@@ -1176,6 +1197,64 @@ fn set_delivery_nearby_town(input: &Value, context: &mut ConversationContext) ->
     }
 }
 
+/// Lista las direcciones ya guardadas de este cliente (prefetch síncrono
+/// hecho en `engine.rs` antes de invocar el turno, ver `run_case_turn`) —
+/// esta tool no toca la DB, solo formatea lo que ya se cargó.
+fn list_saved_addresses(id: &str, saved_addresses: &[CustomerAddress]) -> ToolOutcome {
+    let addresses: Vec<Value> = saved_addresses
+        .iter()
+        .map(|addr| {
+            json!({
+                "id": addr.id,
+                "address_text": addr.address_text,
+                "zone_label": addr.zone_label,
+                "last_delivery_cost_cop": addr.last_delivery_cost_cop,
+            })
+        })
+        .collect();
+    ToolOutcome::Result(ok_result(id, json!({ "addresses": addresses }).to_string()))
+}
+
+/// Reutiliza una dirección guardada como la del pedido actual. El costo que
+/// devuelve es el snapshot guardado (informativo): el modelo SIEMPRE debe
+/// llamar `set_delivery_zone_armenia`/`set_delivery_nearby_town` después para
+/// fijar el costo real en vivo — ningún total sale de aquí directamente, el
+/// guard anti-alucinación sigue exigiendo la tool call de precio.
+fn select_saved_address(
+    id: &str,
+    input: &Value,
+    context: &mut ConversationContext,
+    saved_addresses: &[CustomerAddress],
+) -> ToolOutcome {
+    let Some(address_id) = input.get("address_id").and_then(Value::as_i64) else {
+        return ToolOutcome::Result(error_result(id, "Falta \"address_id\"."));
+    };
+    match saved_addresses.iter().find(|addr| addr.id == address_id) {
+        Some(addr) => {
+            context.delivery_address = Some(addr.address_text.clone());
+            context.pending_zone_kind = Some(addr.zone_kind.clone());
+            context.pending_zone_value = addr.zone_value.clone();
+            context.pending_zone_label = Some(addr.zone_label.clone());
+            ToolOutcome::ResultWithAction(
+                ok_result(
+                    id,
+                    format!(
+                        "Dirección reutilizada: {} ({}, costo de referencia ${}, puede haber \
+                         cambiado). Ahora llama set_delivery_zone_armenia o \
+                         set_delivery_nearby_town con esta misma zona para fijar el costo real \
+                         antes de confirmar — nunca uses el costo de referencia directamente.",
+                        addr.address_text,
+                        addr.zone_label,
+                        format_thousands(addr.last_delivery_cost_cop.max(0) as u32),
+                    ),
+                ),
+                BotAction::TouchCustomerAddress { id: addr.id },
+            )
+        }
+        None => ToolOutcome::Result(error_result(id, "Esa dirección guardada no existe.")),
+    }
+}
+
 fn set_manual_delivery_cost(id: &str, input: &Value, context: &mut ConversationContext) -> ToolOutcome {
     let Some(delivery_cost) = input
         .get("amount")
@@ -1188,6 +1267,10 @@ fn set_manual_delivery_cost(id: &str, input: &Value, context: &mut ConversationC
             "El monto debe ser un número entero positivo.",
         ));
     };
+
+    context.pending_zone_kind = Some("manual".to_string());
+    context.pending_zone_value = None;
+    context.pending_zone_label = Some("Domicilio manual (confirmado por el asesor)".to_string());
 
     // Si ya existe un pedido finalizado esperando justo este dato (el único
     // que faltaba), autoaceptarlo aquí mismo: programados siempre, inmediatos
@@ -1255,6 +1338,25 @@ fn confirm_order_bookkeeping(context: &mut ConversationContext) -> (bool, Vec<Bo
     let mut actions = vec![BotAction::UpsertDraftOrder {
         status: "confirmed".to_string(),
     }];
+    // Guarda/refresca la dirección en `customer_addresses` (máx. 4, ver
+    // `queries::upsert_customer_address`) SOLO si hay dirección y zona ya
+    // resueltas — si falta cualquiera de las dos, se omite en vez de guardar
+    // un registro incompleto (p. ej. un pedido reabierto que aún no volvió a
+    // pasar por un tool de zona en esta misma confirmación).
+    if let (Some(address_text), Some(zone_kind), Some(zone_label)) = (
+        context.delivery_address.clone(),
+        context.pending_zone_kind.clone(),
+        context.pending_zone_label.clone(),
+    ) {
+        actions.push(BotAction::UpsertCustomerAddress {
+            customer_phone_meta: context.phone_number.clone(),
+            address_text,
+            zone_kind,
+            zone_value: context.pending_zone_value.clone(),
+            zone_label,
+            delivery_cost_cop: context.delivery_cost.unwrap_or(0),
+        });
+    }
     actions.extend(checkout::order_confirmation_analytics_action(context));
     let totals = checkout::current_order_totals(context);
     context.confirmed_order_snapshot = Some(checkout::snapshot_from_totals(context, &totals));
@@ -2105,6 +2207,21 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "list_saved_addresses".to_string(),
+            description: "Lista las direcciones guardadas de este cliente (hasta 4), cada una con su zona ya resuelta y un costo de domicilio de referencia. Úsala al pedirle la dirección a un cliente que vuelve, o si dice algo como \"la de siempre\"/\"la misma de la vez pasada\". Si devuelve una lista vacía, pide la dirección normalmente.".to_string(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+        },
+        ToolDefinition {
+            name: "select_saved_address".to_string(),
+            description: "Reutiliza una dirección guardada (de list_saved_addresses) como la del pedido actual, usando su address_id. El costo que devuelve es solo de referencia: DESPUÉS igual hay que llamar set_delivery_zone_armenia o set_delivery_nearby_town con la misma zona para fijar el costo real antes de finalize_checkout.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "address_id": { "type": "integer" } },
+                "required": ["address_id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDefinition {
             name: "set_manual_delivery_cost".to_string(),
             description: "Guarda un costo de domicilio que te dio el asesor manualmente (destinos fuera de la lista conocida).".to_string(),
             input_schema: json!({
@@ -2462,6 +2579,9 @@ mod tests {
             has_greeted: false,
             meta_customer_name: None,
             meta_customer_phone: None,
+            pending_zone_kind: None,
+            pending_zone_value: None,
+            pending_zone_label: None,
         }
     }
 
@@ -2762,6 +2882,7 @@ mod tests {
             &mut context,
             Actor::Customer,
             &ConversationState::MainMenu,
+            &[],
         );
         assert!(matches!(skip, ToolOutcome::Result(_)));
         assert!(context.referral_prompt_resolved);
@@ -2885,6 +3006,7 @@ mod tests {
             &mut context,
             Actor::Customer,
             &ConversationState::MainMenu,
+            &[],
         );
 
         assert!(matches!(outcome, ToolOutcome::Result(_)));
@@ -2914,6 +3036,7 @@ mod tests {
             &mut context,
             Actor::Customer,
             &ConversationState::MainMenu,
+            &[],
         );
 
         assert!(matches!(outcome, ToolOutcome::Result(_)));

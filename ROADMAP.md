@@ -53,6 +53,13 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
   (`src/capi.rs`) construido y wireado en la confirmación de compra (`UpdateCustomerAndAnalytics` en
   `src/engine.rs`) — hoy es un no-op silencioso porque falta configurar `WABA_ID` /
   `META_CAPI_DATASET_ID` / `META_CAPI_ACCESS_TOKEN`.
+- **Fase 5: direcciones guardadas del cliente** (v1.16.0): tabla `customer_addresses` (migración
+  `015`, máx. 4 por cliente, zona ya resuelta reconstruible desde `bot::delivery_zone`, costo
+  guardado solo informativo). Tools nuevas `list_saved_addresses`/`select_saved_address`, hook en
+  `confirm_order_bookkeeping` al confirmar pedido. `customers.delivery_address_last` no cambió.
+  Detalle en `general_info/current_runtime_reference.md` → "Direcciones Guardadas (Recompra)".
+  Del lado `crm-app` falta ver su propio ROADMAP (Contactos repunteado a `customers` +
+  direcciones guardadas de solo lectura).
 - **Fase 2: toma de control humana con auto-devolución** (v1.15.0): `conversations.human_takeover_until`
   (migración `014`), marcado por `POST /internal/advisor/send` (ventana deslizante, default 6h vía
   `ADVISOR_TAKEOVER_HOURS`), consultado en `engine::process_customer_input` y en los 4

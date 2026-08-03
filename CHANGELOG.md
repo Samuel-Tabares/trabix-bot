@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-08-02
+
+### Added
+- **Fase 5: direcciones guardadas del cliente (recompra).** Hasta 4 direcciones reales por
+  cliente en la tabla nueva `customer_addresses` (migración `015`, append-only), cada una con la
+  zona ya resuelta (`zone_kind`/`zone_value`, reconstruible con `bot::delivery_zone`) y un
+  `last_delivery_cost_cop` de referencia — nunca usado para cobrar: el costo real de un checkout
+  siempre sale de una tool call en vivo (`set_delivery_zone_armenia`/`set_delivery_nearby_town`),
+  igual que antes. `customers.delivery_address_last` sigue funcionando sin cambios.
+  - Dos tools nuevas del agente: `list_saved_addresses` (lista hasta 4, sin tocar la DB — el
+    prefetch lo hace `engine.rs` antes de cada turno) y `select_saved_address(address_id)`
+    (reutiliza una guardada; el modelo igual debe fijar el costo real después).
+  - Al confirmar un pedido (transferencia o contraentrega), `confirm_order_bookkeeping` guarda o
+    refresca la dirección en `customer_addresses` (`db::queries::upsert_customer_address`): si el
+    cliente ya tiene 4 y la nueva es distinta, se descarta la de `created_at` más antiguo sin
+    preguntar (decisión de producto).
+  - `ArmeniaZone::storage_key`/`from_storage_key` y `NearbyTown.key` nuevos en
+    `bot::delivery_zone` para persistir/reconstruir la zona sin duplicar su lógica en otro lado.
+
 ## [1.15.0] - 2026-08-02
 
 ### Added

@@ -64,6 +64,13 @@ pub struct ConversationStateData {
     /// (ver docs/canary-fixes-2026-07-19.md hallazgo C).
     pub meta_customer_name: Option<String>,
     pub meta_customer_phone: Option<String>,
+    /// Zona ya resuelta para `delivery_address` (por `set_delivery_zone_armenia`,
+    /// `set_delivery_nearby_town`, `set_manual_delivery_cost` o
+    /// `select_saved_address`), pendiente de guardarse en `customer_addresses`
+    /// al confirmar el pedido (`confirm_order_bookkeeping`). Ver `CustomerAddress`.
+    pub pending_zone_kind: Option<String>,
+    pub pending_zone_value: Option<String>,
+    pub pending_zone_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -114,6 +121,9 @@ impl Default for ConversationStateData {
             has_greeted: false,
             meta_customer_name: None,
             meta_customer_phone: None,
+            pending_zone_kind: None,
+            pending_zone_value: None,
+            pending_zone_label: None,
         }
     }
 }
@@ -191,6 +201,26 @@ pub struct Customer {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub ctwa_clid: Option<String>,
+}
+
+/// Direcciones guardadas de un cliente (máx. 4, aplicado en
+/// `queries::upsert_customer_address`). `zone_kind`/`zone_value` guardan la
+/// identidad de la zona ya resuelta por `bot::delivery_zone` (no el costo en
+/// sí) para poder recalcular el domicilio en vivo en la recompra;
+/// `last_delivery_cost_cop` es solo un snapshot informativo — el checkout
+/// real siempre recalcula con una tool call en vivo, nunca con este valor.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CustomerAddress {
+    pub id: i64,
+    pub customer_phone_meta: String,
+    pub address_text: String,
+    pub address_key: String,
+    pub zone_kind: String,
+    pub zone_value: Option<String>,
+    pub zone_label: String,
+    pub last_delivery_cost_cop: i32,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

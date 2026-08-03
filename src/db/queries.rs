@@ -3,7 +3,10 @@
 use chrono::{NaiveDate, NaiveTime};
 use sqlx::{types::Json, PgPool};
 
-use super::models::{Conversation, ConversationStateData, Customer, Order, OrderItem, ReferralCodeAnalytics};
+use super::models::{
+    Conversation, ConversationStateData, Customer, CustomerAddress, Order, OrderItem, ReferralCodeAnalytics,
+};
+use crate::bot::delivery_zone;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ActiveTimerConversation {
@@ -565,6 +568,131 @@ pub async fn update_customer_totals(
     .execute(pool)
     .await?;
 
+    Ok(())
+}
+
+/// Tope de direcciones guardadas por cliente (decisión de producto: al
+/// intentar guardar una 5ª distinta se reemplaza la más antigua sin
+/// preguntar, ver `upsert_customer_address`).
+const MAX_CUSTOMER_ADDRESSES: i64 = 4;
+
+pub async fn list_customer_addresses(
+    pool: &PgPool,
+    customer_phone_meta: &str,
+) -> Result<Vec<CustomerAddress>, sqlx::Error> {
+    sqlx::query_as::<_, CustomerAddress>(
+        r#"
+        SELECT id, customer_phone_meta, address_text, address_key, zone_kind, zone_value,
+               zone_label, last_delivery_cost_cop, created_at, last_used_at
+        FROM customer_addresses
+        WHERE customer_phone_meta = $1
+        ORDER BY last_used_at DESC
+        "#,
+    )
+    .bind(customer_phone_meta)
+    .fetch_all(pool)
+    .await
+}
+
+/// Guarda (o refresca) una dirección del cliente. Si `address_text` ya
+/// coincide con una guardada (mismo `address_key` normalizado) solo se
+/// actualizan zona/costo/`last_used_at`; si es nueva y el cliente ya tiene
+/// `MAX_CUSTOMER_ADDRESSES`, se descarta primero la de `created_at` más
+/// antiguo (decisión de producto, sin preguntarle al cliente).
+pub async fn upsert_customer_address(
+    pool: &PgPool,
+    customer_phone_meta: &str,
+    address_text: &str,
+    zone_kind: &str,
+    zone_value: Option<&str>,
+    zone_label: &str,
+    delivery_cost_cop: i32,
+) -> Result<CustomerAddress, sqlx::Error> {
+    let address_key = delivery_zone::normalize(address_text);
+    let mut tx = pool.begin().await?;
+
+    let updated = sqlx::query_as::<_, CustomerAddress>(
+        r#"
+        UPDATE customer_addresses
+        SET zone_kind = $3,
+            zone_value = $4,
+            zone_label = $5,
+            last_delivery_cost_cop = $6,
+            last_used_at = NOW()
+        WHERE customer_phone_meta = $1 AND address_key = $2
+        RETURNING id, customer_phone_meta, address_text, address_key, zone_kind, zone_value,
+                  zone_label, last_delivery_cost_cop, created_at, last_used_at
+        "#,
+    )
+    .bind(customer_phone_meta)
+    .bind(&address_key)
+    .bind(zone_kind)
+    .bind(zone_value)
+    .bind(zone_label)
+    .bind(delivery_cost_cop)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if let Some(address) = updated {
+        tx.commit().await?;
+        return Ok(address);
+    }
+
+    let existing_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM customer_addresses WHERE customer_phone_meta = $1")
+            .bind(customer_phone_meta)
+            .fetch_one(&mut *tx)
+            .await?;
+
+    if existing_count >= MAX_CUSTOMER_ADDRESSES {
+        sqlx::query(
+            r#"
+            DELETE FROM customer_addresses
+            WHERE id = (
+                SELECT id FROM customer_addresses
+                WHERE customer_phone_meta = $1
+                ORDER BY created_at ASC
+                LIMIT 1
+            )
+            "#,
+        )
+        .bind(customer_phone_meta)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    let inserted = sqlx::query_as::<_, CustomerAddress>(
+        r#"
+        INSERT INTO customer_addresses (
+            customer_phone_meta, address_text, address_key, zone_kind, zone_value,
+            zone_label, last_delivery_cost_cop
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id, customer_phone_meta, address_text, address_key, zone_kind, zone_value,
+                  zone_label, last_delivery_cost_cop, created_at, last_used_at
+        "#,
+    )
+    .bind(customer_phone_meta)
+    .bind(address_text)
+    .bind(&address_key)
+    .bind(zone_kind)
+    .bind(zone_value)
+    .bind(zone_label)
+    .bind(delivery_cost_cop)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(inserted)
+}
+
+/// Bump de `last_used_at` cuando se reutiliza una dirección guardada tal
+/// cual (`select_saved_address`), sin cambiar zona/costo.
+pub async fn touch_customer_address(pool: &PgPool, id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE customer_addresses SET last_used_at = NOW() WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

@@ -51,6 +51,21 @@ impl ArmeniaZone {
             Self::Sur => "Sur",
         }
     }
+
+    /// Clave estable para persistir en `customer_addresses.zone_value`.
+    pub fn storage_key(self) -> &'static str {
+        match self {
+            Self::Norte => "norte",
+            Self::Centro => "centro",
+            Self::Sur => "sur",
+        }
+    }
+
+    /// Inversa de `storage_key`. `from_text` ya acepta ese mismo formato
+    /// normalizado, así que basta con delegar — sin duplicar los match arms.
+    pub fn from_storage_key(key: &str) -> Option<Self> {
+        Self::from_text(key)
+    }
 }
 
 /// Costo real de domicilio en Armenia para un pedido de `total_units`
@@ -103,6 +118,9 @@ const NEARBY_TOWNS: &[(&str, &str, u32, TownGroup)] = &[
 ];
 
 pub struct NearbyTown {
+    /// Clave estable de `NEARBY_TOWNS` (sin tildes/mayúsculas) para persistir
+    /// en `customer_addresses.zone_value` — `name` es solo la etiqueta humana.
+    pub key: &'static str,
     pub name: &'static str,
     pub delivery_cost: u32,
     /// Mínimo de unidades para este destino. `0` significa sin mínimo
@@ -118,7 +136,8 @@ pub fn lookup_nearby_town(input: &str) -> Option<NearbyTown> {
     NEARBY_TOWNS
         .iter()
         .find(|(key, _, _, _)| *key == normalized)
-        .map(|(_, name, cost, group)| NearbyTown {
+        .map(|(key, name, cost, group)| NearbyTown {
+            key,
             name,
             delivery_cost: *cost,
             min_units: match group {
@@ -128,7 +147,11 @@ pub fn lookup_nearby_town(input: &str) -> Option<NearbyTown> {
         })
 }
 
-fn normalize(input: &str) -> String {
+/// Normaliza texto libre (trim + minúsculas + sin tildes) para comparar
+/// nombres de zona/pueblo/dirección de forma case/acentos-insensible.
+/// Expuesta para que `db::queries` derive `customer_addresses.address_key`
+/// del mismo modo en que este módulo compara zonas — una sola implementación.
+pub fn normalize(input: &str) -> String {
     strip_accents(input.trim().to_lowercase().as_str())
 }
 
@@ -258,5 +281,24 @@ mod tests {
                 "expected {town} to keep the minimum"
             );
         }
+    }
+
+    #[test]
+    fn armenia_zone_storage_key_round_trips() {
+        for zone in [ArmeniaZone::Norte, ArmeniaZone::Centro, ArmeniaZone::Sur] {
+            let key = zone.storage_key();
+            assert_eq!(ArmeniaZone::from_storage_key(key), Some(zone));
+        }
+        assert_eq!(ArmeniaZone::from_storage_key("oeste"), None);
+    }
+
+    #[test]
+    fn nearby_town_key_is_stable_and_reusable_as_lookup_input() {
+        let found = lookup_nearby_town("Córdoba").expect("cordoba should match");
+        assert_eq!(found.key, "cordoba");
+        // El key persistido debe volver a resolver al mismo pueblo (round-trip
+        // usado por `select_saved_address` al recalcular la zona en vivo).
+        let refound = lookup_nearby_town(found.key).expect("stored key should resolve back");
+        assert_eq!(refound.name, "Córdoba");
     }
 }

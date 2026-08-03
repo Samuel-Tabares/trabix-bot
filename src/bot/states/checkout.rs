@@ -882,6 +882,9 @@ mod tests {
             has_greeted: false,
             meta_customer_name: None,
             meta_customer_phone: None,
+            pending_zone_kind: None,
+            pending_zone_value: None,
+            pending_zone_label: None,
         }
     }
 
