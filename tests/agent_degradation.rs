@@ -47,6 +47,7 @@ async fn setup_state() -> AppState {
         advisor_phone: ADVISOR_PHONE.to_string(),
         transfer_payment_text: None,
         port: 8080,
+        internal_port: 8081,
         bind_ip: "127.0.0.1".parse::<IpAddr>().expect("ip"),
         whatsapp_token: "test-token".to_string(),
         whatsapp_phone_id: "test-phone-id".to_string(),

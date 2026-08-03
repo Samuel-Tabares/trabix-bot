@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-08-02
+
+### Changed
+- **Fase 8: segundo listener para cerrar `/internal/*` a internet.** Antes `/internal/advisor/*` y
+  `/internal/referral-codes*` colgaban del mismo `Router`/listener que `/webhook`, así que el
+  dominio público de Railway los enrutaba igual (verificado: 401 desde afuera) y el único freno
+  real era el `X-Internal-Token` compartido.
+  - `src/routes/mod.rs`: `router()` se parte en `public_router()` (`/webhook`, `/privacy-policy`,
+    `/terms-of-service`) e `internal_router()` (todo `/internal/*`).
+  - `src/main.rs`: arranca los dos routers en dos `TcpListener`/`axum::serve` distintos —
+    `public_router()` en `PORT` (el que Railway expone), `internal_router()` en `INTERNAL_PORT`
+    (nuevo, default `8081`) — corriendo con `tokio::try_join!`. Railway no le asigna dominio
+    público al segundo puerto, así que solo queda alcanzable por la red privada
+    (`trabix-bot.railway.internal:8081`).
+  - `src/config.rs`: nuevo campo `internal_port` (env `INTERNAL_PORT`, default `8081`, mismo
+    criterio de fallback-a-default que `PORT`).
+  - **Requiere acción al desplegar:** actualizar `TRABIX_BOT_INTERNAL_URL` en `crm-app` de
+    `http://trabix-bot.railway.internal:8080` a `http://trabix-bot.railway.internal:8081` — si no,
+    el envío saliente empieza a fallar con `not_connected`. Detalle en `general_info/runbook.md`.
+
 ## [1.17.0] - 2026-08-02
 
 ### Changed

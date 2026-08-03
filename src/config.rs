@@ -6,6 +6,13 @@ pub struct Config {
     pub advisor_phone: String,
     pub transfer_payment_text: Option<String>,
     pub port: u16,
+    /// Puerto del segundo listener, solo para `/internal/*`. Railway expone un
+    /// único puerto público al edge (`port`, arriba) — este queda alcanzable
+    /// solo por la red privada (`trabix-bot.railway.internal:<internal_port>`)
+    /// porque nunca se le asigna dominio público. Antes `/internal/*` colgaba
+    /// del mismo listener que `/webhook` y el `INTERNAL_API_TOKEN` era la
+    /// única protección real contra acceso desde internet.
+    pub internal_port: u16,
     pub bind_ip: IpAddr,
     pub whatsapp_token: String,
     pub whatsapp_phone_id: String,
@@ -44,6 +51,7 @@ pub struct Config {
 pub enum ConfigError {
     MissingVar(&'static str),
     InvalidPort(String),
+    InvalidInternalPort(String),
     InvalidLlmCallLimit(String),
 }
 
@@ -52,6 +60,9 @@ impl fmt::Display for ConfigError {
         match self {
             Self::MissingVar(var) => write!(f, "missing required environment variable {var}"),
             Self::InvalidPort(value) => write!(f, "invalid PORT value: {value}"),
+            Self::InvalidInternalPort(value) => {
+                write!(f, "invalid INTERNAL_PORT value: {value}")
+            }
             Self::InvalidLlmCallLimit(value) => {
                 write!(f, "invalid AGENT_DAILY_LLM_CALL_LIMIT value: {value}")
             }
@@ -70,6 +81,7 @@ impl Config {
             advisor_phone: read_required("ADVISOR_PHONE")?,
             transfer_payment_text: read_optional("TRANSFER_PAYMENT_TEXT"),
             port: read_port()?,
+            internal_port: read_internal_port()?,
             bind_ip: read_bind_ip(),
             whatsapp_token: read_required("WHATSAPP_TOKEN")?,
             whatsapp_phone_id: read_required("WHATSAPP_PHONE_ID")?,
@@ -147,6 +159,15 @@ fn read_port() -> Result<u16, ConfigError> {
     }
 }
 
+fn read_internal_port() -> Result<u16, ConfigError> {
+    match env::var("INTERNAL_PORT") {
+        Ok(value) => value
+            .parse::<u16>()
+            .map_err(|_| ConfigError::InvalidInternalPort(value)),
+        Err(_) => Ok(8081),
+    }
+}
+
 fn read_bind_ip() -> IpAddr {
     match env::var("BIND_IP") {
         Ok(value) => value
@@ -172,6 +193,7 @@ mod tests {
             "DATABASE_URL",
             "ADVISOR_PHONE",
             "PORT",
+            "INTERNAL_PORT",
             "TRANSFER_PAYMENT_TEXT",
             "WHATSAPP_TOKEN",
             "WHATSAPP_PHONE_ID",

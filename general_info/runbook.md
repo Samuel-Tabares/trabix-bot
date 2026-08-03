@@ -68,6 +68,20 @@ La consola vieja (`crm-web`, servicio `crm`) se jubiló el 2026-08-02 tras proba
 de `crm-app` punta a punta en producción (Fase 4 del corte del canal del asesor, ver
 `../ROADMAP.md`).
 
+### Listener interno separado (`/internal/*`, puerto 8081)
+
+Desde Fase 8, `/internal/*` ya **no** cuelga del mismo listener que `/webhook`. El bot levanta dos
+servidores Axum: uno público en `PORT` (Railway lo expone a internet, lo usa Meta), y otro en
+`INTERNAL_PORT` (default `8081`) que solo sirve `/internal/*` y al que Railway **nunca** le asigna
+dominio público — solo es alcanzable por la red privada
+(`http://trabix-bot.railway.internal:8081`). Antes el dominio público del bot enrutaba
+`/internal/*` igual (verificado: 401 desde afuera) y el único freno real era el token compartido;
+ahora no hay ruta pública en absoluto.
+
+**Al desplegar este cambio**, actualizar `TRABIX_BOT_INTERNAL_URL` en el servicio `crm-app` de
+`http://trabix-bot.railway.internal:8080` a `http://trabix-bot.railway.internal:8081` — si no, el
+envío saliente empieza a fallar con `not_connected` (el puerto 8080 ya no sirve `/internal/*`).
+
 ## Control de gasto LLM
 
 - Límite por cliente: 30 llamadas/día (constante `PER_PHONE_DAILY_LIMIT` en `src/ai/budget.rs`).

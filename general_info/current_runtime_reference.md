@@ -36,7 +36,12 @@ Componentes principales:
     el header `X-Internal-Token` (`INTERNAL_API_TOKEN`; sin la variable el endpoint responde 503).
     No es un camino de webhook: no cambia el estado de la conversacion ni pausa timers, solo toma el
     lock del caso, envia texto y traza en `message_events` (`channel='client'`, `actor='advisor'`,
-    `payload.source='crm-app'`). Contrato: `docs/internal_advisor_send.md`
+    `payload.source='crm-app'`). Contrato: `docs/internal_advisor_send.md`. Desde Fase 8, `mod.rs`
+    sirve estas rutas (y las de `referral-codes`) en un `internal_router()` separado, en su propio
+    listener (`INTERNAL_PORT`, default 8081) sin dominio publico en Railway — `public_router()`
+    (`/webhook`, `/privacy-policy`, `/terms-of-service`) queda solo en `PORT`. Antes ambos grupos
+    compartian un unico listener y `/internal/*` era alcanzable desde internet (protegido solo por
+    el token); ver `../main.rs` y `../general_info/runbook.md`.
 - `src/engine.rs`
   - procesamiento compartido de cliente/asesor
   - ejecucion compartida de acciones para webhook y timers

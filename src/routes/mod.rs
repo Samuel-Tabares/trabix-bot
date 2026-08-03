@@ -8,7 +8,9 @@ pub mod legal;
 pub mod verify;
 pub mod webhook;
 
-pub fn router() -> Router<AppState> {
+/// Sirve en el listener público (mismo puerto que Railway expone a internet):
+/// solo lo que Meta necesita golpear desde afuera.
+pub fn public_router() -> Router<AppState> {
     Router::new()
         .route("/privacy-policy", get(legal::privacy_policy))
         .route("/terms-of-service", get(legal::terms_of_service))
@@ -16,6 +18,14 @@ pub fn router() -> Router<AppState> {
             "/webhook",
             get(verify::verify_webhook).post(webhook::receive_webhook),
         )
+}
+
+/// Sirve en un listener aparte (puerto propio, sin dominio público asignado en
+/// Railway) para que `/internal/*` sea alcanzable únicamente por la red
+/// privada, nunca desde internet — antes compartía listener con `/webhook` y
+/// el token era la única protección real.
+pub fn internal_router() -> Router<AppState> {
+    Router::new()
         .route("/internal/advisor/send", post(internal::advisor_send))
         .route("/internal/advisor/reply", post(internal::advisor_reply))
         .route("/internal/advisor/release", post(internal::advisor_release))

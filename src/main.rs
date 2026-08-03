@@ -77,13 +77,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    let app: Router = routes::router().with_state(app_state);
+    let public_app: Router = routes::public_router().with_state(app_state.clone());
+    let internal_app: Router = routes::internal_router().with_state(app_state);
 
-    let addr = SocketAddr::new(config.bind_ip, config.port);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let public_addr = SocketAddr::new(config.bind_ip, config.port);
+    let internal_addr = SocketAddr::new(config.bind_ip, config.internal_port);
+    let public_listener = tokio::net::TcpListener::bind(public_addr).await?;
+    let internal_listener = tokio::net::TcpListener::bind(internal_addr).await?;
 
-    tracing::info!("server listening on {}", addr);
-    axum::serve(listener, app).await?;
+    tracing::info!("public server listening on {}", public_addr);
+    tracing::info!(
+        "internal server listening on {} (private network only)",
+        internal_addr
+    );
+
+    let public_server = axum::serve(public_listener, public_app);
+    let internal_server = axum::serve(internal_listener, internal_app);
+    tokio::try_join!(public_server, internal_server)?;
 
     Ok(())
 }
