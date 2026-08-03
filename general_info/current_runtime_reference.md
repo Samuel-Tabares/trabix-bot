@@ -300,7 +300,28 @@ un checkout SIEMPRE sale de una tool call en vivo, nunca de este snapshot).
   value/label` en el contexto (sí persistidos en `state_data`, para sobrevivir hasta la
   confirmación) y dispara `BotAction::TouchCustomerAddress` (bump de `last_used_at`). El modelo
   igual debe llamar `set_delivery_zone_armenia`/`set_delivery_nearby_town` después para fijar el
-  costo real.
+  costo real (si `zone_kind == "national"`, en vez de eso vuelve a pedir el costo al asesor —
+  ver más abajo, la tarifa de una transportadora puede haber cambiado).
+
+### Envío Nacional (v1.19.0)
+
+Tercera forma de entrega, junto a Armenia (moto propia, zonas) y los 13 municipios (moto propia,
+tarifa fija en `bot::delivery_zone`): cualquier destino fuera de esas dos listas se despacha por
+transportadora nacional, producto **descongelado** (el cliente lo congela al recibirlo — promesa
+distinta a Armenia/municipios, donde llega listo para consumir).
+
+- `bot::delivery_zone::MIN_UNITS_NATIONAL = 20`, sin excepción.
+- Tool `set_delivery_national(city)`: valida el mínimo y fija `pending_zone_kind = "national"`,
+  `pending_zone_value = None`, `pending_zone_label = "Envío nacional (transportadora) — {city}"`.
+  No calcula tarifa — el costo sigue el camino ya existente de domicilio manual
+  (`message_advisor` + `set_manual_delivery_cost`, mismo mecanismo que un municipio desconocido),
+  así que `finalize_checkout`, el estado `ask_delivery_cost` y la recuperación por timer de
+  horario (`timers::expire_business_hours_timer_with_source`) se reusan sin cambios.
+- El resultado de la tool trae el aviso obligatorio de "llega descongelado" en el texto que el
+  modelo debe repetirle al cliente — reforzado también como regla dura en `SYSTEM_PROMPT`, para
+  que no dependa solo de que el modelo la recuerde.
+- Escala únicamente por `needs_human`/consola (`message_advisor` ya respeta
+  `ADVISOR_WHATSAPP_ENABLED=false`), nunca por WhatsApp directo al asesor.
 - Al confirmar el pedido (`confirm_order_bookkeeping`, llamado desde el flujo de transferencia y
   el de contraentrega), si hay `delivery_address` + zona pendiente resueltos se dispara
   `BotAction::UpsertCustomerAddress`: `queries::upsert_customer_address` actualiza la dirección si

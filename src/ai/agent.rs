@@ -82,7 +82,8 @@ CUÁNDO USAR message_advisor (solo en estos casos):
 1. El cliente solicita hablar con asesor o necesita atención especial → avísale al asesor quién es, \
    qué número tiene, y cuál es la consulta.
 2. Confirmar disponibilidad de pedido inmediato → pregunta "¿Puedes entregar ahorita?" con resumen.
-3. Domicilio en municipio desconocido → pide el costo: "¿Cuál es el domicilio a [municipio]?".
+3. Domicilio en municipio desconocido, o envío nacional (tras set_delivery_national) → pide el \
+   costo: "¿Cuál es el domicilio/costo de envío a [destino]?".
 4. Casos fuera de tema o que requieren criterio comercial → redirige al asesor con contexto claro.
 
 INTERACCIÓN BOTONES VS. TEXTO LIBRE:
@@ -124,7 +125,13 @@ DOMICILIO AUTOMÁTICO (no pidas al asesor si puedes resolverlo):
   unidades. NO asumas el mínimo tú mismo: usa lo que devuelva lookup_nearby_town/set_delivery_nearby_town. \
   Fuera de Armenia el domicilio SIEMPRE se cobra, nunca es gratis, sin importar la cantidad.
 - Pueblo con mínimo y no lo cumple: rechaza indicando el mínimo exacto que te devolvió la herramienta.
-- Municipio desconocido: message_advisor pidiendo costo → set_manual_delivery_cost ✓
+- Cualquier otro destino (fuera de Armenia y fuera de la lista de pueblos cercanos, o sea el \
+  resto del país): es ENVÍO NACIONAL, no "municipio desconocido". Llama set_delivery_national con \
+  la ciudad — exige mínimo 20 unidades y te devuelve el texto exacto que tienes que decirle al \
+  cliente sobre que el producto llega DESCONGELADO (lo congela al recibirlo). No te lo saltes. \
+  Después pídele el costo al asesor con message_advisor y usa set_manual_delivery_cost cuando \
+  responda, igual que cualquier domicilio manual — si está fuera de horario dile al cliente que la \
+  cotización llega apenas abramos, igual que un pedido inmediato en espera.
 - Si el cliente pregunta "¿cuánto sería en total?" y el domicilio todavía no se conoce, PRIMERO \
   pregúntale la zona/barrio o municipio antes de cotizar. get_order_summary/add_order_item van a \
   devolver esa cifra etiquetada como "Subtotal de productos (sin domicilio aún)", nunca como \
@@ -166,6 +173,11 @@ Reglas que no puedes romper:
   champaña, "con licor", "sin licor"), NO adivines cuál quiere: pregúntale. Siempre manda en \
   customer_wording la frase literal que usó el cliente para el sabor — add_order_item rechaza el \
   intento si es ambiguo y esa frase no distingue la variante.
+- ENVÍO NACIONAL (fuera de Armenia y de los pueblos cercanos): SIEMPRE dile al cliente que el \
+  producto llega DESCONGELADO y lo congela él mismo al recibirlo — nunca prometas que llega listo \
+  para consumir en un envío nacional, esa promesa es solo de Armenia y los municipios con moto \
+  propia. Usa set_delivery_national para fijar el destino (exige mínimo 20 unidades) y luego \
+  resuelve el costo con message_advisor + set_manual_delivery_cost.
 - Antes de borrar el pedido con restart_order o cancelarlo con cancel_order, confirma \
   explicitamente con el cliente.
 - RECAPITULACIÓN OBLIGATORIA antes de confirmar CUALQUIER pedido: antes de llamar finalize_checkout \
@@ -611,9 +623,11 @@ fn build_dynamic_case_state(
     let flow_hint = match current_state {
         ConversationState::AskDeliveryCost => {
             "\nFase del flujo: pedido esperando el costo de domicilio (municipio/zona \
-             desconocida) — no se pregunta disponibilidad, se autoacepta solo. Pídele el valor al \
-             asesor con message_advisor y usa set_manual_delivery_cost cuando responda; eso \
-             autoacepta el pedido y avanza solo. El pedido NO está confirmado."
+             desconocida o envío nacional) — no se pregunta disponibilidad, se autoacepta solo. \
+             Pídele el valor al asesor con message_advisor y usa set_manual_delivery_cost cuando \
+             responda; eso autoacepta el pedido y avanza solo. El pedido NO está confirmado. Si el \
+             cliente escribe de nuevo mientras espera y el bloque ESTADO dice CERRADO, dile \
+             explícitamente que la cotización llega apenas abramos."
                 .to_string()
         }
         ConversationState::WaitBusinessHours => {
@@ -810,6 +824,7 @@ fn dispatch_tool(
         }
         "set_delivery_zone_armenia" => wrap(id, set_delivery_zone_armenia(input, context)),
         "set_delivery_nearby_town" => wrap(id, set_delivery_nearby_town(input, context)),
+        "set_delivery_national" => wrap(id, set_delivery_national(input, context)),
         "list_saved_addresses" => list_saved_addresses(id, saved_addresses),
         "select_saved_address" => select_saved_address(id, input, context, saved_addresses),
         "set_manual_delivery_cost" => {
@@ -1188,13 +1203,62 @@ fn set_delivery_nearby_town(input: &Value, context: &mut ConversationContext) ->
         }
         None => (
             format!(
-                "'{town}' no está en la lista de pueblos cercanos conocidos. Pídele al asesor \
-                 con message_advisor que confirme el valor del domicilio y luego usa \
-                 set_manual_delivery_cost con lo que te responda."
+                "'{town}' no está en la lista de pueblos cercanos conocidos. Si el destino está \
+                 fuera de Armenia y de esta lista, es ENVÍO NACIONAL: llama set_delivery_national \
+                 en vez de insistir aquí."
             ),
             true,
         ),
     }
+}
+
+/// Fija el destino como ENVÍO NACIONAL (transportadora, fuera de Armenia y de
+/// los 13 municipios con moto propia). No calcula tarifa — eso lo cotiza el
+/// asesor (message_advisor + set_manual_delivery_cost, mismo camino que
+/// cualquier domicilio manual, ver `set_manual_delivery_cost`). Lo único que
+/// esta tool valida de forma determinista es el mínimo de unidades; el texto
+/// de "llega descongelado" va en el resultado para que sea imposible de
+/// omitir, no solo una instrucción del prompt.
+fn set_delivery_national(input: &Value, context: &mut ConversationContext) -> (String, bool) {
+    let city = input.get("city").and_then(Value::as_str).unwrap_or("").trim();
+    let total_units: u32 = context.items.iter().map(|item| item.quantity).sum();
+
+    if total_units < delivery_zone::MIN_UNITS_NATIONAL {
+        return (
+            format!(
+                "Envío nacional (transportadora) requiere mínimo {} unidades — el pedido actual \
+                 tiene {}. Explícale al cliente ese mínimo; por debajo de eso no se puede despachar \
+                 a ese destino por ahora.",
+                delivery_zone::MIN_UNITS_NATIONAL,
+                total_units
+            ),
+            true,
+        );
+    }
+
+    let label = if city.is_empty() {
+        "Envío nacional (transportadora)".to_string()
+    } else {
+        format!("Envío nacional (transportadora) — {city}")
+    };
+    context.pending_zone_kind = Some("national".to_string());
+    context.pending_zone_value = None;
+    context.pending_zone_label = Some(label);
+
+    (
+        "Destino confirmado como ENVÍO NACIONAL (transportadora). Antes de seguir, dile al \
+         cliente EXPLÍCITAMENTE — esto no es opcional, un cliente que espera granizado listo y \
+         recibe líquido reclama seguro — que este pedido llega DESCONGELADO: lo congela él mismo \
+         apenas lo recibe, ese es el concepto del producto (congelar, abrir y consumir). Nunca le \
+         digas que llega listo para consumir, esa promesa es solo de Armenia y los municipios con \
+         moto propia. El costo del envío lo cotiza el asesor, no tú: pídeselo con message_advisor \
+         (dile ciudad/dirección y unidades) y usa set_manual_delivery_cost cuando responda — eso \
+         autoacepta el pedido solo, igual que cualquier domicilio manual. Si en el bloque ESTADO \
+         ACTUAL DEL CASO la hora actual dice CERRADO, dile también al cliente que la cotización \
+         llega apenas abramos, igual que un pedido en espera de horario."
+            .to_string(),
+        false,
+    )
 }
 
 /// Lista las direcciones ya guardadas de este cliente (prefetch síncrono
@@ -1235,14 +1299,24 @@ fn select_saved_address(
             context.pending_zone_kind = Some(addr.zone_kind.clone());
             context.pending_zone_value = addr.zone_value.clone();
             context.pending_zone_label = Some(addr.zone_label.clone());
+            let next_step = if addr.zone_kind == "national" {
+                "Es un ENVÍO NACIONAL: el costo lo pone una transportadora y puede haber cambiado \
+                 desde la última vez, así que vuelve a pedírselo al asesor con message_advisor y \
+                 usa set_manual_delivery_cost cuando responda — no reutilices el costo de \
+                 referencia. Y no olvides decirle al cliente que este envío llega DESCONGELADO."
+                    .to_string()
+            } else {
+                "Ahora llama set_delivery_zone_armenia o set_delivery_nearby_town con esta misma \
+                 zona para fijar el costo real antes de confirmar — nunca uses el costo de \
+                 referencia directamente."
+                    .to_string()
+            };
             ToolOutcome::ResultWithAction(
                 ok_result(
                     id,
                     format!(
                         "Dirección reutilizada: {} ({}, costo de referencia ${}, puede haber \
-                         cambiado). Ahora llama set_delivery_zone_armenia o \
-                         set_delivery_nearby_town con esta misma zona para fijar el costo real \
-                         antes de confirmar — nunca uses el costo de referencia directamente.",
+                         cambiado). {next_step}",
                         addr.address_text,
                         addr.zone_label,
                         format_thousands(addr.last_delivery_cost_cop.max(0) as u32),
@@ -2207,6 +2281,16 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "set_delivery_national".to_string(),
+            description: "Marca el destino como ENVÍO NACIONAL (transportadora, fuera de Armenia y de los 13 municipios con moto propia). Exige mínimo 20 unidades y devuelve el texto obligatorio sobre que el producto llega descongelado. NO calcula tarifa: eso se cotiza después con message_advisor + set_manual_delivery_cost.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "city": { "type": "string" } },
+                "required": ["city"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDefinition {
             name: "list_saved_addresses".to_string(),
             description: "Lista las direcciones guardadas de este cliente (hasta 4), cada una con su zona ya resuelta y un costo de domicilio de referencia. Úsala al pedirle la dirección a un cliente que vuelve, o si dice algo como \"la de siempre\"/\"la misma de la vez pasada\". Si devuelve una lista vacía, pide la dirección normalmente.".to_string(),
             input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
@@ -2839,6 +2923,67 @@ mod tests {
         assert!(matches!(outcome, ToolOutcome::Result(_)));
         assert_eq!(context.delivery_cost, Some(15_000));
         assert!(tool_result_text(&outcome).contains("15.000"));
+    }
+
+    #[test]
+    fn set_delivery_national_rejects_below_minimum_units() {
+        // test_context() trae 5 unidades por defecto, por debajo del mínimo nacional.
+        let mut context = test_context();
+        let (message, is_error) =
+            set_delivery_national(&json!({ "city": "Bogotá" }), &mut context);
+
+        assert!(is_error);
+        assert!(message.contains("20"));
+        assert!(context.pending_zone_kind.is_none());
+    }
+
+    #[test]
+    fn set_delivery_national_accepts_at_minimum_and_warns_about_thaw() {
+        let mut context = test_context();
+        context.items = vec![crate::db::models::OrderItemData {
+            flavor: "Uva Vodka".to_string(),
+            has_liquor: true,
+            quantity: 20,
+        }];
+
+        let (message, is_error) =
+            set_delivery_national(&json!({ "city": "Bogotá" }), &mut context);
+
+        assert!(!is_error);
+        assert!(message.contains("DESCONGELADO"));
+        assert!(message.contains("message_advisor"));
+        assert!(message.contains("set_manual_delivery_cost"));
+        assert_eq!(context.pending_zone_kind.as_deref(), Some("national"));
+        assert_eq!(context.pending_zone_value, None);
+        assert_eq!(
+            context.pending_zone_label.as_deref(),
+            Some("Envío nacional (transportadora) — Bogotá")
+        );
+        // Solo marca el destino; la tarifa la sigue cotizando el asesor.
+        assert_eq!(context.delivery_cost, None);
+    }
+
+    #[test]
+    fn set_delivery_national_finalize_checkout_routes_to_ask_delivery_cost() {
+        let mut context = test_context();
+        context.items = vec![crate::db::models::OrderItemData {
+            flavor: "Uva Vodka".to_string(),
+            has_liquor: true,
+            quantity: 20,
+        }];
+        context.delivery_type = Some("scheduled".to_string());
+        context.referral_prompt_resolved = true; // pedido mayorista (20+ u): ya resuelto para el test
+        let (_, is_error) = set_delivery_national(&json!({ "city": "Cali" }), &mut context);
+        assert!(!is_error);
+
+        let outcome = finalize_checkout("id_1", &mut context);
+
+        match outcome {
+            ToolOutcome::ResultWithStateChange(_, next_state, _) => {
+                assert_eq!(next_state, ConversationState::AskDeliveryCost);
+            }
+            _ => panic!("expected finalize_checkout to wait for the advisor's manual quote"),
+        }
     }
 
     #[test]

@@ -11,6 +11,13 @@
 /// del Grupo B (`TownGroup::Lejano`) — el Grupo A no tiene minimo.
 pub const MIN_UNITS_OUTSIDE_ARMENIA: u32 = 20;
 
+/// Minimo de unidades para envio nacional (transportadora, fuera de Armenia
+/// y de los 13 municipios con moto propia). Coincide en valor con
+/// `MIN_UNITS_OUTSIDE_ARMENIA` y con el minimo mayorista de sin licor, pero
+/// es una regla de negocio distinta (cobertura de transportadora, no costo
+/// de oportunidad del domiciliario) — se deja como constante separada.
+pub const MIN_UNITS_NATIONAL: u32 = 20;
+
 /// Umbral inferior/superior (inclusive) de unidades para domicilio gratis en
 /// Armenia. Por debajo se cobra tarifa de zona; en o por encima de
 /// `ARMENIA_FREE_DELIVERY_MAX` (mayorista) tambien se cobra.
@@ -290,6 +297,12 @@ mod tests {
             assert_eq!(ArmeniaZone::from_storage_key(key), Some(zone));
         }
         assert_eq!(ArmeniaZone::from_storage_key("oeste"), None);
+    }
+
+    #[test]
+    fn national_minimum_matches_outside_armenia_minimum() {
+        assert_eq!(MIN_UNITS_NATIONAL, 20);
+        assert_eq!(MIN_UNITS_NATIONAL, MIN_UNITS_OUTSIDE_ARMENIA);
     }
 
     #[test]

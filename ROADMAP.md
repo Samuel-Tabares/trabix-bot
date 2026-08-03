@@ -3,7 +3,7 @@
 > Léeme al iniciar sesión, junto con `CLAUDE.md`. Este archivo dice **qué sigue y en qué orden**;
 > `CLAUDE.md` dice **cómo está construido**. Actualizar este archivo cuando algo se complete.
 >
-> Última revisión: 2026-08-01.
+> Última revisión: 2026-08-02.
 
 ## Contexto de negocio mínimo (para no tener que salir del repo)
 
@@ -66,6 +66,17 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
   `expire_*_with_source` de `bot::timers` + la reconciliación de boot. `POST /internal/advisor/release`
   la libera antes de tiempo. `POST /internal/advisor/reply` NO la dispara a propósito — ver
   `docs/internal_advisor_send.md`. Del lado `crm-app` falta el composer (ver su propio ROADMAP).
+- **Envío nacional** (v1.19.0): tercera forma de entrega (junto a Armenia y los 13 municipios).
+  Tool `set_delivery_national` (`src/ai/agent.rs`) — mínimo 20 unidades sin excepción
+  (`bot::delivery_zone::MIN_UNITS_NATIONAL`), no calcula tarifa (la cotiza el asesor vía
+  `message_advisor` + `set_manual_delivery_cost`, reusando el camino ya existente de domicilio
+  manual sin duplicar lógica), y obliga a decirle al cliente que el producto llega
+  **descongelado** (promesa distinta a Armenia/municipios). Detalle en
+  `general_info/current_runtime_reference.md` → "Envío Nacional". ⚠️ **Pendiente, no de código**:
+  confirmar con la transportadora si el retail con licor (12%) se puede despachar nacional sin
+  restricción; si no, el canal puede arrancar solo con sin licor (su mínimo de 20u ya coincide).
+  Pendiente también sincronizar `website/retail/index.html` (hoy dice "Resto de Quindío, entra a
+  mayoristas o alianzas", desactualizado) y el `CLAUDE.md` de la raíz del workspace.
 - **Fase 6 (lado bot): códigos de referido en base de datos** (v1.17.0): reemplaza
   `config/referrals.toml` por la tabla `referral_codes` (migración `016`, sembrada con los 5
   códigos legacy), cacheada en memoria (`src/referrals.rs`, refresco en background cada 30s +

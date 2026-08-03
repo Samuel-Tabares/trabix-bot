@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-08-02
+
+### Added
+- **Envío nacional (tercera forma de entrega, junto a Armenia y los 13 municipios).** Cualquier
+  destino fuera de Armenia y fuera de la lista de pueblos cercanos ya no cae en el genérico
+  "municipio desconocido": el agente lo reconoce como envío nacional (transportadora) y llama la
+  nueva tool `set_delivery_national`.
+  - `src/bot/delivery_zone.rs`: `MIN_UNITS_NATIONAL = 20` (mínimo sin excepción, coincide en valor
+    con `MIN_UNITS_OUTSIDE_ARMENIA` y con el mínimo mayorista de sin licor, pero es una constante
+    de negocio separada).
+  - `src/ai/agent.rs`: `set_delivery_national` valida el mínimo y fija
+    `pending_zone_kind = "national"`; el costo NO lo calcula el bot — se resigue el camino ya
+    existente de domicilio manual (`message_advisor` + `set_manual_delivery_cost`), así que
+    `finalize_checkout`, el estado `AskDeliveryCost` y la recuperación por timer de horario
+    (`expire_business_hours_timer_with_source`) se reusan sin cambios.
+  - El resultado de la tool trae, de forma imposible de omitir, el aviso obligatorio de que el
+    envío nacional llega **descongelado** (el cliente lo congela al recibirlo) — promesa distinta
+    a la de Armenia/municipios, donde llega listo para consumir. Reforzado también como regla dura
+    en `SYSTEM_PROMPT`.
+  - `select_saved_address` distingue direcciones guardadas con `zone_kind = "national"`: no
+    reutiliza el costo de referencia (una transportadora puede cambiar tarifa), siempre vuelve a
+    pedirlo al asesor.
+  - Escala exclusivamente por `needs_human`/consola (`message_advisor` ya respeta
+    `ADVISOR_WHATSAPP_ENABLED=false`), nunca por WhatsApp directo al asesor — compatible con la
+    Fase 4 ya en producción.
+  - Pendiente de decisión de negocio, no de código: confirmar con la transportadora si el retail
+    con licor (12% alcohol) se puede despachar nacional sin restricciones; si no, el canal nacional
+    puede arrancar solo con sin licor porque su mínimo (20 u) ya coincide.
+
 ## [1.18.0] - 2026-08-02
 
 ### Changed
