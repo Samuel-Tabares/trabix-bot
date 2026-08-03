@@ -235,6 +235,20 @@ pub struct ReferralCodeAnalytics {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Fase 6: fuente de verdad de codigos de referido, reemplaza
+/// `config/referrals.toml`. `active=false` deshabilita el codigo sin
+/// borrarlo (conserva el historial en `referral_code_analytics`).
+/// `boost_until` es una ventana temporal (no un flag fijo): el boost de 7
+/// dias expira solo, ver `referrals::ReferralRegistry::has_boost`.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ReferralCode {
+    pub code: String,
+    pub active: bool,
+    pub boost_until: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::ConversationStateData;

@@ -11,7 +11,7 @@
 //! deshabilitado (503) en vez de quedar abierto.
 
 use axum::{
-    extract::{rejection::JsonRejection, State},
+    extract::{rejection::JsonRejection, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -19,14 +19,20 @@ use axum::{
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::error::DatabaseError;
 
 use crate::{
     bot::state_machine::UserInput,
-    db::queries::{
-        clear_human_takeover, get_conversation, record_message_event, set_human_takeover,
-        update_last_message,
+    db::{
+        models::ReferralCode,
+        queries::{
+            clear_human_takeover, create_referral_code as db_create_referral_code, get_conversation,
+            record_message_event, set_human_takeover, set_referral_code_active as db_set_referral_code_active,
+            set_referral_code_boost as db_set_referral_code_boost, update_last_message,
+        },
     },
     logging::{mask_phone, preview_text},
+    referrals::{swap_referral_registry, validate_registry_code, ReferralRegistry},
     whatsapp::client::WhatsAppError,
     AppState,
 };
@@ -87,6 +93,8 @@ pub enum ApiError {
     MetaError(String),
     MetaUnavailable(String),
     Internal(String),
+    DuplicateReferralCode,
+    UnknownReferralCode,
 }
 
 impl ApiError {
@@ -100,6 +108,8 @@ impl ApiError {
             Self::MetaError(_) => "meta_error",
             Self::MetaUnavailable(_) => "meta_unavailable",
             Self::Internal(_) => "internal_error",
+            Self::DuplicateReferralCode => "duplicate_code",
+            Self::UnknownReferralCode => "unknown_code",
         }
     }
 
@@ -113,6 +123,8 @@ impl ApiError {
             Self::MetaError(_) => StatusCode::BAD_GATEWAY,
             Self::MetaUnavailable(_) => StatusCode::BAD_GATEWAY,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::DuplicateReferralCode => StatusCode::CONFLICT,
+            Self::UnknownReferralCode => StatusCode::NOT_FOUND,
         }
     }
 
@@ -128,6 +140,8 @@ impl ApiError {
             Self::MetaError(detail) | Self::MetaUnavailable(detail) | Self::Internal(detail) => {
                 detail.clone()
             }
+            Self::DuplicateReferralCode => "ya existe un código de referido con ese valor".into(),
+            Self::UnknownReferralCode => "no existe un código de referido con ese valor".into(),
         }
     }
 }
@@ -325,6 +339,114 @@ pub async fn advisor_release(
     );
 
     Ok(Json(AdvisorReplyResponse { ok: true }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateReferralCodeRequest {
+    pub code: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetReferralCodeActiveRequest {
+    pub active: bool,
+}
+
+/// Fase 6: `crm-app` gestiona códigos de referido a través de estos 3
+/// endpoints en vez de escribir directo a `referral_codes` — el bot sigue
+/// siendo el único escritor de una tabla que afecta precio/descuento en
+/// producción, y reusa la validación de formato que ya vivía en
+/// `referrals.rs` para el TOML.
+pub async fn create_referral_code(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<CreateReferralCodeRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<ReferralCode>), ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+
+    let Json(payload) = payload
+        .map_err(|err| ApiError::InvalidRequest(format!("cuerpo JSON inválido: {err}")))?;
+
+    let normalized =
+        validate_registry_code(&payload.code).map_err(|err| ApiError::InvalidRequest(err.to_string()))?;
+
+    let created = db_create_referral_code(&state.pool, &normalized)
+        .await
+        .map_err(|err| {
+            if is_unique_violation(&err) {
+                ApiError::DuplicateReferralCode
+            } else {
+                ApiError::Internal(format!("error creando el código: {err}"))
+            }
+        })?;
+
+    refresh_referral_cache(&state.pool).await;
+
+    tracing::info!(code = %normalized, "referral code created from crm-app");
+
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+pub async fn set_referral_code_active(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(code): Path<String>,
+    payload: Result<Json<SetReferralCodeActiveRequest>, JsonRejection>,
+) -> Result<Json<ReferralCode>, ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+
+    let Json(payload) = payload
+        .map_err(|err| ApiError::InvalidRequest(format!("cuerpo JSON inválido: {err}")))?;
+
+    let normalized = crate::referrals::normalize_referral_code(&code);
+    let updated = db_set_referral_code_active(&state.pool, &normalized, payload.active)
+        .await
+        .map_err(|err| ApiError::Internal(format!("error actualizando el código: {err}")))?
+        .ok_or(ApiError::UnknownReferralCode)?;
+
+    refresh_referral_cache(&state.pool).await;
+
+    tracing::info!(
+        code = %normalized,
+        active = payload.active,
+        "referral code active flag updated from crm-app"
+    );
+
+    Ok(Json(updated))
+}
+
+pub async fn boost_referral_code(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(code): Path<String>,
+) -> Result<Json<ReferralCode>, ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+
+    let normalized = crate::referrals::normalize_referral_code(&code);
+    let updated = db_set_referral_code_boost(&state.pool, &normalized)
+        .await
+        .map_err(|err| ApiError::Internal(format!("error activando el boost: {err}")))?
+        .ok_or(ApiError::UnknownReferralCode)?;
+
+    refresh_referral_cache(&state.pool).await;
+
+    tracing::info!(code = %normalized, "referral code boost activated from crm-app");
+
+    Ok(Json(updated))
+}
+
+fn is_unique_violation(err: &sqlx::Error) -> bool {
+    err.as_database_error()
+        .is_some_and(DatabaseError::is_unique_violation)
+}
+
+/// Recarga el registro completo desde la DB y lo publica de inmediato — el
+/// refresco de background (cada 30s, `main.rs`) queda como red de
+/// seguridad, no como el único camino de propagación.
+async fn refresh_referral_cache(pool: &sqlx::PgPool) {
+    match ReferralRegistry::load_from_db(pool).await {
+        Ok(registry) => swap_referral_registry(registry),
+        Err(err) => tracing::warn!(%err, "failed to refresh referral registry after write"),
+    }
 }
 
 fn authorize(headers: &HeaderMap, configured: Option<&str>) -> Result<(), ApiError> {

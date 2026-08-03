@@ -376,12 +376,17 @@ Si elige `Tengo código`:
 - entra a `wait_referral_code`
 - el bot espera texto libre
 - normaliza el input con `trim().to_lowercase()`
-- valida el codigo contra `config/referrals.toml`
+- valida el codigo contra la tabla `referral_codes` (Fase 6, `migrations/016`), cacheada en memoria
+  (`src/referrals.rs`, refresco en background cada 30s + refresco inmediato tras cada escritura)
 - los codigos guardados deben cumplir estas reglas:
   - solo minusculas
   - sin espacios
   - maximo `15` caracteres
-- `boost_codes` es opcional y cada entrada debe existir tambien en `codes`
+- el boost es una ventana temporal por codigo (`boost_until`), no una lista estatica: expira solo a
+  los 7 dias de activarse, no se acumula si se reactiva antes de expirar
+- gestion de codigos (crear, activar/desactivar, activar boost) vive en `crm-app` → sección
+  "Embajadores", que llama a `POST/PATCH /internal/referral-codes*` (mismo `X-Internal-Token` que
+  `/internal/advisor/send`) — el bot sigue siendo el unico escritor de la tabla
 
 Si el codigo es invalido:
 

@@ -55,9 +55,12 @@ ACTUAL DEL CASO" block is sent uncached after it. `AnthropicClient::send_message
 - `src/bot/` — state machine and per-state handlers (`pricing.rs`, `states/*.rs`, `timers.rs`).
 - `src/db/` — SQLx models and conversation queries.
 - `config/messages.toml` — customer-facing copy, loaded at startup (restart after editing).
-- `config/referrals.toml` — embajador referral codes (`codes`, `boost_codes`), loaded at startup;
-  keep entries trimmed lowercase, no spaces, ≤15 chars; every `boost_codes` entry must also exist
-  in `codes`. Restart after editing.
+- `src/referrals.rs` — embajador referral codes and boosts (Fase 6, v1.17.0): DB-backed
+  (`referral_codes` table, `migrations/016`), cached in memory (`OnceLock<RwLock<Arc<...>>>`),
+  refreshed by a background task every 30s and immediately after every write. Codes must be
+  trimmed lowercase, ≤15 chars; boost is a 7-day `boost_until` window, not a static flag. Managed
+  from `crm-app`'s "Embajadores" section via `POST/PATCH /internal/referral-codes*` (same
+  `X-Internal-Token` as `/internal/advisor/send`) — no restart needed to change a code.
 - `migrations/` — PostgreSQL schema, append-only (see below).
 - `tests/` — integration tests plus `live_whatsapp.rs` (real Meta smoke test, `--ignored`).
 - `crm-web/` — read-only Next.js conversation console (own `package.json`, not compiled into the

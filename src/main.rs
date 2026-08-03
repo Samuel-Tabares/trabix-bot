@@ -6,7 +6,7 @@ use granizado_bot::{
     config::Config,
     db::init_pool,
     messages::{set_client_messages, ClientMessages},
-    referrals::{set_referral_registry, ReferralRegistry},
+    referrals::{init_referral_registry, swap_referral_registry, ReferralRegistry},
     routes,
     whatsapp::client::WhatsAppClient,
     AppState,
@@ -25,11 +25,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Config::from_env()?;
     let messages = ClientMessages::load_default()?;
-    let referral_registry = ReferralRegistry::load_default()?;
     set_client_messages(messages)?;
-    set_referral_registry(referral_registry)?;
+
     let pool = init_pool(&config.database_url).await?;
     sqlx::migrate!().run(&pool).await?;
+
+    let initial_referral_registry = ReferralRegistry::load_from_db(&pool).await?;
+    init_referral_registry(initial_referral_registry);
 
     let transport = WhatsAppClient::new(
         config.whatsapp_token.clone(),
@@ -56,6 +58,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     restore_pending_timers(app_state.clone()).await?;
     let _timer_sweeper = spawn_timer_sweeper(app_state.clone());
+
+    // Fase 6: red de seguridad si algo escribe `referral_codes` sin pasar por
+    // los endpoints internos (o si otra instancia lo hizo). Las escrituras
+    // normales ya refrescan el cache al instante — esto solo cubre el peor
+    // caso, hasta 30s de rezago.
+    {
+        let pool = app_state.pool.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                match ReferralRegistry::load_from_db(&pool).await {
+                    Ok(registry) => swap_referral_registry(registry),
+                    Err(err) => tracing::warn!(%err, "failed to refresh referral registry"),
+                }
+            }
+        });
+    }
 
     let app: Router = routes::router().with_state(app_state);
 

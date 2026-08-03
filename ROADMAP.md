@@ -66,6 +66,16 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
   `expire_*_with_source` de `bot::timers` + la reconciliación de boot. `POST /internal/advisor/release`
   la libera antes de tiempo. `POST /internal/advisor/reply` NO la dispara a propósito — ver
   `docs/internal_advisor_send.md`. Del lado `crm-app` falta el composer (ver su propio ROADMAP).
+- **Fase 6 (lado bot): códigos de referido en base de datos** (v1.17.0): reemplaza
+  `config/referrals.toml` por la tabla `referral_codes` (migración `016`, sembrada con los 5
+  códigos legacy), cacheada en memoria (`src/referrals.rs`, refresco en background cada 30s +
+  refresco inmediato tras cada escritura) — cambiar un código o activar un boost ya no exige
+  desplegar el bot. El boost pasa de ser un flag fijo (`boost_codes` en el TOML) a una ventana real
+  de 7 días (`boost_until`) que expira sola. 3 endpoints internos nuevos
+  (`POST /internal/referral-codes`, `PATCH /internal/referral-codes/:code`,
+  `POST /internal/referral-codes/:code/boost`), mismo `X-Internal-Token` que
+  `/internal/advisor/send` — el bot sigue siendo el único escritor de la tabla. Del lado `crm-app`
+  falta la sección "Embajadores" que llama a estos endpoints (ver su propio ROADMAP).
 
 ---
 

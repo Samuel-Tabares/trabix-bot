@@ -4,7 +4,8 @@ use chrono::{NaiveDate, NaiveTime};
 use sqlx::{types::Json, PgPool};
 
 use super::models::{
-    Conversation, ConversationStateData, Customer, CustomerAddress, Order, OrderItem, ReferralCodeAnalytics,
+    Conversation, ConversationStateData, Customer, CustomerAddress, Order, OrderItem, ReferralCode,
+    ReferralCodeAnalytics,
 };
 use crate::bot::delivery_zone;
 
@@ -747,6 +748,75 @@ pub async fn create_or_update_referral_analytics(
     .bind(units_inc)
     .bind(sales_inc)
     .fetch_one(pool)
+    .await
+}
+
+/// Codigos activos, para reconstruir `referrals::ReferralRegistry` al boot y
+/// en cada refresco de background. Los inactivos se excluyen aca mismo, no
+/// en la capa de arriba.
+pub async fn list_active_referral_codes(pool: &PgPool) -> Result<Vec<ReferralCode>, sqlx::Error> {
+    sqlx::query_as::<_, ReferralCode>(
+        r#"
+        SELECT code, active, boost_until, created_at, updated_at
+        FROM referral_codes
+        WHERE active = true
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Falla con un `sqlx::Error::Database` de violacion de PK si `code` ya
+/// existe — el caller (`routes/internal.rs`) lo traduce a 409.
+pub async fn create_referral_code(pool: &PgPool, code: &str) -> Result<ReferralCode, sqlx::Error> {
+    sqlx::query_as::<_, ReferralCode>(
+        r#"
+        INSERT INTO referral_codes (code)
+        VALUES ($1)
+        RETURNING code, active, boost_until, created_at, updated_at
+        "#,
+    )
+    .bind(code)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn set_referral_code_active(
+    pool: &PgPool,
+    code: &str,
+    active: bool,
+) -> Result<Option<ReferralCode>, sqlx::Error> {
+    sqlx::query_as::<_, ReferralCode>(
+        r#"
+        UPDATE referral_codes
+        SET active = $2, updated_at = NOW()
+        WHERE code = $1
+        RETURNING code, active, boost_until, created_at, updated_at
+        "#,
+    )
+    .bind(code)
+    .bind(active)
+    .fetch_optional(pool)
+    .await
+}
+
+/// No acumulable: cada llamada reemplaza `boost_until` por "ahora + 7 dias",
+/// nunca lo suma al valor anterior — coincide con la regla de negocio
+/// (el boost se reinicia con cada nueva story aprobada).
+pub async fn set_referral_code_boost(
+    pool: &PgPool,
+    code: &str,
+) -> Result<Option<ReferralCode>, sqlx::Error> {
+    sqlx::query_as::<_, ReferralCode>(
+        r#"
+        UPDATE referral_codes
+        SET boost_until = NOW() + INTERVAL '7 days', updated_at = NOW()
+        WHERE code = $1
+        RETURNING code, active, boost_until, created_at, updated_at
+        "#,
+    )
+    .bind(code)
+    .fetch_optional(pool)
     .await
 }
 

@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-08-02
+
+### Changed
+- **Fase 6: códigos de referido en base de datos, reemplaza `config/referrals.toml`.** Cambiar un
+  código o activar un boost ya no exige desplegar el bot. Nueva tabla `referral_codes` (migración
+  `016`, sembrada con los 5 códigos legacy) con `active` y `boost_until` (ventana temporal real de
+  7 días, no un flag fijo — expira sola en vez de vivir permanente como el `boost_codes` del TOML).
+  - `src/referrals.rs`: `ReferralRegistry` pasa de cargarse una vez desde TOML
+    (`OnceLock` write-once) a cargarse desde la DB y cachearse en un
+    `OnceLock<RwLock<Arc<ReferralRegistry>>>`, refrescado por un `tokio::spawn` en background cada
+    30s (`main.rs`) más un refresco inmediato tras cada escritura. Los call sites existentes
+    (`ai/tools.rs`, `bot/states/checkout.rs`) no cambiaron: `referral_registry()` sigue siendo
+    síncrona.
+  - 3 endpoints internos nuevos en `src/routes/internal.rs` (mismo `X-Internal-Token` que
+    `/internal/advisor/send`): `POST /internal/referral-codes` (crear), `PATCH
+    /internal/referral-codes/:code` (activar/desactivar), `POST
+    /internal/referral-codes/:code/boost` (activar boost de 7 días). El bot sigue siendo el único
+    escritor de la tabla; `crm-app` la lee directo por Postgres (solo lectura, como
+    `customers`/`orders`) y escribe solo por estos endpoints.
+  - `config/referrals.toml` eliminado.
+
 ## [1.16.0] - 2026-08-02
 
 ### Added
