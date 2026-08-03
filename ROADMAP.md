@@ -72,11 +72,10 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
   `message_advisor` + `set_manual_delivery_cost`, reusando el camino ya existente de domicilio
   manual sin duplicar lógica), y obliga a decirle al cliente que el producto llega
   **descongelado** (promesa distinta a Armenia/municipios). Detalle en
-  `general_info/current_runtime_reference.md` → "Envío Nacional". ⚠️ **Pendiente, no de código**:
-  confirmar con la transportadora si el retail con licor (12%) se puede despachar nacional sin
-  restricción; si no, el canal puede arrancar solo con sin licor (su mínimo de 20u ya coincide).
-  Pendiente también sincronizar `website/retail/index.html` (hoy dice "Resto de Quindío, entra a
-  mayoristas o alianzas", desactualizado) y el `CLAUDE.md` de la raíz del workspace.
+  `general_info/current_runtime_reference.md` → "Envío Nacional". **Confirmado (Samuel,
+  2026-08-02): la transportadora sí despacha con licor**, así que el canal arranca con el mismo
+  catálogo que el resto del retail, sin restricción de alcohol. `website/retail/index.html` y el
+  `CLAUDE.md` de la raíz ya están sincronizados.
 - **Fase 6 (lado bot): códigos de referido en base de datos** (v1.17.0): reemplaza
   `config/referrals.toml` por la tabla `referral_codes` (migración `016`, sembrada con los 5
   códigos legacy), cacheada en memoria (`src/referrals.rs`, refresco en background cada 30s +

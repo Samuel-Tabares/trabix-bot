@@ -29,9 +29,8 @@ All notable changes to this project will be documented in this file.
   - Escala exclusivamente por `needs_human`/consola (`message_advisor` ya respeta
     `ADVISOR_WHATSAPP_ENABLED=false`), nunca por WhatsApp directo al asesor — compatible con la
     Fase 4 ya en producción.
-  - Pendiente de decisión de negocio, no de código: confirmar con la transportadora si el retail
-    con licor (12% alcohol) se puede despachar nacional sin restricciones; si no, el canal nacional
-    puede arrancar solo con sin licor porque su mínimo (20 u) ya coincide.
+  - **Confirmado (Samuel, 2026-08-02): la transportadora sí despacha con licor.** El canal nacional
+    arranca con el mismo catálogo que el resto del retail (con licor), sin restricción de alcohol.
 
 ## [1.18.0] - 2026-08-02
 
