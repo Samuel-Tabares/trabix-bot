@@ -884,11 +884,52 @@ pub async fn record_message_event(
     Ok(())
 }
 
+/// Guarda el estado real de entrega que Meta manda por el webhook de
+/// "statuses" (separado del mensaje mismo), enlazado por `wa_message_id`
+/// contra la fila ya escrita por `record_message_event`. `sent` < `delivered`
+/// < `read` < `failed` es el único orden que importa: si llega un estado más
+/// viejo fuera de orden (Meta no garantiza el orden de estos webhooks), se
+/// ignora en vez de pisar uno más nuevo. Devuelve cuántas filas se
+/// actualizaron (0 si el `wa_message_id` no coincide con ningún mensaje
+/// propio — normal para el eco de un mensaje que no es nuestro).
+pub async fn record_delivery_status(
+    pool: &PgPool,
+    wa_message_id: &str,
+    status: &str,
+    error_code: Option<i64>,
+    error_title: Option<&str>,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE message_events
+        SET delivery_status = $2,
+            delivery_status_updated_at = NOW(),
+            delivery_error_code = COALESCE($3, delivery_error_code),
+            delivery_error_title = COALESCE($4, delivery_error_title)
+        WHERE wa_message_id = $1
+          AND (
+            delivery_status IS NULL
+            OR array_position(ARRAY['sent', 'delivered', 'read', 'failed'], $2)
+               >= array_position(ARRAY['sent', 'delivered', 'read', 'failed'], delivery_status)
+          )
+        "#,
+    )
+    .bind(wa_message_id)
+    .bind(status)
+    .bind(error_code)
+    .bind(error_title)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         add_order_item, create_conversation, create_order, get_conversation, list_conversations,
-        list_order_items, list_orders, reset_conversation, update_customer_data, update_state,
+        list_order_items, list_orders, record_delivery_status, record_message_event,
+        reset_conversation, update_customer_data, update_state,
     };
     use crate::db::models::ConversationStateData;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1097,5 +1138,66 @@ mod tests {
             .position(|item| item.id == item_b.id)
             .expect("second item present");
         assert!(item_position_b < item_position_a);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL and a reachable PostgreSQL instance"]
+    async fn record_delivery_status_ignores_out_of_order_updates() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .expect("TEST_DATABASE_URL must be set for ignored DB tests");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect(&database_url)
+            .await
+            .expect("db connection");
+        sqlx::migrate!().run(&pool).await.expect("migrations");
+
+        let wa_message_id = format!("wamid-test-{}", unique_suffix());
+        record_message_event(
+            &pool,
+            "573001234567",
+            "client",
+            "bot",
+            "text",
+            Some("hola"),
+            None,
+            Some(&wa_message_id),
+        )
+        .await
+        .expect("seed message_events row");
+
+        let affected = record_delivery_status(&pool, &wa_message_id, "delivered", None, None)
+            .await
+            .expect("record delivered");
+        assert_eq!(affected, 1);
+
+        // Un "sent" tardío (llegó fuera de orden) no debe pisar "delivered".
+        let affected = record_delivery_status(&pool, &wa_message_id, "sent", None, None)
+            .await
+            .expect("record stale sent");
+        assert_eq!(affected, 0);
+
+        let affected = record_delivery_status(
+            &pool,
+            &wa_message_id,
+            "failed",
+            Some(131047),
+            Some("Re-engagement message"),
+        )
+        .await
+        .expect("record failed");
+        assert_eq!(affected, 1);
+
+        let row: (Option<String>, Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT delivery_status, delivery_error_code, delivery_error_title \
+             FROM message_events WHERE wa_message_id = $1",
+        )
+        .bind(&wa_message_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch row");
+
+        assert_eq!(row.0.as_deref(), Some("failed"));
+        assert_eq!(row.1, Some(131047));
+        assert_eq!(row.2.as_deref(), Some("Re-engagement message"));
     }
 }

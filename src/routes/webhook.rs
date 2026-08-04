@@ -11,6 +11,7 @@ use sha2::Sha256;
 
 use crate::{
     bot::state_machine::{extract_input, UserInput},
+    db::queries::record_delivery_status,
     engine::{mark_as_read_if_supported, process_advisor_input, process_customer_input},
     logging::{mask_phone, preview_text},
     whatsapp::types::{Contact, WebhookPayload},
@@ -119,16 +120,50 @@ async fn process_webhook(state: AppState, body: Bytes) -> Result<(), Box<dyn Err
             tracing::debug!("webhook without incoming messages or statuses ignored");
         } else {
             for status in status_events {
-                tracing::debug!(
-                    recipient = %status
-                        .recipient_id
-                        .as_deref()
-                        .map(mask_phone)
-                        .unwrap_or_else(|| "<unknown>".to_string()),
-                    status = %status.status,
-                    message_id = %status.id.unwrap_or_else(|| "<unknown>".to_string()),
-                    "received whatsapp status update"
-                );
+                let recipient = status
+                    .recipient_id
+                    .as_deref()
+                    .map(mask_phone)
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                let error = status.errors.first();
+
+                if let Some(id) = status.id.as_deref() {
+                    match record_delivery_status(
+                        &state.pool,
+                        id,
+                        &status.status,
+                        error.and_then(|e| e.code),
+                        error.and_then(|e| e.title.as_deref()),
+                    )
+                    .await
+                    {
+                        Ok(0) => tracing::debug!(
+                            recipient = %recipient,
+                            status = %status.status,
+                            message_id = %id,
+                            "status update for a message not in message_events (ignored)"
+                        ),
+                        Ok(_) => tracing::info!(
+                            recipient = %recipient,
+                            status = %status.status,
+                            message_id = %id,
+                            error_code = ?error.and_then(|e| e.code),
+                            error_title = ?error.and_then(|e| e.title.as_deref()),
+                            "recorded whatsapp delivery status"
+                        ),
+                        Err(err) => tracing::warn!(
+                            error = %err,
+                            message_id = %id,
+                            "failed to record whatsapp delivery status"
+                        ),
+                    }
+                } else {
+                    tracing::debug!(
+                        recipient = %recipient,
+                        status = %status.status,
+                        "received whatsapp status update without a message id"
+                    );
+                }
             }
         }
         return Ok(());

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-08-04
+
+### Added
+- **Se guarda el estado real de entrega de WhatsApp (migración `018`).** Meta manda un webhook de
+  "statuses" separado del mensaje mismo (`sent`/`delivered`/`read`/`failed`, con motivo cuando
+  falla) que hasta ahora se descartaba — solo `tracing::debug!`, que no queda en producción. Nuevo
+  `db::queries::record_delivery_status` lo enlaza por `wa_message_id` contra la fila ya escrita en
+  `message_events`; motivado por dos casos reales seguidos (573136356011 y 573003977420,
+  2026-08-03/04) donde la API aceptó el envío con un `wa_message_id` válido pero el cliente juró no
+  haber recibido nada — sin esto no había forma de saber si Meta lo entregó o lo perdió después de
+  aceptarlo. Orden monótono (`sent < delivered < read < failed`): un webhook fuera de orden no pisa
+  un estado más nuevo. `StatusEvent` (`whatsapp/types.rs`) ahora también captura `errors` (código +
+  título, p. ej. 131047 "Re-engagement message").
+
 ## [1.20.0] - 2026-08-04
 
 ### Added

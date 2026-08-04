@@ -95,6 +95,18 @@ pub struct StatusEvent {
     pub status: String,
     #[serde(default)]
     pub recipient_id: Option<String>,
+    /// Solo presente cuando `status == "failed"` — Meta manda el motivo acá
+    /// (p. ej. 131047, ventana de 24h cerrada). Ver `record_delivery_status`.
+    #[serde(default)]
+    pub errors: Vec<StatusError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StatusError {
+    #[serde(default)]
+    pub code: Option<i64>,
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -473,6 +485,7 @@ mod tests {
                             id: Some("wamid-1".to_string()),
                             status: "delivered".to_string(),
                             recipient_id: Some("573001111111".to_string()),
+                            errors: Vec::new(),
                         }]),
                     },
                 }],
@@ -484,6 +497,42 @@ mod tests {
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].status, "delivered");
         assert_eq!(statuses[0].recipient_id.as_deref(), Some("573001111111"));
+    }
+
+    #[test]
+    fn parses_failed_status_with_error_details() {
+        // Forma real del webhook de Meta cuando un envio fuera de la ventana
+        // de 24h falla despues de haber sido aceptado por la API (motivo por
+        // el que se agrego `errors` a StatusEvent, ver record_delivery_status).
+        let raw = r#"
+        {
+          "entry": [{
+            "changes": [{
+              "value": {
+                "statuses": [{
+                  "id": "wamid-failed",
+                  "status": "failed",
+                  "recipient_id": "573001111111",
+                  "errors": [{
+                    "code": 131047,
+                    "title": "Re-engagement message"
+                  }]
+                }]
+              }
+            }]
+          }]
+        }
+        "#;
+
+        let payload: WebhookPayload =
+            serde_json::from_str(raw).expect("meta status payload should deserialize");
+        let statuses = payload.status_events();
+
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].status, "failed");
+        assert_eq!(statuses[0].errors.len(), 1);
+        assert_eq!(statuses[0].errors[0].code, Some(131047));
+        assert_eq!(statuses[0].errors[0].title.as_deref(), Some("Re-engagement message"));
     }
 
     #[test]
