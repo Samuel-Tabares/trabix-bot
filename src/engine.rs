@@ -20,11 +20,12 @@ use crate::{
             expire_receipt_timer, expire_relay_timer, start_timer,
         },
     },
+    ai::memory::clear_messages,
     db::{
         models::{Conversation, ConversationStateData},
         queries::{
-            create_conversation, create_order, create_or_update_customer, create_or_update_referral_analytics, get_conversation, list_customer_addresses, replace_order_items,
-            reset_conversation, touch_customer_address, update_customer_data, update_customer_totals, update_last_message, update_order,
+            create_conversation, create_order, create_or_update_customer, create_or_update_referral_analytics, get_conversation, get_customer_notes, list_customer_addresses, replace_order_items,
+            reset_conversation, touch_customer_address, update_customer_data, update_customer_notes, update_customer_totals, update_last_message, update_order,
             update_order_delivery_cost, update_order_status, update_state, upsert_customer_address,
         },
     },
@@ -99,12 +100,14 @@ pub async fn process_customer_input(
 
     let (new_state, mut actions) = if should_use_agent(&current_state) {
         let saved_addresses = list_customer_addresses(&state.pool, &phone).await.unwrap_or_default();
+        let customer_notes = get_customer_notes(&state.pool, &phone).await.unwrap_or_default();
         match crate::ai::agent::run_customer_turn(
             &state,
             &mut context,
             &current_state,
             &input,
             &saved_addresses,
+            customer_notes.as_deref(),
         )
         .await
         {
@@ -450,12 +453,16 @@ pub async fn process_advisor_turn_for_case(
         let saved_addresses = list_customer_addresses(&state.pool, &target_phone)
             .await
             .unwrap_or_default();
+        let customer_notes = get_customer_notes(&state.pool, &target_phone)
+            .await
+            .unwrap_or_default();
         match crate::ai::agent::run_advisor_turn(
             &state,
             &mut context,
             &current_state,
             &input,
             &saved_addresses,
+            customer_notes.as_deref(),
         )
         .await
         {
@@ -1019,6 +1026,19 @@ pub async fn execute_actions(
             }
             BotAction::TouchCustomerAddress { id } => {
                 touch_customer_address(&state.pool, *id).await?;
+            }
+            BotAction::UpdateCustomerNotes {
+                phone_number_meta,
+                notes,
+            } => {
+                update_customer_notes(&state.pool, phone_number_meta, notes).await?;
+                tracing::info!(
+                    phone = %mask_phone(phone_number_meta),
+                    "updated customer notes"
+                );
+            }
+            BotAction::ClearAgentMemory { phone_number_meta } => {
+                clear_messages(&state.pool, phone_number_meta).await?;
             }
         }
     }

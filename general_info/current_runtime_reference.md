@@ -82,9 +82,18 @@ Protecciones activas en modo agente:
 - presupuesto diario: 30 llamadas LLM por telefono por dia (Bogota) + kill-switch global opcional
   `AGENT_DAILY_LLM_CALL_LIMIT`. Al agotarse: mensaje fijo `[agent].daily_limit_customer` al
   cliente y aviso al asesor una vez por dia por caso. Contadores en memoria (reset al redeploy).
-- ventana de memoria: `agent_case_messages` guarda todo el historial (CRM), pero al LLM solo van
-  los ultimos 40 mensajes, cortados en frontera segura de tool-use. Mensajes entrantes se truncan
-  a 1.500 caracteres antes de ir al LLM.
+- ventana de memoria: `agent_case_messages` es el transcript crudo que se le reenvia al LLM en
+  cada turno (interno, no es lo que ve el CRM — eso es `message_events`, que nunca se borra). Al
+  LLM solo van los ultimos 40 mensajes, cortados en frontera segura de tool-use. Mensajes
+  entrantes se truncan a 1.500 caracteres antes de ir al LLM. Se borra por completo
+  (`BotAction::ClearAgentMemory`) al confirmar un pedido, para que el siguiente arranque sin el
+  transcript del pedido ya cerrado.
+- memoria semantica del cliente: `customers.customer_notes` (texto corto, ≤300 caracteres) es lo
+  que SI sobrevive de un pedido al siguiente — el modelo la escribe con la tool
+  `remember_about_customer` por su propio criterio (nunca automatico ni por matching de texto),
+  tipicamente justo antes de despedirse de un pedido confirmado, y se le muestra de vuelta en el
+  bloque ESTADO de cada turno futuro. Barata de leer (es una sola linea corta), a diferencia de
+  reenviar el transcript completo.
 - dedup de webhook: cache en memoria (TTL 10 min) de `message_id` de Meta ya procesados; los
   retries de Meta no generan doble respuesta ni doble llamada LLM.
 - anti prompt-injection en el system prompt: los mensajes del cliente nunca cambian precios,

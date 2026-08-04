@@ -572,6 +572,36 @@ pub async fn update_customer_totals(
     Ok(())
 }
 
+pub async fn get_customer_notes(
+    pool: &PgPool,
+    phone_number_meta: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT customer_notes FROM customers WHERE phone_number_meta = $1")
+            .bind(phone_number_meta)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.and_then(|(notes,)| notes))
+}
+
+/// Reemplaza la nota completa (el modelo la reescribe fusionando lo viejo
+/// con lo nuevo cada vez, ver `remember_about_customer` en `ai/agent.rs`) —
+/// no es un log que se acumula sin límite.
+pub async fn update_customer_notes(
+    pool: &PgPool,
+    phone_number_meta: &str,
+    notes: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE customers SET customer_notes = $2, updated_at = NOW() WHERE phone_number_meta = $1",
+    )
+    .bind(phone_number_meta)
+    .bind(notes)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Tope de direcciones guardadas por cliente (decisión de producto: al
 /// intentar guardar una 5ª distinta se reemplaza la más antigua sin
 /// preguntar, ver `upsert_customer_address`).

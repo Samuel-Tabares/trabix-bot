@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-08-04
+
+### Added
+- **Memoria semántica del cliente (`customer_notes`, migración `017`).** Nueva tool
+  `remember_about_customer`: el modelo, por su propio criterio semántico (nunca por matching de
+  texto ni categorías fijas), guarda una nota corta y personalizada sobre un cliente — cómo le
+  gusta que le hablen, preferencias recurrentes — típicamente justo antes de despedirse de un
+  pedido confirmado. La nota se le muestra de vuelta en el bloque "ESTADO ACTUAL DEL CASO" de cada
+  turno futuro; cada llamada reemplaza la nota anterior completa (el modelo la reescribe
+  fusionando lo viejo con lo nuevo), no la acumula sin límite. Barata de leer (una sola línea
+  corta) frente a reenviar el transcript crudo completo.
+- **`ClearAgentMemory` conectado por fin.** `agent_case_messages` (el transcript crudo que se le
+  reenvía a Claude en cada turno, hasta ahora casi 40 mensajes de profundidad) se borra al
+  confirmar un pedido — `clear_messages()` existía desde antes pero nunca se llamaba desde ningún
+  lado, así que el historial crudo se acumulaba indefinidamente y cada pedido nuevo arrastraba
+  mensajes de pedidos ya cerrados semanas atrás, con costo de tokens de más. La memoria semántica
+  (`customer_notes`) es ahora lo único que sobrevive de una conversación a la siguiente — el
+  transcript crudo, no. Nota: esto es interno al LLM, no afecta el historial visible en `crm-app`
+  (`message_events`), que nunca se borra.
+
 ## [1.19.1] - 2026-08-04
 
 ### Fixed

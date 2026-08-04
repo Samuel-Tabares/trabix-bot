@@ -61,6 +61,8 @@ pub fn action_kind(action: &BotAction) -> &'static str {
         BotAction::UpdateCustomerAndAnalytics { .. } => "update_customer_and_analytics",
         BotAction::UpsertCustomerAddress { .. } => "upsert_customer_address",
         BotAction::TouchCustomerAddress { .. } => "touch_customer_address",
+        BotAction::UpdateCustomerNotes { .. } => "update_customer_notes",
+        BotAction::ClearAgentMemory { .. } => "clear_agent_memory",
         BotAction::NoOp => "no_op",
     }
 }
@@ -246,6 +248,22 @@ pub fn log_bot_action(action: &BotAction) {
             tracing::debug!(
                 action = "touch_customer_address",
                 id = *id,
+                "dispatching bot action"
+            );
+        }
+        BotAction::UpdateCustomerNotes {
+            phone_number_meta, ..
+        } => {
+            tracing::info!(
+                phone = %mask_phone(phone_number_meta),
+                action = "update_customer_notes",
+                "dispatching bot action"
+            );
+        }
+        BotAction::ClearAgentMemory { phone_number_meta } => {
+            tracing::info!(
+                phone = %mask_phone(phone_number_meta),
+                action = "clear_agent_memory",
                 "dispatching bot action"
             );
         }

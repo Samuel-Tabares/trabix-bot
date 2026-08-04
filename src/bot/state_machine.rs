@@ -412,6 +412,20 @@ pub enum BotAction {
     TouchCustomerAddress {
         id: i64,
     },
+    /// Memoria semántica del agente sobre el cliente (`customers.customer_notes`)
+    /// — ver tool `remember_about_customer` en `ai/agent.rs`. El modelo decide
+    /// libremente cuándo llamarla y qué escribir, no hay matching de texto.
+    UpdateCustomerNotes {
+        phone_number_meta: String,
+        notes: String,
+    },
+    /// Borra `agent_case_messages` (el transcript crudo que se le reenvía al
+    /// LLM) al confirmar un pedido — ver `confirm_order_bookkeeping`. La nota
+    /// semántica (`UpdateCustomerNotes`) es lo que sobrevive de una
+    /// conversación a la siguiente, no el transcript completo.
+    ClearAgentMemory {
+        phone_number_meta: String,
+    },
     NoOp,
 }
 
