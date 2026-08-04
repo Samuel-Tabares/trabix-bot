@@ -557,17 +557,21 @@ async fn degrade_agent_failure(
         "agent turn failed, degrading to fixed message"
     );
 
-    if turn_actor == "customer" {
-        let body = client_messages().agent.llm_failure_customer.clone();
-        if let Err(send_err) = send_text(state, customer_phone, &body).await {
-            tracing::error!(
-                phone = %mask_phone(customer_phone),
-                error = %send_err,
-                "failed to send LLM-failure fallback message to customer"
-            );
-        }
-        log_outbound_text(state, customer_phone, customer_phone, &body).await;
+    // El cliente recibe el mensaje genérico sin importar quién disparó el
+    // turno que falló: si fue el propio cliente o si fue el asesor
+    // (`replyAsAdvisor`) tratando de destrabar el caso. Antes esto solo
+    // corría para turn_actor == "customer", así que una falla durante un
+    // intento de respuesta del asesor dejaba al cliente sin ningún mensaje
+    // nuevo — contradice el comentario de esta función.
+    let body = client_messages().agent.llm_failure_customer.clone();
+    if let Err(send_err) = send_text(state, customer_phone, &body).await {
+        tracing::error!(
+            phone = %mask_phone(customer_phone),
+            error = %send_err,
+            "failed to send LLM-failure fallback message to customer"
+        );
     }
+    log_outbound_text(state, customer_phone, customer_phone, &body).await;
 
     let last_message = match input {
         UserInput::TextMessage(text) => {

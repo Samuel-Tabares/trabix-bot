@@ -3192,6 +3192,73 @@ mod tests {
     }
 
     #[test]
+    fn confirming_an_order_with_resolved_zone_saves_the_address() {
+        // Camino feliz: el cliente ya dio la dirección (set_customer_field) y
+        // la zona ya se resolvió (set_delivery_zone_armenia/nearby_town/
+        // national/manual), así que al confirmar el pedido debe emitirse
+        // UpsertCustomerAddress. Este caso NO estaba cubierto: `test_context()`
+        // deja pending_zone_* en None por defecto, y en producción no hay un
+        // solo pedido confirmado desde que `customer_addresses` se desplegó
+        // (2026-08-02) — por eso la tabla está vacía hoy. Este test verifica
+        // que el mecanismo en sí funciona, sin depender de un pedido real.
+        let mut context = test_context();
+        context.pending_zone_kind = Some("armenia".to_string());
+        context.pending_zone_value = Some("norte".to_string());
+        context.pending_zone_label = Some("Armenia - Norte".to_string());
+        context.delivery_cost = Some(6_000);
+
+        let (_, actions) = confirm_order_bookkeeping(&mut context);
+
+        let saved = actions
+            .iter()
+            .find_map(|action| match action {
+                BotAction::UpsertCustomerAddress {
+                    customer_phone_meta,
+                    address_text,
+                    zone_kind,
+                    zone_value,
+                    zone_label,
+                    delivery_cost_cop,
+                } => Some((
+                    customer_phone_meta.clone(),
+                    address_text.clone(),
+                    zone_kind.clone(),
+                    zone_value.clone(),
+                    zone_label.clone(),
+                    *delivery_cost_cop,
+                )),
+                _ => None,
+            })
+            .expect("UpsertCustomerAddress action must be present when address + zone are resolved");
+
+        assert_eq!(saved.0, "573001234567");
+        assert_eq!(saved.1, "Cra 15 #20-30 Armenia");
+        assert_eq!(saved.2, "armenia");
+        assert_eq!(saved.3.as_deref(), Some("norte"));
+        assert_eq!(saved.4, "Armenia - Norte");
+        assert_eq!(saved.5, 6_000);
+    }
+
+    #[test]
+    fn confirming_an_order_without_a_resolved_zone_skips_the_address_save() {
+        // Si delivery_address está pero la zona nunca se resolvió (el LLM no
+        // llamó la tool de zona en este turno), se omite el guardado en vez
+        // de escribir un registro incompleto — comportamiento documentado en
+        // `confirm_order_bookkeeping`, ahora con test explícito.
+        let mut context = test_context();
+        assert!(context.pending_zone_kind.is_none());
+
+        let (_, actions) = confirm_order_bookkeeping(&mut context);
+
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, BotAction::UpsertCustomerAddress { .. })),
+            "must not save an incomplete address when the zone was never resolved"
+        );
+    }
+
+    #[test]
     fn reconfirming_a_modified_order_sends_only_the_analytics_delta() {
         // Pedido inmediato con domicilio conocido, ya confirmado una vez a
         // $40.000 (snapshot). Se reabre, se agrega producto y se re-cotiza a

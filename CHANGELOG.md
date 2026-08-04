@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-08-04
+
+### Fixed
+- **`degrade_agent_failure` dejaba al cliente en silencio cuando la falla ocurría en un turno de
+  asesor.** El mensaje fijo `[agent].llm_failure_customer` solo se mandaba al cliente cuando
+  `turn_actor == "customer"` — si el asesor intentaba destrabar un caso `needs_human` desde
+  `crm-app` (`replyAsAdvisor`) y esa misma llamada al agente fallaba (timeout/5xx/saldo de
+  Anthropic), el cliente no recibía nada, solo el asesor volvía a ver el aviso de error. Esto
+  contradecía el comentario de la propia función ("el cliente NUNCA queda en silencio"). Caso real
+  en producción: `573136356011` (2026-08-03) — el bot falló dos veces por falta de tokens, y el
+  intento de respuesta manual del asesor ("tranqui") vía "Responder al bot" también falló sin que
+  el cliente se enterara. `src/engine.rs`: el mensaje genérico ahora se manda al cliente sin
+  importar qué turno disparó la falla. Test de regresión:
+  `tests/agent_degradation.rs::advisor_turn_failure_still_notifies_the_customer`.
+
+### Tests
+- `src/ai/agent.rs`: dos tests nuevos para `confirm_order_bookkeeping` — uno cubre el camino feliz
+  (dirección + zona resueltas → se emite `UpsertCustomerAddress`) y otro confirma que se omite el
+  guardado si la zona nunca se resolvió. `customer_addresses` (máx. 4 direcciones, migración `015`)
+  lleva 0 filas en producción desde que se desplegó (2026-08-02) — no por un bug encontrado, sino
+  porque no hay un solo pedido confirmado desde esa fecha (el último es del 2026-07-22, sin probar
+  aún el flujo end-to-end tras los últimos commits). Estos tests verifican que el mecanismo en sí
+  funciona sin depender de un pedido real.
+
 ## [1.19.0] - 2026-08-02
 
 ### Added
