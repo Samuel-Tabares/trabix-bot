@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.21.1] - 2026-08-11
+
+### Fixed
+- **El corte de Fase 4 se tragaba las respuestas del bot cuando el propio `ADVISOR_PHONE` se
+  autoprobaba como cliente.** `send_via_transport` descartaba cualquier envío a `ADVISOR_PHONE`
+  con `ADVISOR_WHATSAPP_ENABLED=false` sin distinguir "notificación al asesor sobre el caso de
+  otro cliente" (que sí debe descartarse) de "el bot le está respondiendo a esa misma
+  conversación" (que debe salir siempre) — ambos casos comparaban solo `to == advisor_phone`.
+  Encontrado en vivo: Samuel escribió "Hola" desde su propio número (`ADVISOR_PHONE`) para probar
+  el flujo de cliente y el bot se quedó en silencio, con la respuesta atrapada en `message_events`
+  bajo `channel='advisor'` (visible como mensaje interno en crm-app/crm-web, no como respuesta al
+  cliente). `channel_for_recipient` y `send_via_transport` ahora reciben también `case_phone` (la
+  conversación a la que pertenece el mensaje) y solo tratan el mensaje como tráfico del canal de
+  control del asesor cuando `case_phone != to` — es decir, cuando de verdad se le está avisando al
+  asesor sobre el caso de otro número.
+
 ## [1.21.0] - 2026-08-04
 
 ### Added

@@ -85,7 +85,7 @@ pub async fn process_customer_input(
     // el LLM (ver docs/canary-fixes-2026-07-19.md item 3).
     if should_use_agent(&current_state) && !context.has_greeted {
         context.has_greeted = true;
-        send_text(&state, &phone, &client_messages().agent.welcome).await?;
+        send_text(&state, &phone, &phone, &client_messages().agent.welcome).await?;
         log_outbound_text(&state, &phone, &phone, &client_messages().agent.welcome).await;
         update_state(
             &state.pool,
@@ -270,8 +270,15 @@ fn describe_outbound_action(action: &BotAction) -> Option<OutboundDescription> {
     }
 }
 
-fn channel_for_recipient(to: &str, advisor_phone: &str) -> &'static str {
-    if to == advisor_phone {
+// `case_phone` es la conversación a la que pertenece el mensaje; `to` es el
+// destinatario real. Solo es tráfico del canal de control del asesor cuando
+// se le notifica sobre el caso de OTRO número (`case_phone != to`). Cuando
+// coinciden, el bot le está respondiendo a esa conversación como tal —
+// incluido el caso de autopruebas donde `ADVISOR_PHONE` juega de cliente
+// (`ADVISOR_WHATSAPP_ENABLED=false`), que de otra forma se etiquetaba como
+// asesor solo por compartir número.
+fn channel_for_recipient(case_phone: &str, to: &str, advisor_phone: &str) -> &'static str {
+    if to == advisor_phone && case_phone != to {
         CHANNEL_ADVISOR
     } else {
         CHANNEL_CLIENT
@@ -304,7 +311,7 @@ async fn log_outbound_event(state: &AppState, case_phone: &str, action: &BotActi
     let Some((content_type, body, payload)) = describe_outbound_action(action) else {
         return;
     };
-    let channel = channel_for_recipient(to, &state.config.advisor_phone);
+    let channel = channel_for_recipient(case_phone, to, &state.config.advisor_phone);
     if let Err(err) = crate::db::queries::record_message_event(
         &state.pool,
         case_phone,
@@ -346,7 +353,7 @@ async fn log_inbound_event(
 }
 
 async fn log_outbound_text(state: &AppState, case_phone: &str, to: &str, body: &str) {
-    let channel = channel_for_recipient(to, &state.config.advisor_phone);
+    let channel = channel_for_recipient(case_phone, to, &state.config.advisor_phone);
     if let Err(err) = crate::db::queries::record_message_event(
         &state.pool,
         case_phone,
@@ -387,6 +394,7 @@ pub async fn process_advisor_input(
         );
         send_text(
             &state,
+            &advisor_phone,
             &advisor_phone,
             "Primero usa un botón de un caso pendiente para indicar a qué cliente responder.",
         )
@@ -439,6 +447,7 @@ pub async fn process_advisor_turn_for_case(
         clear_advisor_session(&state, &advisor_phone).await?;
         send_text(
             &state,
+            &advisor_phone,
             &advisor_phone,
             "Ese caso ya no está disponible. Usa un botón de un caso pendiente.",
         )
@@ -571,7 +580,7 @@ async fn degrade_agent_failure(
     // intento de respuesta del asesor dejaba al cliente sin ningún mensaje
     // nuevo — contradice el comentario de esta función.
     let body = client_messages().agent.llm_failure_customer.clone();
-    if let Err(send_err) = send_text(state, customer_phone, &body).await {
+    if let Err(send_err) = send_text(state, customer_phone, customer_phone, &body).await {
         tracing::error!(
             phone = %mask_phone(customer_phone),
             error = %send_err,
@@ -598,7 +607,14 @@ async fn degrade_agent_failure(
         last_message,
         current_state.as_storage_key(),
     );
-    if let Err(send_err) = send_text(state, &state.config.advisor_phone, &advisor_body).await {
+    if let Err(send_err) = send_text(
+        state,
+        customer_phone,
+        &state.config.advisor_phone,
+        &advisor_body,
+    )
+    .await
+    {
         tracing::error!(
             phone = %mask_phone(customer_phone),
             error = %send_err,
@@ -622,10 +638,11 @@ pub async fn mark_as_read_if_supported(
 
 pub async fn send_text(
     state: &AppState,
+    case_phone: &str,
     to: &str,
     body: &str,
 ) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
-    send_via_transport(state, to, "text", Some(body.to_string()), json!({})).await
+    send_via_transport(state, case_phone, to, "text", Some(body.to_string()), json!({})).await
 }
 
 pub async fn send_timer_actions(
@@ -638,11 +655,12 @@ pub async fn send_timer_actions(
         log_outbound_event(state, case_phone, action).await;
         match action {
             BotAction::SendText { to, body } => {
-                send_text(state, to, body).await?;
+                send_text(state, case_phone, to, body).await?;
             }
             BotAction::SendButtons { to, body, buttons } => {
                 send_via_transport(
                     state,
+                    case_phone,
                     to,
                     "buttons",
                     Some(body.clone()),
@@ -658,6 +676,7 @@ pub async fn send_timer_actions(
             } => {
                 send_via_transport(
                     state,
+                    case_phone,
                     to,
                     "list",
                     Some(body.clone()),
@@ -673,10 +692,10 @@ pub async fn send_timer_actions(
                 media_id,
                 caption,
             } => {
-                send_image(state, to, media_id, caption.clone()).await?;
+                send_image(state, case_phone, to, media_id, caption.clone()).await?;
             }
             BotAction::SendAssetImage { to, asset, caption } => {
-                send_asset_image(state, to, asset.clone(), caption.clone()).await?;
+                send_asset_image(state, case_phone, to, asset.clone(), caption.clone()).await?;
             }
             BotAction::NoOp => {}
             _ => {
@@ -704,7 +723,7 @@ pub async fn execute_actions(
         log_outbound_event(state, &case_phone, action).await;
         match action {
             BotAction::SendText { to, body } => {
-                let message_id = send_text(state, to, body).await?;
+                let message_id = send_text(state, &case_phone, to, body).await?;
                 record_advisor_reply_thread_if_needed(
                     state,
                     to,
@@ -717,6 +736,7 @@ pub async fn execute_actions(
             BotAction::SendButtons { to, body, buttons } => {
                 let message_id = send_via_transport(
                     state,
+                    &case_phone,
                     to,
                     "buttons",
                     Some(body.clone()),
@@ -740,6 +760,7 @@ pub async fn execute_actions(
             } => {
                 let message_id = send_via_transport(
                     state,
+                    &case_phone,
                     to,
                     "list",
                     Some(body.clone()),
@@ -763,7 +784,7 @@ pub async fn execute_actions(
                 media_id,
                 caption,
             } => {
-                let message_id = send_image(state, to, media_id, caption.clone()).await?;
+                let message_id = send_image(state, &case_phone, to, media_id, caption.clone()).await?;
                 record_advisor_reply_thread_if_needed(
                     state,
                     to,
@@ -775,7 +796,7 @@ pub async fn execute_actions(
             }
             BotAction::SendAssetImage { to, asset, caption } => {
                 let message_id =
-                    send_asset_image(state, to, asset.clone(), caption.clone()).await?;
+                    send_asset_image(state, &case_phone, to, asset.clone(), caption.clone()).await?;
                 record_advisor_reply_thread_if_needed(
                     state,
                     to,
@@ -796,7 +817,7 @@ pub async fn execute_actions(
                 } else {
                     configured
                 };
-                let message_id = send_text(state, to, body).await?;
+                let message_id = send_text(state, &case_phone, to, body).await?;
                 record_advisor_reply_thread_if_needed(
                     state,
                     to,
@@ -925,7 +946,7 @@ pub async fn execute_actions(
                 bind_advisor_session(state, advisor_phone, None).await?;
             }
             BotAction::RelayMessage { to, body, .. } => {
-                let message_id = send_text(state, to, body).await?;
+                let message_id = send_text(state, &case_phone, to, body).await?;
                 record_advisor_reply_thread_if_needed(
                     state,
                     to,
@@ -1329,18 +1350,28 @@ pub async fn clear_advisor_session(
 
 async fn send_via_transport(
     state: &AppState,
+    case_phone: &str,
     to: &str,
     message_kind: &str,
     body: Option<String>,
     payload: serde_json::Value,
 ) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
     // Corte de Fase 4: con el canal directo apagado, nada dirigido al asesor
-    // sale a Meta. Se descarta acá, en el único punto por el que pasa TODO lo
-    // saliente, y a propósito DESPUÉS de `log_outbound_event` — el evento ya
-    // quedó en `message_events` con `channel='advisor'`, que es de donde
-    // `crm-app` arma la cola de casos. El asesor no recibe WhatsApp; la
-    // información no se pierde.
-    if !state.config.advisor_whatsapp_enabled && to == state.config.advisor_phone {
+    // SOBRE EL CASO DE OTRO NÚMERO sale a Meta. Se descarta acá, en el único
+    // punto por el que pasa TODO lo saliente, y a propósito DESPUÉS de
+    // `log_outbound_event` — el evento ya quedó en `message_events` con
+    // `channel='advisor'`, que es de donde `crm-app` arma la cola de casos.
+    // El asesor no recibe WhatsApp; la información no se pierde.
+    //
+    // `case_phone != to` es lo que distingue "notificación al asesor sobre
+    // el caso de un cliente" de "respuesta dentro de la propia conversación
+    // de `to`" — esta última debe salir siempre, incluso cuando `to` es
+    // `ADVISOR_PHONE` jugando de cliente en autopruebas
+    // (`ADVISOR_WHATSAPP_ENABLED=false`).
+    if !state.config.advisor_whatsapp_enabled
+        && to == state.config.advisor_phone
+        && case_phone != to
+    {
         tracing::debug!(
             advisor_phone = %mask_phone(to),
             message_kind,
@@ -1387,6 +1418,7 @@ async fn send_via_transport(
 
 async fn send_image(
     state: &AppState,
+    case_phone: &str,
     to: &str,
     media_id: &str,
     caption: Option<String>,
@@ -1394,6 +1426,7 @@ async fn send_image(
     let payload_caption = caption.clone();
     send_via_transport(
         state,
+        case_phone,
         to,
         "image",
         caption,
@@ -1404,6 +1437,7 @@ async fn send_image(
 
 async fn send_asset_image(
     state: &AppState,
+    case_phone: &str,
     to: &str,
     asset: ImageAsset,
     caption: Option<String>,
@@ -1412,6 +1446,7 @@ async fn send_asset_image(
     let media_id = &state.config.menu_image_media_id;
     send_via_transport(
         state,
+        case_phone,
         to,
         "image",
         caption.clone(),
@@ -1612,13 +1647,25 @@ mod tests {
 
     #[test]
     fn channel_classification_splits_client_and_advisor_lanes() {
+        let advisor_phone = "573009999999";
+        let customer_phone = "573001111111";
+
+        // Bot replying inside a customer's own conversation.
         assert_eq!(
-            super::channel_for_recipient("573001111111", "573009999999"),
+            super::channel_for_recipient(customer_phone, customer_phone, advisor_phone),
             super::CHANNEL_CLIENT
         );
+        // Bot notifying the advisor about a different customer's case.
         assert_eq!(
-            super::channel_for_recipient("573009999999", "573009999999"),
+            super::channel_for_recipient(customer_phone, advisor_phone, advisor_phone),
             super::CHANNEL_ADVISOR
+        );
+        // Advisor self-testing as an ordinary customer from their own phone
+        // (ADVISOR_WHATSAPP_ENABLED=false): `to == advisor_phone` alone must
+        // not mislabel this as advisor-channel traffic.
+        assert_eq!(
+            super::channel_for_recipient(advisor_phone, advisor_phone, advisor_phone),
+            super::CHANNEL_CLIENT
         );
     }
 
