@@ -3,7 +3,7 @@
 > Léeme al iniciar sesión, junto con `CLAUDE.md`. Este archivo dice **qué sigue y en qué orden**;
 > `CLAUDE.md` dice **cómo está construido**. Actualizar este archivo cuando algo se complete.
 >
-> Última revisión: 2026-08-02.
+> Última revisión: 2026-08-12.
 
 ## Contexto de negocio mínimo (para no tener que salir del repo)
 
@@ -86,6 +86,56 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
   `POST /internal/referral-codes/:code/boost`), mismo `X-Internal-Token` que
   `/internal/advisor/send` — el bot sigue siendo el único escritor de la tabla. Del lado `crm-app`
   falta la sección "Embajadores" que llama a estos endpoints (ver su propio ROADMAP).
+- **Retiro del canal WhatsApp directo del asesor, ejecutado** (v1.22.0, 2026-08-02):
+  `ADVISOR_WHATSAPP_ENABLED` eliminado del código, ya no queda ninguna condición que trate
+  `ADVISOR_PHONE` como especial en el enrutamiento inbound. Nuevo `BotAction::NotifyAdvisor` escribe
+  directo a `message_events` (carril `advisor`/`actor='bot'`) sin tocar Meta. `crm-app` es ahora la
+  única superficie de trabajo del asesor. **Deliberadamente sin tocar**: `src/bot/states/advisor.rs`
+  (~2.100 líneas) y `relay.rs` (~270), el FSM determinístico legado — sigue siendo código vivo para
+  ~15 estados de hand-off no agent-owned. Esa limpieza sigue siendo la sección 2 de abajo.
+- **Confirmación de pago manual, cambio de regla de negocio ejecutado** (v1.23.1, 2026-08-12): subir
+  el comprobante YA NO confirma el pedido automáticamente. El pedido queda en `waiting_receipt` hasta
+  que el asesor verifica la plata en el banco y lo confirma desde `crm-app` (nueva tool
+  `confirm_payment_received`, solo en turno de asesor). El despacho (`order_dispatch`) sigue siendo
+  un paso aparte, sin cambios.
+- **Proxy de medios de WhatsApp para `crm-app`** (v1.23.1): `GET /internal/media/:media_id` — el bot
+  resuelve y descarga el adjunto desde la Graph API y lo sirve con el `Content-Type` correcto, porque
+  `crm-app` no tiene credenciales de Meta propias. `crm-app` ya renderiza `<img>` real en vez de la
+  etiqueta "📎 Imagen".
+- **E2E round 2 (2026-08-12): 3 bugs reales encontrados y corregidos en vivo, commiteados
+  localmente, sin push todavía** (ver `~/.claude/plans/e2e-advisor-push-test-round2.md` para el
+  detalle completo de la sesión):
+  - **v1.23.2** — el saludo fijo de primer contacto (`engine.rs`, ahorra una llamada al LLM) dejaba
+    el primer mensaje del cliente ausente de `agent_case_messages` (memoria propia del LLM), aunque
+    sí quedaba en `message_events`. Si el cliente ya pedía algo en ese primer mensaje, el modelo
+    genuinamente no lo veía en el siguiente turno. Nuevo `ai::agent::record_greeting_turn` persiste
+    ambos lados de ese turno antes de retornar.
+  - **v1.23.3** — regresión real de v1.23.1: con la confirmación manual, el pedido se queda a
+    propósito en `wait_receipt` esperando verificación — pero el sweep periódico que recupera timers
+    tras un restart/tick (`timer_recovery` en `src/bot/timers.rs`) no sabía que el timer en memoria ya
+    se había cancelado al llegar la imagen, y volvía a armar un timer fantasma de 10 minutos. Al
+    cliente le llegó un falso "no recibimos el comprobante" 10 minutos después de haberlo mandado.
+    Corregido: el sweep y el boot-restore ahora también exigen `receipt_media_id.is_none()`.
+  - **v1.23.4** — hallazgo colateral, no relacionado al motor: una edición manual de
+    `config/messages.toml` esa misma mañana (commit `c783cb1`) movió `transfer_payment_text` fuera de
+    la tabla `[checkout]` por accidente; TOML lo re-escopeó bajo `[timers_customer]`. Como ese campo
+    es requerido (no `Option`), habría tumbado el bot completo en el próximo deploy — nunca llegó a
+    producción porque ese commit nunca se hizo push. Detectado por 74 tests fallando en
+    `cargo test`. Solo se corrigió la ubicación del campo.
+  - **Resultado del test E2E**: pasos 1–4 (escalamiento a `needs_human`, cotización desde `crm-app`,
+    confirmación manual de pago, despacho) verificados end-to-end con datos frescos tras el fix de
+    cada bug — todos correctos. Paso 5 (toma de control humana + "Devolver al bot") confirmado por
+    Samuel vía uso general previo, no vía una traza fresca de esta ronda específica (no hay eventos
+    de `human_takeover_until` en este conversation_id posteriores al despacho).
+  - **Pendiente de decisión de Samuel**: hacer push (dispara auto-deploy en Railway) de los 3 commits
+    de fix (`297625f`, `9817504`, `51e19f4`) — todavía viven solo en `master` local.
+  - **Feedback de producto, no bloqueante**: Samuel pidió que los mensajes internos que sí requieren
+    su acción (p. ej. "¿cuál es el costo de envío?", "confirma el pago") se distingan en el
+    `/pendientes` de `crm-app` de los que son solo informativos. Hoy no existe ninguna señal
+    determinística para esa distinción — `needs_human` es un flag derivado de SQL (última fila del
+    asesor en el carril `advisor` es más reciente que la última respuesta del asesor), y
+    `message_advisor` es texto libre del LLM sin tipo/tag. Requeriría que el bot etiquetara la tool
+    con algo como `requires_action: bool` al escribirla. Ver ROADMAP de `crm-app` para el seguimiento.
 
 ---
 
@@ -115,27 +165,16 @@ Detalle completo: `../docs/PENDIENTE_capi_meta.md`.
 
 ---
 
-### 2. Limpieza del motor determinístico — decisión tomada, ejecución en dos partes
+### 2. Limpieza del motor determinístico — Fase 1 ejecutada, queda la función-por-función
 
-**Decisión de Samuel (2026-07-31):** el bot deja de mandarle WhatsApp al asesor; `crm-app` pasa a
-ser la única superficie de trabajo del asesor.
+**Decisión de Samuel (2026-07-31), ejecutada (v1.22.0, 2026-08-02):** el bot ya no le manda
+WhatsApp al asesor; `crm-app` es la única superficie de trabajo del asesor. `ADVISOR_WHATSAPP_ENABLED`
+salió del código, `crm-app` está desplegada (Railway, deploy manual `railway up`, no git-connected)
+y probada punta a punta en producción varias veces, incluyendo la ronda de test E2E del 2026-08-12
+(ver "Ya shippeado" arriba). Esto ya no es un bloqueo — lo que sigue es la limpieza de código muerto
+de abajo, que puede avanzar en cualquier momento sin depender de nada externo.
 
-**Bloqueada de verdad, pero ya con el primer eslabón puesto:** el lado bot del mecanismo existe
-desde v1.11.0 (`POST /internal/advisor/send`, ver arriba). Lo que sigue faltando antes de tocar
-`src/bot/states/advisor.rs` (~2.100 líneas) o `relay.rs` (~268) es que `crm-app` esté **desplegada**
-y que `crm-app/src/server/inbox/send.ts` llame de verdad a ese endpoint, probado punta a punta en
-producción — si no, el asesor se queda sin forma de responderle al cliente. Ese trabajo es en el
-repo `crm-app`, no aquí. Ver `../crm-app/ROADMAP.md`.
-
-**Resuelto (v1.15.0, Fase 2):** los dos comportamientos que le faltaban al endpoint interno —
-(a) silenciar al bot mientras un humano tiene el caso y (b) pausar el timer de inactividad en esa
-situación — ya están shippeados vía `conversations.human_takeover_until`. Ver "Ya shippeado" arriba
-y `docs/internal_advisor_send.md`. Sigue pendiente el cutover en sí (los dos caminos vivos,
-monitorear, después cortar) — eso sigue bloqueado en que `crm-app` termine de probar el envío
-saliente punta a punta, no en esto.
-
-**Lo que se puede seguir sacando en este repo sin esperar esa decisión** (borrado ya empezó esta
-sesión, ver "Ya shippeado" arriba, pero queda trabajo real): hallazgo clave de esta sesión — el plan
+**Lo que queda, sin bloqueo externo**: hallazgo clave de la sesión que lo investigó — el plan
 original ("borrar por archivo si `src/ai/` no lo importa") **estaba mal**: `transition()` sigue
 siendo código vivo hoy para ~15 estados de hand-off (`WaitAdvisorResponse`, `RelayMode`,
 `SelectReferralOption`, etc. — lista completa en el doc de abajo), y varias funciones `*_actions` de
