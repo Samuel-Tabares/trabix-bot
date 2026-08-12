@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.2] - 2026-08-12
+
+### Fixed
+- **El primer mensaje de un cliente nuevo se perdía de la memoria del agente si ya venía con un
+  pedido armado.** El saludo fijo de primer contacto (`engine.rs`, motor agente) responde sin pasar
+  por el LLM para ahorrar una llamada — pero eso dejaba ese mensaje ausente de
+  `agent_case_messages` (memoria propia del modelo), aunque sí quedaba en `message_events` (traza
+  visible en `crm-app`). Encontrado en vivo: un cliente escribió el pedido completo (dirección,
+  cantidad, sabor) en su primer mensaje, el bot respondió con el saludo genérico ignorándolo, y
+  cuando el cliente dijo "ya te dije" el modelo contestó "no veo ningún mensaje anterior tuyo" —
+  cierto desde su propia memoria, pero confuso para el cliente. Nuevo
+  `ai::agent::record_greeting_turn` persiste ambos lados de ese turno (lo que pidió el cliente + el
+  saludo fijo) antes de retornar, para que el siguiente turno real del LLM sí lo tenga presente.
+
 ## [1.23.1] - 2026-08-12
 
 ### Added

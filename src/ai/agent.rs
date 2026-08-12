@@ -601,6 +601,36 @@ fn try_handle_receipt_shortcut(
     Some((ConversationState::WaitReceipt, actions))
 }
 
+/// El primer contacto de un cliente nuevo se responde con el saludo fijo de
+/// `engine.rs` sin pasar por `run_case_turn` (ahorra una llamada al LLM), lo
+/// que dejaba ese mensaje ausente de `agent_case_messages`: si el cliente ya
+/// pidió algo en ese primer mensaje y luego pregunta "¿ya te dije?", el
+/// modelo genuinamente no lo encuentra en su propia memoria. Este helper
+/// deja ambos lados del turno (lo que dijo el cliente + el saludo fijo) en
+/// la memoria para que el siguiente turno real sí lo vea.
+pub(crate) async fn record_greeting_turn(
+    pool: &sqlx::PgPool,
+    phone: &str,
+    input: &UserInput,
+    greeting_text: &str,
+) -> Result<(), sqlx::Error> {
+    let messages = vec![
+        Message {
+            role: "user".to_string(),
+            content: vec![ContentBlock::Text {
+                text: format_inbound_message(Actor::Customer, input),
+            }],
+        },
+        Message {
+            role: "assistant".to_string(),
+            content: vec![ContentBlock::Text {
+                text: greeting_text.to_string(),
+            }],
+        },
+    ];
+    memory::save_messages(pool, phone, &messages).await
+}
+
 fn format_inbound_message(actor: Actor, input: &UserInput) -> String {
     let who = match actor {
         Actor::Customer => "CLIENTE",

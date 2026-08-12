@@ -82,11 +82,20 @@ pub async fn process_customer_input(
 
     // Primer contacto en motor agente: se responde con un saludo de bienvenida
     // FIJO (sin gastar una llamada al LLM). De ahí en adelante todo lo maneja
-    // el LLM (ver docs/canary-fixes-2026-07-19.md item 3).
+    // el LLM (ver docs/canary-fixes-2026-07-19.md item 3). El mensaje del
+    // cliente igual se registra en la memoria del agente (`agent_case_messages`)
+    // aunque este turno no pase por `run_case_turn`, para que si ya pidió algo
+    // en ese primer mensaje, el siguiente turno real lo tenga presente.
     if should_use_agent(&current_state) && !context.has_greeted {
         context.has_greeted = true;
         send_text(&state, &phone, &phone, &client_messages().agent.welcome).await?;
         log_outbound_text(&state, &phone, &phone, &client_messages().agent.welcome).await;
+        if let Err(err) =
+            crate::ai::agent::record_greeting_turn(&state.pool, &phone, &input, &client_messages().agent.welcome)
+                .await
+        {
+            tracing::warn!(phone = %mask_phone(&phone), error = %err, "no se pudo registrar el primer mensaje en la memoria del agente");
+        }
         update_state(
             &state.pool,
             &phone,
