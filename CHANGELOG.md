@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.10] - 2026-08-12
+
+### Removed
+- **`src/bot/states/customer_data.rs`: deleted `handle_confirm_customer_data`/
+  `handle_select_customer_data_field`/`handle_edit_customer_name`/`handle_edit_customer_phone`/
+  `handle_edit_customer_address`** (dead FSM handlers) plus `edit_customer_name_actions`/
+  `edit_customer_phone_actions`/`name_prompt`/`phone_prompt`/`name_non_text_retry`/
+  `phone_non_text_retry`/`selection_id`/`retry_actions`, which only they used. `next_order_data_state`,
+  `start_checkout_review`, `next_contact_advisor_state`, `confirm_customer_data_actions`,
+  `select_customer_data_field_actions`, `edit_customer_address_actions`, and `enter_review_state`
+  stay — live callers in `scheduling.rs`, `order.rs`, and `checkout.rs`.
+
+### Known
+- Deleting `handle_confirm_customer_data` left `advisor::start_waiting_for_contact_advisor` and
+  `advisor::render_contact_request` (`src/bot/states/advisor.rs`) with zero remaining callers —
+  `cargo check` now warns on both. Left untouched: this task's dead-dependent chase was scoped to
+  same-file helpers only, and `advisor.rs` handlers were explicitly out of scope for this pass.
+  Candidate for a future cleanup pass.
+
 ## [1.23.9] - 2026-08-12
 
 ### Removed
