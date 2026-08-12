@@ -7,9 +7,7 @@ use crate::{
     whatsapp::types::{Button, IncomingMessage, ListSection},
 };
 
-use super::states::{
-    advisor, checkout, customer_data, data_collect, menu, order, relay, scheduling,
-};
+use super::states::{advisor, checkout, menu, relay};
 
 pub type TransitionResult = Result<(ConversationState, Vec<BotAction>), StateMachineError>;
 
@@ -646,52 +644,85 @@ pub fn transition(
 ) -> TransitionResult {
     match state {
         ConversationState::MainMenu => menu::handle_main_menu(input, context),
-        ConversationState::ViewMenu => menu::handle_view_menu(input, context),
-        ConversationState::ViewSchedule => menu::handle_view_schedule(input, context),
-        ConversationState::WhenDelivery => scheduling::handle_when_delivery(input, context),
-        ConversationState::CheckSchedule => scheduling::handle_check_schedule(context),
-        ConversationState::OutOfHours => scheduling::handle_out_of_hours(input, context),
-        ConversationState::SelectDate => scheduling::handle_select_date(input, context),
-        ConversationState::SelectTime => scheduling::handle_select_time(input, context),
-        ConversationState::ConfirmSchedule => scheduling::handle_confirm_schedule(input, context),
-        ConversationState::CollectName => data_collect::handle_collect_name(input, context),
-        ConversationState::CollectPhone => data_collect::handle_collect_phone(input, context),
-        ConversationState::CollectAddress => data_collect::handle_collect_address(input, context),
-        ConversationState::SelectType => order::handle_select_type(input, context),
-        ConversationState::SelectFlavor { has_liquor } => {
-            order::handle_select_flavor(input, context, *has_liquor)
-        }
-        ConversationState::SelectQuantity { has_liquor, flavor } => {
-            order::handle_select_quantity(input, context, *has_liquor, flavor)
-        }
-        ConversationState::AddMore => order::handle_add_more(input, context),
-        ConversationState::ConfirmRestartOrder => {
-            order::handle_confirm_restart_order(input, context)
-        }
-        ConversationState::ConfirmCustomerData => {
-            customer_data::handle_confirm_customer_data(input, context)
-        }
-        ConversationState::SelectCustomerDataField => {
-            customer_data::handle_select_customer_data_field(input, context)
-        }
-        ConversationState::EditCustomerName => {
-            customer_data::handle_edit_customer_name(input, context)
-        }
-        ConversationState::EditCustomerPhone => {
-            customer_data::handle_edit_customer_phone(input, context)
-        }
-        ConversationState::EditCustomerAddress => {
-            customer_data::handle_edit_customer_address(input, context)
-        }
-        ConversationState::ReviewCheckout => checkout::handle_review_checkout(input, context),
+        // Agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con estos
+        // estados, should_use_agent los intercepta antes. Handlers retirados en el pase de
+        // dead-code (ver docs/CLEANUP_deterministic_engine.md).
+        ConversationState::ViewMenu => unreachable!(
+            "ViewMenu es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::ViewSchedule => unreachable!(
+            "ViewSchedule es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::WhenDelivery => unreachable!(
+            "WhenDelivery es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::CheckSchedule => unreachable!(
+            "CheckSchedule es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::OutOfHours => unreachable!(
+            "OutOfHours es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::SelectDate => unreachable!(
+            "SelectDate es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::SelectTime => unreachable!(
+            "SelectTime es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::ConfirmSchedule => unreachable!(
+            "ConfirmSchedule es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::CollectName => unreachable!(
+            "CollectName es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::CollectPhone => unreachable!(
+            "CollectPhone es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::CollectAddress => unreachable!(
+            "CollectAddress es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::SelectType => unreachable!(
+            "SelectType es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::SelectFlavor { .. } => unreachable!(
+            "SelectFlavor es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::SelectQuantity { .. } => unreachable!(
+            "SelectQuantity es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::AddMore => unreachable!(
+            "AddMore es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::ConfirmRestartOrder => unreachable!(
+            "ConfirmRestartOrder es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::ConfirmCustomerData => unreachable!(
+            "ConfirmCustomerData es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::SelectCustomerDataField => unreachable!(
+            "SelectCustomerDataField es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::EditCustomerName => unreachable!(
+            "EditCustomerName es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::EditCustomerPhone => unreachable!(
+            "EditCustomerPhone es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::EditCustomerAddress => unreachable!(
+            "EditCustomerAddress es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::ReviewCheckout => unreachable!(
+            "ReviewCheckout es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
         ConversationState::SelectReferralOption => {
             checkout::handle_select_referral_option(input, context)
         }
         ConversationState::WaitReferralCode => checkout::handle_wait_referral_code(input, context),
-        ConversationState::SelectPaymentMethod => {
-            checkout::handle_select_payment_method(input, context)
-        }
-        ConversationState::WaitReceipt => checkout::handle_wait_receipt(input, context),
+        ConversationState::SelectPaymentMethod => unreachable!(
+            "SelectPaymentMethod es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
+        ConversationState::WaitReceipt => unreachable!(
+            "WaitReceipt es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
+        ),
         ConversationState::WaitAdvisorResponse => {
             checkout::handle_wait_advisor_response(input, context)
         }

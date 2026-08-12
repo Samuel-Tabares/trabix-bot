@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.5] - 2026-08-12
+
+### Changed
+- **`state_machine.rs`: los 24 match arms de `transition()` sobre estados agent-owned ahora son
+  `unreachable!()`** en vez de despachar a los handlers legacy de la FSM determinista. Confirmado
+  por grep exhaustivo que `should_use_agent`/`is_agent_owned_state` (`engine.rs`) intercepta esos
+  estados antes de que `transition()` se invoque — los handlers eran código muerto alcanzable solo
+  desde ese match arm. Primer commit de una serie que retira los handlers en sí
+  (`docs/CLEANUP_deterministic_engine.md`); este paso solo cambia el dispatcher para dejar el árbol
+  compilando en cada paso intermedio.
+
 ## [1.23.4] - 2026-08-12
 
 ### Fixed
