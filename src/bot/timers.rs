@@ -407,7 +407,7 @@ fn timer_recovery(
     }
 
     match conversation.state.as_str() {
-        "wait_receipt" if !state_data.receipt_timer_expired => timer_recovery_for(
+        "wait_receipt" if !state_data.receipt_timer_expired && state_data.receipt_media_id.is_none() => timer_recovery_for(
             TimerType::ReceiptUpload,
             TimerRule::ReceiptUpload.default_duration(),
             state_data
@@ -455,7 +455,10 @@ fn boot_expiration_action(
 
     match timer_type {
         TimerType::ReceiptUpload => {
-            if conversation.state == "wait_receipt" && !state_data.receipt_timer_expired {
+            if conversation.state == "wait_receipt"
+                && !state_data.receipt_timer_expired
+                && state_data.receipt_media_id.is_none()
+            {
                 BootExpirationAction::UpdateReceiptExpired
             } else {
                 BootExpirationAction::None

@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.3] - 2026-08-12
+
+### Fixed
+- **El bot le decía al cliente "no recibimos el comprobante" 10 minutos después de que SÍ lo había
+  recibido.** Regresión de v1.23.1: antes, subir el comprobante confirmaba el pedido de una y el
+  estado dejaba `wait_receipt`, así que el timer de 10 minutos quedaba inerte. Ahora el pedido se
+  queda deliberadamente en `wait_receipt` esperando verificación manual del asesor — pero el sweep
+  periódico que recupera timers tras un restart/tick (`timer_recovery` en `src/bot/timers.rs`)
+  vuelve a armar un timer fantasma de 10 minutos con base en `last_message_at` cada vez que corre,
+  sin saber que `try_handle_receipt_shortcut` ya canceló el timer en memoria al recibir la imagen.
+  Encontrado en vivo: comprobante recibido a las 16:29, aviso falso de "no recibimos el
+  comprobante" al cliente a las 16:40. Ambos puntos del sweep (`timer_recovery` y
+  `boot_expiration_action`) ahora exigen también `state_data.receipt_media_id.is_none()` antes de
+  considerar el timer de recibo como pendiente.
+
 ## [1.23.2] - 2026-08-12
 
 ### Fixed
