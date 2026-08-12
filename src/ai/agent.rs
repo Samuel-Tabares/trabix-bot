@@ -87,6 +87,12 @@ CUÁNDO USAR message_advisor (solo en estos casos):
    costo: "¿Cuál es el domicilio/costo de envío a [destino]?".
 4. Casos fuera de tema o que requieren criterio comercial → redirige al asesor con contexto claro.
 
+message_advisor tiene un parámetro requires_action: true si el asesor tiene que contestar algo para \
+que el pedido avance (los 4 casos de arriba son casi siempre true), false si es solo un aviso — p. \
+ej. "le confirmé el total al cliente, quedo esperando el código de referido" no necesita que el \
+asesor haga nada. crm-app usa esto para su cola de pendientes: sé preciso, no lo pongas en true por \
+default sin pensarlo.
+
 REGLA MAYORISTA + REFERRAL:
 - Un pedido es mayorista si tiene 20+ unidades del MISMO tipo (con o sin licor).
 - En un pedido mayorista es OBLIGATORIO preguntar por el código antes de confirmar: si intentas \
@@ -495,7 +501,13 @@ async fn run_case_turn(
                 to: context.phone_number.clone(),
                 body,
             }),
-            Actor::Advisor => actions.push(BotAction::NotifyAdvisor { body }),
+            // Texto plano del modelo sin pasar por `message_advisor` (no
+            // decidió explícitamente si requiere acción) — se asume que sí,
+            // es más seguro no perderlo de `/pendientes` que descartarlo.
+            Actor::Advisor => actions.push(BotAction::NotifyAdvisor {
+                body,
+                requires_action: true,
+            }),
         }
     }
 
@@ -510,7 +522,7 @@ async fn run_case_turn(
                 *body = normalize_whatsapp_markdown(body);
                 *body = sanitize_hallucinated_amounts(body, &known_amounts, to, false);
             }
-            BotAction::NotifyAdvisor { body } => {
+            BotAction::NotifyAdvisor { body, .. } => {
                 *body = normalize_whatsapp_markdown(body);
                 *body = sanitize_hallucinated_amounts(
                     body,
@@ -585,6 +597,7 @@ fn try_handle_receipt_shortcut(
                  pedido:\n\n{}",
                 advisor_case_summary(context)
             ),
+            requires_action: true,
         },
         BotAction::SendText {
             to: context.phone_number.clone(),
@@ -698,6 +711,7 @@ fn budget_denied_actions(
                 context.customer_name.as_deref().unwrap_or("sin nombre"),
                 context.phone_number,
             ),
+            requires_action: true,
         });
     }
     actions
@@ -985,13 +999,23 @@ fn dispatch_tool(
             if text.trim().is_empty() {
                 return ToolOutcome::Result(error_result(id, "El texto no puede estar vacío."));
             }
+            // Si el modelo no manda `requires_action`, se asume true — más
+            // seguro no perder un aviso de `/pendientes` en `crm-app` que
+            // descartarlo por error.
+            let requires_action = input
+                .get("requires_action")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
             // El asesor ya no tiene sesión de WhatsApp que enrutar: `crm-app`
             // siempre manda el `case_phone` explícito en cada request
             // (`POST /internal/advisor/reply`), así que no hace falta
             // "apuntar" ninguna sesión — solo queda visible en la consola.
             ToolOutcome::ResultWithAction(
                 ok_result(id, "Enviado al asesor."),
-                BotAction::NotifyAdvisor { body: text },
+                BotAction::NotifyAdvisor {
+                    body: text,
+                    requires_action,
+                },
             )
         }
         "finalize_checkout" => finalize_checkout(id, context),
@@ -1709,6 +1733,7 @@ fn confirm_payment_received(id: &str, context: &mut ConversationContext) -> Tool
     };
     actions.push(BotAction::NotifyAdvisor {
         body: advisor_label.to_string(),
+        requires_action: false,
     });
     let total_text = context
         .total_final
@@ -2036,6 +2061,7 @@ pub(crate) fn auto_accept_order_actions(
                 "✅ Pedido auto-aceptado (no requiere confirmar disponibilidad):\n\n{}",
                 advisor_case_summary(context)
             ),
+            requires_action: false,
         },
     ]);
 
@@ -2088,6 +2114,7 @@ fn wait_for_business_hours(id: &str, context: &mut ConversationContext) -> ToolO
             hours.hours_text,
             advisor_case_summary(context)
         ),
+        requires_action: false,
     });
 
     ToolOutcome::ResultWithStateChange(
@@ -2214,6 +2241,7 @@ fn set_payment_method(id: &str, input: &Value, context: &mut ConversationContext
             };
             actions.push(BotAction::NotifyAdvisor {
                 body: format!("{advisor_label}:\n\n{summary}"),
+                requires_action: false,
             });
             let total_text = context
                 .total_final
@@ -2715,8 +2743,14 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             description: "Envía un mensaje de texto al ASESOR humano. Úsala siempre que quieras decirle algo al asesor.".to_string(),
             input_schema: json!({
                 "type": "object",
-                "properties": { "text": { "type": "string" } },
-                "required": ["text"],
+                "properties": {
+                    "text": { "type": "string" },
+                    "requires_action": {
+                        "type": "boolean",
+                        "description": "true si el pedido no puede avanzar hasta que el asesor conteste esto (pedirle un costo de envío, pedirle que confirme un pago, pedirle disponibilidad). false si es solo un aviso informativo (algo que ya se resolvió, o un eco de lo que el asesor mismo acaba de hacer) que no necesita respuesta. `crm-app` usa esto para decidir qué entra a la cola de \"requiere tu acción\" — pon false de más solo si de verdad no hace falta que el asesor responda nada."
+                    }
+                },
+                "required": ["text", "requires_action"],
                 "additionalProperties": false
             }),
         },
@@ -3152,7 +3186,7 @@ mod tests {
                     .any(|action| matches!(action, BotAction::StartTimer { .. })));
                 assert!(actions.iter().any(|action| matches!(
                     action,
-                    BotAction::NotifyAdvisor { body } if body.contains("auto-aceptado")
+                    BotAction::NotifyAdvisor { body, .. } if body.contains("auto-aceptado")
                 )));
             }
             _ => panic!("expected a state change"),

@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.12] - 2026-08-12
+
+### Added
+- **`BotAction::NotifyAdvisor` gana un campo `requires_action: bool`**, persistido en
+  `message_events.payload` (`{"requires_action": ...}`). Motivado por feedback de Samuel tras la
+  ronda de test E2E: hoy `needs_human` en `crm-app` no distingue un aviso al asesor que sí necesita
+  respuesta ("¿cuál es el costo de envío?") de uno puramente informativo ("le confirmé el total al
+  cliente, quedo esperando el código"). La tool `message_advisor` ahora expone `requires_action`
+  como parámetro que el modelo decide en cada llamada (guía agregada al system prompt y a la
+  descripción de la tool); los avisos deterministas (comprobante pendiente de verificar, límite
+  diario alcanzado) van en `true`; los puramente informativos (pago ya verificado, pedido
+  auto-aceptado, aviso fuera de horario, contra-entrega confirmado) van en `false`. `crm-app` puede
+  ahora leer este campo para separar "requiere tu acción" de "solo FYI" en `/pendientes` — lado
+  `crm-app` sigue en `../crm-app/CHANGELOG.md`.
+
 ## [1.23.11] - 2026-08-12
 
 ### Removed

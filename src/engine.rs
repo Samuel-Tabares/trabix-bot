@@ -783,7 +783,10 @@ pub async fn execute_actions(
                 )
                 .await?;
             }
-            BotAction::NotifyAdvisor { body } => {
+            BotAction::NotifyAdvisor {
+                body,
+                requires_action,
+            } => {
                 if let Err(err) = crate::db::queries::record_message_event(
                     &state.pool,
                     &case_phone,
@@ -791,7 +794,7 @@ pub async fn execute_actions(
                     ACTOR_BOT,
                     "text",
                     Some(body),
-                    None,
+                    Some(json!({ "requires_action": requires_action })),
                     None,
                 )
                 .await

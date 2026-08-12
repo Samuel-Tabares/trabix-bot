@@ -347,6 +347,13 @@ pub enum BotAction {
     /// §3): el asesor ya no tiene canal directo de WhatsApp, solo `crm-app`.
     NotifyAdvisor {
         body: String,
+        /// True cuando el pedido no puede avanzar sin que el asesor conteste
+        /// esto (p. ej. pedir el costo de envío, pedir que confirme un pago).
+        /// False cuando es solo un aviso informativo (algo ya se resolvió
+        /// solo, o es un eco de lo que el propio asesor acaba de hacer).
+        /// `crm-app` usa esto para decidir qué entra a `/pendientes` como
+        /// "requiere tu acción" — ver docs/internal_advisor_send.md.
+        requires_action: bool,
     },
     StartTimer {
         timer_type: TimerType,

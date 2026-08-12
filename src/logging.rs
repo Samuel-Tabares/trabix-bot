@@ -134,9 +134,13 @@ pub fn log_bot_action(action: &BotAction) {
                 "dispatching bot action"
             );
         }
-        BotAction::NotifyAdvisor { body } => {
+        BotAction::NotifyAdvisor {
+            body,
+            requires_action,
+        } => {
             tracing::info!(
                 action = "notify_advisor",
+                requires_action = requires_action,
                 preview = %preview_text(body),
                 "dispatching bot action"
             );
