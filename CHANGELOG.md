@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.7] - 2026-08-12
+
+### Removed
+- **`src/bot/states/scheduling.rs`: deleted the entire dead-FSM handler set** —
+  `handle_when_delivery`, `handle_check_schedule`, `handle_out_of_hours`, `handle_select_date`,
+  `handle_select_time`, `handle_confirm_schedule` — plus the helpers only they used
+  (`out_of_hours_actions`, `select_time_actions`, `confirm_schedule_actions`,
+  `validate_schedule_text`, `collapse_spaces`, `retry_actions`, `selection_id`) and their
+  now-unused consts/imports. `when_delivery_actions` and `select_date_actions` stay (live callers
+  in `menu::handle_main_menu` and `advisor.rs`), as do `is_within_business_hours`/
+  `immediate_delivery_hours_text`/`current_bogota_now` (live callers in `src/ai/tools.rs`).
+
 ## [1.23.6] - 2026-08-12
 
 ### Removed
