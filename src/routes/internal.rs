@@ -340,6 +340,43 @@ pub async fn advisor_release(
     Ok(Json(AdvisorReplyResponse { ok: true }))
 }
 
+/// Proxy de un adjunto de WhatsApp (imagen de comprobante, etc.) por
+/// `media_id` — `crm-app` no tiene credenciales de Meta propias, así que no
+/// puede resolver ni descargar el media directamente; se lo pide a este
+/// endpoint, el único lugar que sí tiene el token (mismo principio que
+/// `advisor_send`/etc., ver el comentario de arriba del archivo). No valida
+/// que el `media_id` pertenezca a un caso conocido: son IDs opacos de Meta,
+/// de un solo uso práctico (expiran), sin valor fuera de este contexto.
+pub async fn media(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(media_id): Path<String>,
+) -> Result<Response, ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+
+    let (bytes, mime_type) = state
+        .transport
+        .download_media(&media_id)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = %err, "internal media download failed at meta");
+            classify_whatsapp_error(&err)
+        })?;
+
+    Ok((
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, mime_type),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "private, max-age=86400".to_string(),
+            ),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateReferralCodeRequest {
     pub code: String,

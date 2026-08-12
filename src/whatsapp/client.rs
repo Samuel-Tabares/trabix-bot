@@ -124,6 +124,60 @@ impl WhatsAppClient {
         self.post_message("image", to, &payload).await
     }
 
+    /// Descarga los bytes de un adjunto (imagen de comprobante, etc.) por su
+    /// `media_id`. Meta lo resuelve en dos pasos, los dos con el mismo Bearer
+    /// token: primero `GET /{media_id}` devuelve una URL de CDN de corta
+    /// duración + `mime_type`, después se descarga esa URL. Usado por
+    /// `routes/internal.rs` para que `crm-app` pueda mostrar la imagen sin
+    /// tener credenciales de Meta propias — el bot sigue siendo el único
+    /// dueño de esa relación (mismo principio que `send_text`/etc.).
+    pub async fn download_media(&self, media_id: &str) -> Result<(Vec<u8>, String), WhatsAppError> {
+        let resolve_url = format!("https://graph.facebook.com/v21.0/{media_id}");
+        let resolve_response = self
+            .http_client
+            .get(resolve_url)
+            .bearer_auth(&self.whatsapp_token)
+            .send()
+            .await?;
+
+        let status = resolve_response.status();
+        if !status.is_success() {
+            let body = resolve_response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unable to read body>".into());
+            tracing::error!(%status, body = %preview_text(&body), "meta media resolve returned an error");
+            return Err(WhatsAppError::Api { status, body });
+        }
+
+        #[derive(serde::Deserialize)]
+        struct MediaResolve {
+            url: String,
+            mime_type: String,
+        }
+        let resolved: MediaResolve = resolve_response.json().await?;
+
+        let download_response = self
+            .http_client
+            .get(&resolved.url)
+            .bearer_auth(&self.whatsapp_token)
+            .send()
+            .await?;
+
+        let status = download_response.status();
+        if !status.is_success() {
+            let body = download_response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unable to read body>".into());
+            tracing::error!(%status, body = %preview_text(&body), "meta media download returned an error");
+            return Err(WhatsAppError::Api { status, body });
+        }
+
+        let bytes = download_response.bytes().await?;
+        Ok((bytes.to_vec(), resolved.mime_type))
+    }
+
     pub async fn mark_as_read(&self, message_id: &str) -> Result<(), WhatsAppError> {
         let payload = MarkAsRead {
             messaging_product: "whatsapp".into(),

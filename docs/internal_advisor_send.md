@@ -198,6 +198,24 @@ que queda de `ADVISOR_PHONE` en el código es residuo del FSM determinístico he
 (`src/bot/states/advisor.rs`/`relay.rs`), no del motor de agente — ver
 `docs/CLEANUP_deterministic_engine.md` §3.
 
+## `GET /internal/media/:media_id` — proxy de adjuntos (v1.23.0)
+
+`crm-app` no tiene credenciales de Meta propias (a propósito, mismo principio de "un solo dueño de
+la sesión de WhatsApp"), así que no puede resolver ni descargar un adjunto (imagen de comprobante,
+etc.) directamente desde la Graph API. Este endpoint lo hace por él: mismo header
+`X-Internal-Token`, responde los bytes crudos con el `Content-Type` que reporta Meta (`image/jpeg`,
+etc.) y `Cache-Control: private, max-age=86400`. El `media_id` sale de `payload.media_id` en la fila
+de `message_events` con `content_type='image'`.
+
+No valida que el `media_id` pertenezca a un caso conocido: son IDs opacos de Meta de un solo uso
+práctico (expiran solos), sin valor fuera de este contexto — no hace falta ese chequeo extra.
+
+```bash
+curl -i "https://<bot>/internal/media/<media_id>" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  -o comprobante.jpg
+```
+
 ## Prueba manual
 
 ```bash

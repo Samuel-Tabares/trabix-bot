@@ -29,6 +29,7 @@ pub fn internal_router() -> Router<AppState> {
         .route("/internal/advisor/send", post(internal::advisor_send))
         .route("/internal/advisor/reply", post(internal::advisor_reply))
         .route("/internal/advisor/release", post(internal::advisor_release))
+        .route("/internal/media/:media_id", get(internal::media))
         .route(
             "/internal/referral-codes",
             post(internal::create_referral_code),

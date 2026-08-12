@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.1] - 2026-08-12
+
+### Added
+- **`GET /internal/media/:media_id`**: proxy de adjuntos de WhatsApp para `crm-app` — resuelve y
+  descarga el media desde la Graph API (dos pasos: resolver URL de CDN, después descargarla, mismo
+  Bearer token) y devuelve los bytes crudos con el `Content-Type` correcto. Encontrado en vivo
+  (2026-08-12): la imagen del comprobante llegaba y se registraba bien
+  (`message_events.payload.media_id`), pero `crm-app` no tenía forma de mostrarla — no tiene
+  credenciales de Meta propias, a propósito, mismo principio que el resto de `/internal/*` (el bot
+  es el único dueño de la sesión de WhatsApp). Nuevo `WhatsAppClient::download_media`. Ver
+  `docs/internal_advisor_send.md`.
+
 ## [1.23.0] - 2026-08-12
 
 ### Fixed
