@@ -178,13 +178,6 @@ change_customer_field_body = "¿Qué dato deseas actualizar?"
 change_name_button = "Nombre"
 change_phone_button = "Teléfono"
 change_address_button = "Cambiar dirección"
-transfer_payment_text = """💳 Puedes realizar tu pago por cualquiera de estas opciones:
-
-📱 Nequi: 3103034775
-🔑 Llaves: 1092456501
-🏦 Bancolombia ahorros: 75656448148
-
-Cuando termines, envíame la foto del comprobante por este chat 📸"""
 wait_receipt_prompt = "Quedo atent@ 😊 Envíame la foto del comprobante en los próximos 10 minutos para continuar."
 receipt_timeout_body = "Se venció el tiempo para recibir el comprobante ⏳ Puedes cambiar la forma de pago o cancelar el pedido."
 receipt_timeout_change_payment_button = "Cambiar pago"
@@ -279,16 +272,23 @@ relay_timeout_text = "La conversación con el asesor se cerró por inactividad �
 conversation_inactivity_reset_text = "Reinicié la conversación por inactividad ⏳ Cuando quieras continuar, escríbeme de nuevo y retomamos desde el menú principal."
 agent_inactivity_nudge_text = "¿Sigues por ahí? 😊 Cuando quieras seguimos con tu pedido, escríbeme y continuamos."
 
+
+transfer_payment_text = """💳 Puedes realizar tu pago por cualquiera de estas opciones:
+
+📱 Nequi: 3103034775
+🔑 Llaves: 1092456501
+🏦 Bancolombia ahorros: 75656448148
+
+Cuando termines, envíame la foto del comprobante por este chat 📸"""
+
 [agent]
-welcome = """¡Hola! 👋 Soy el asistente de Trabix Granizados 🍧
+welcome = """¡Hola! 👋 bienvenid@ a Trabix Granizados 🍧
 
 Cuéntame qué necesitas y te ayudo con todo por aquí mismo:
-• Hacer un pedido (con o sin licor)
+• Hacer un pedido (con o sin licor ; detal o por mayor ; inmediato o programado)
 • Ver el menú y precios
-• Pedidos al por mayor
-• Programar tu pedido para después
 • Hablar con un asesor
 
-Escríbeme con tus palabras, no necesitas botones. ¿Qué se te antoja hoy? 😄"""
-llm_failure_customer = "Estamos teniendo un problema técnico en este momento 🙏 Un asesor revisará tu caso y te contactará en breve. También puedes volver a escribirme en unos minutos."
+¿Qué se te antoja hoy? 😄"""
+llm_failure_customer = "Estamos teniendo un problema técnico en este momento 🙏 Un asesor revisará tu caso y te contactará en breve."
 daily_limit_customer = "Por hoy no puedo seguir atendiéndote por este chat 🙏 Un asesor revisará tu caso y te contactará directamente."
