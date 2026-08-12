@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.11] - 2026-08-12
+
+### Removed
+- **`src/bot/states/checkout.rs`: deleted `confirm_checkout`, `handle_review_checkout`,
+  `handle_select_payment_method`, `handle_wait_receipt`** (dead FSM handlers/helper — `confirm_checkout`'s
+  doc comment claimed it was "exposed for the AI agent" but had zero callers anywhere) plus the
+  helpers only they used (`wait_receipt_entry_actions`, `receipt_timeout_repeat_actions`,
+  `complete_order_transition`, `final_confirmation_actions`, `cancel_order_transition`) and the
+  `CANCEL_ORDER`/`CHANGE_PAYMENT_METHOD` consts. `handle_select_referral_option`,
+  `handle_wait_referral_code`, `handle_wait_advisor_response`, `handle_order_complete`, and every
+  `*_actions`/`render_*` helper with a live caller elsewhere (`advisor.rs`, `customer_data.rs`,
+  `src/ai/agent.rs`) are untouched. Removed the 7 tests that only exercised the deleted handlers.
+
+### Known
+- `confirm_address_actions` and `change_address_prompt_actions` in this file have zero callers
+  anywhere in the codebase (pre-existing, unrelated to the handlers deleted in this pass — they
+  were never called by them). Left in place: out of scope for this cleanup, flagged for a future
+  pass.
+
 ## [1.23.10] - 2026-08-12
 
 ### Removed

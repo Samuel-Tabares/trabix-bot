@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::{
     bot::{
         pricing::{
@@ -7,10 +5,8 @@ use crate::{
             PedidoCalculado, ReferralApplied,
         },
         state_machine::{
-            BotAction, ConversationContext, ConversationState, TimerType, TransitionResult,
-            UserInput,
+            BotAction, ConversationContext, ConversationState, TransitionResult, UserInput,
         },
-        timers::RECEIPT_TIMEOUT,
     },
     messages::{client_messages, render_template},
     referrals::{normalize_referral_code, referral_registry},
@@ -26,48 +22,6 @@ const REFERRAL_SKIP: &str = "referral_skip";
 const REFERRAL_RETRY: &str = "referral_retry";
 const CASH_ON_DELIVERY: &str = "cash_on_delivery";
 const PAY_NOW: &str = "pay_now";
-const CANCEL_ORDER: &str = "cancel_order";
-const CHANGE_PAYMENT_METHOD: &str = "change_payment_method";
-
-/// Handoff hacia el flujo de asesor, identico al que dispara el boton
-/// `Continuar` en `review_checkout`. Expuesto para que el agente de IA
-/// (Fase 1+) pueda finalizar un checkout construido por conversacion libre
-/// reutilizando la misma logica, sin duplicarla.
-pub fn confirm_checkout(context: &mut ConversationContext) -> TransitionResult {
-    handle_review_checkout(
-        &UserInput::ButtonPress(REVIEW_CONTINUE.to_string()),
-        context,
-    )
-}
-
-pub fn handle_review_checkout(
-    input: &UserInput,
-    context: &mut ConversationContext,
-) -> TransitionResult {
-    match selection_id(input).as_deref() {
-        Some(REVIEW_CONTINUE) => {
-            context.payment_method = None;
-            context.receipt_media_id = None;
-            context.receipt_timer_started_at = None;
-            context.receipt_timer_expired = false;
-            context.editing_address = false;
-            context.clear_referral_data();
-            context.delivery_cost = None;
-            context.total_final = None;
-
-            let (state, actions) = advisor::start_order_advisor_flow(context);
-            Ok((state, actions))
-        }
-        Some(REVIEW_CHANGE) => Ok((
-            ConversationState::SelectCustomerDataField,
-            customer_data::select_customer_data_field_actions(context),
-        )),
-        _ => Ok((
-            ConversationState::ReviewCheckout,
-            review_checkout_actions(context),
-        )),
-    }
-}
 
 pub fn handle_select_referral_option(
     input: &UserInput,
@@ -169,99 +123,6 @@ pub fn handle_wait_referral_code(
                 &client_messages().checkout.referral_code_non_text,
                 referral_code_prompt_actions(&context.phone_number),
             ),
-        )),
-    }
-}
-
-pub fn handle_select_payment_method(
-    input: &UserInput,
-    context: &mut ConversationContext,
-) -> TransitionResult {
-    match selection_id(input).as_deref() {
-        Some(CASH_ON_DELIVERY) => {
-            context.payment_method = Some(CASH_ON_DELIVERY.to_string());
-            context.receipt_media_id = None;
-            context.receipt_timer_started_at = None;
-            context.receipt_timer_expired = false;
-
-            let mut actions = vec![BotAction::UpsertDraftOrder {
-                status: "confirmed".to_string(),
-            }];
-            actions.extend(order_confirmation_analytics_action(context));
-            actions.extend(advisor::final_order_packet_actions(context, None));
-
-            Ok(complete_order_transition(context, "confirmed", actions))
-        }
-        Some(PAY_NOW) => {
-            context.payment_method = Some("transfer".to_string());
-            context.receipt_media_id = None;
-            context.receipt_timer_started_at = Some(chrono::Utc::now());
-            context.receipt_timer_expired = false;
-
-            Ok((
-                ConversationState::WaitReceipt,
-                wait_receipt_entry_actions(context),
-            ))
-        }
-        _ => Ok((
-            ConversationState::SelectPaymentMethod,
-            select_payment_method_actions(&context.phone_number),
-        )),
-    }
-}
-
-pub fn handle_wait_receipt(
-    input: &UserInput,
-    context: &mut ConversationContext,
-) -> TransitionResult {
-    if context.receipt_timer_expired {
-        return match selection_id(input).as_deref() {
-            Some(CHANGE_PAYMENT_METHOD) => {
-                context.payment_method = None;
-                context.receipt_media_id = None;
-                context.receipt_timer_started_at = None;
-                context.receipt_timer_expired = false;
-
-                Ok((
-                    ConversationState::SelectPaymentMethod,
-                    select_payment_method_actions(&context.phone_number),
-                ))
-            }
-            Some(CANCEL_ORDER) => Ok(cancel_order_transition(context)),
-            _ => Ok((
-                ConversationState::WaitReceipt,
-                receipt_timeout_repeat_actions(&context.phone_number),
-            )),
-        };
-    }
-
-    match input {
-        UserInput::ImageMessage(media_id) => {
-            context.receipt_media_id = Some(media_id.clone());
-            context.receipt_timer_started_at = None;
-            context.receipt_timer_expired = false;
-
-            let mut actions = vec![
-                BotAction::CancelTimer {
-                    timer_type: TimerType::ReceiptUpload,
-                    phone: context.phone_number.clone(),
-                },
-                BotAction::UpsertDraftOrder {
-                    status: "confirmed".to_string(),
-                },
-            ];
-            actions.extend(order_confirmation_analytics_action(context));
-            actions.extend(advisor::final_order_packet_actions(context, Some(media_id)));
-            actions.extend(final_confirmation_actions(context));
-
-            Ok((ConversationState::MainMenu, actions))
-        }
-        _ => Ok((
-            ConversationState::WaitReceipt,
-            vec![BotAction::SendText {
-                to: context.phone_number.clone(),
-                body: client_messages().checkout.receipt_image_required.clone(),
-            }],
         )),
     }
 }
@@ -625,97 +486,6 @@ pub fn render_payment_ready_confirmation(context: &ConversationContext) -> Strin
     )
 }
 
-fn wait_receipt_entry_actions(context: &ConversationContext) -> Vec<BotAction> {
-    vec![
-        BotAction::UpsertDraftOrder {
-            status: "waiting_receipt".to_string(),
-        },
-        BotAction::SendTransferInstructions {
-            to: context.phone_number.clone(),
-        },
-        BotAction::SendText {
-            to: context.phone_number.clone(),
-            body: client_messages().checkout.wait_receipt_prompt.clone(),
-        },
-        BotAction::StartTimer {
-            timer_type: TimerType::ReceiptUpload,
-            phone: context.phone_number.clone(),
-            duration: Duration::from_secs(RECEIPT_TIMEOUT.as_secs()),
-        },
-    ]
-}
-
-fn receipt_timeout_repeat_actions(phone: &str) -> Vec<BotAction> {
-    let messages = &client_messages().checkout;
-    vec![BotAction::SendButtons {
-        to: phone.to_string(),
-        body: messages.receipt_timeout_body.clone(),
-        buttons: vec![
-            reply_button(
-                CHANGE_PAYMENT_METHOD,
-                &messages.receipt_timeout_change_payment_button,
-            ),
-            reply_button(CANCEL_ORDER, &messages.receipt_timeout_cancel_button),
-        ],
-    }]
-}
-
-fn complete_order_transition(
-    context: &mut ConversationContext,
-    status: &str,
-    mut actions: Vec<BotAction>,
-) -> (ConversationState, Vec<BotAction>) {
-    actions.extend(final_confirmation_actions(context));
-    let _ = status;
-    (ConversationState::MainMenu, actions)
-}
-
-fn final_confirmation_actions(context: &ConversationContext) -> Vec<BotAction> {
-    let mut actions = vec![BotAction::SendText {
-        to: context.phone_number.clone(),
-        body: client_messages().checkout.final_order_success_text.clone(),
-    }];
-    actions.push(BotAction::ResetConversation {
-        phone: context.phone_number.clone(),
-    });
-    actions.extend(menu::main_menu_actions(&context.phone_number));
-    actions
-}
-
-fn cancel_order_transition(
-    context: &mut ConversationContext,
-) -> (ConversationState, Vec<BotAction>) {
-    let cancel_action = context
-        .current_order_id
-        .map(|order_id| BotAction::CancelCurrentOrder { order_id });
-
-    context.items.clear();
-    context.payment_method = None;
-    context.clear_referral_data();
-    context.delivery_cost = None;
-    context.total_final = None;
-    context.receipt_media_id = None;
-    context.receipt_timer_started_at = None;
-    context.current_order_id = None;
-    context.editing_address = false;
-    context.receipt_timer_expired = false;
-    context.clear_pending_selection();
-
-    let mut actions = vec![BotAction::CancelTimer {
-        timer_type: TimerType::ReceiptUpload,
-        phone: context.phone_number.clone(),
-    }];
-    if let Some(action) = cancel_action {
-        actions.push(action);
-    }
-    actions.push(BotAction::ResetConversation {
-        phone: context.phone_number.clone(),
-    });
-    actions.extend(menu::main_menu_actions(&context.phone_number));
-
-    (ConversationState::MainMenu, actions)
-}
-
 fn selection_id(input: &UserInput) -> Option<String> {
     match input {
         UserInput::ButtonPress(id) | UserInput::ListSelection(id) => Some(id.clone()),
@@ -823,8 +593,7 @@ mod tests {
     use crate::bot::state_machine::{BotAction, ConversationContext, ConversationState, UserInput};
 
     use super::{
-        format_currency, handle_review_checkout, handle_select_payment_method,
-        handle_select_referral_option, handle_wait_receipt, handle_wait_referral_code,
+        format_currency, handle_select_referral_option, handle_wait_referral_code,
         payment_entry_state_and_actions, render_payment_ready_confirmation, render_summary,
     };
     use crate::bot::pricing::calcular_pedido;
@@ -901,24 +670,6 @@ mod tests {
     }
 
     #[test]
-    fn review_checkout_continue_moves_to_advisor_flow() {
-        let mut context = context();
-
-        let (state, actions) = handle_review_checkout(
-            &UserInput::ButtonPress("continue_review_checkout".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::AskDeliveryCost);
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            crate::bot::state_machine::BotAction::FinalizeCurrentOrder { status }
-            if status == "pending_advisor"
-        )));
-    }
-
-    #[test]
     fn render_summary_labels_it_as_subtotal_when_delivery_is_not_known_yet() {
         let mut context = context();
         context.delivery_cost = None;
@@ -943,89 +694,6 @@ mod tests {
         assert!(summary.contains(&format!("Domicilio: {}", format_currency(5_000))));
         assert!(summary.contains(&format!("Total: {}", format_currency(expected_total))));
         assert!(!summary.contains("aún por confirmar"));
-    }
-
-    #[test]
-    fn pay_now_moves_to_wait_receipt() {
-        let mut context = context();
-
-        let (state, actions) = handle_select_payment_method(
-            &UserInput::ButtonPress("pay_now".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::WaitReceipt);
-        assert_eq!(context.payment_method.as_deref(), Some("transfer"));
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            crate::bot::state_machine::BotAction::StartTimer { .. }
-        )));
-    }
-
-    #[test]
-    fn cash_on_delivery_confirmation_updates_customer_and_analytics() {
-        let mut context = wholesale_context();
-        context.referral_code = Some("trabix-prueba15".to_string());
-        context.referral_discount_total = Some(9600);
-        context.ambassador_commission_total = Some(14400);
-        context.total_final = Some(91400);
-
-        let (_, actions) = handle_select_payment_method(
-            &UserInput::ButtonPress("cash_on_delivery".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        let analytics = actions.iter().find_map(|action| match action {
-            BotAction::UpdateCustomerAndAnalytics {
-                total_spent_cop,
-                total_units_purchased,
-                referral_code,
-                referral_discount_cop,
-                ambassador_commission_cop,
-                ..
-            } => Some((
-                *total_spent_cop,
-                *total_units_purchased,
-                referral_code.clone(),
-                *referral_discount_cop,
-                *ambassador_commission_cop,
-            )),
-            _ => None,
-        });
-
-        assert_eq!(
-            analytics,
-            Some((
-                91400,
-                20,
-                Some("trabix-prueba15".to_string()),
-                Some(9600),
-                Some(14400),
-            ))
-        );
-    }
-
-    #[test]
-    fn receipt_confirmation_updates_customer_and_analytics() {
-        let mut context = context();
-
-        let (_, actions) = handle_wait_receipt(
-            &UserInput::ImageMessage("media-123".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            BotAction::UpdateCustomerAndAnalytics {
-                total_spent_cop: 17000,
-                total_units_purchased: 3,
-                referral_code: None,
-                ..
-            }
-        )));
     }
 
     #[test]
@@ -1147,92 +815,4 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn cash_on_delivery_sends_final_advisor_packet() {
-        let mut context = context();
-        context.delivery_type = Some("scheduled".to_string());
-        context.scheduled_date = Some("2030-12-24".to_string());
-        context.scheduled_time = Some("4:00 pm".to_string());
-
-        let (state, actions) = handle_select_payment_method(
-            &UserInput::ButtonPress("cash_on_delivery".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::MainMenu);
-        assert_eq!(context.payment_method.as_deref(), Some("cash_on_delivery"));
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            BotAction::SendText { to, body }
-                if to == "573009999999"
-                    && body.contains("Cliente: Ana")
-                    && body.contains("Teléfono: 3001234567")
-                    && body.contains("Dirección: Cra 15 #20-30 Armenia")
-                    && body.contains("Pago: Contra entrega")
-                    && body.contains("Domicilio: $5.000")
-                    && body.contains("Total final: $17.000")
-        )));
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            BotAction::SendText { to, body }
-                if to == "573009999999"
-                    && body.contains("Pedido [...4567] confirmado. Método de pago final: contra entrega.")
-        )));
-    }
-
-    #[test]
-    fn wait_receipt_image_sends_final_advisor_packet_and_receipt() {
-        let mut context = context();
-        context.delivery_type = Some("scheduled".to_string());
-        context.scheduled_date = Some("2030-12-24".to_string());
-        context.scheduled_time = Some("4:00 pm".to_string());
-        context.payment_method = Some("transfer".to_string());
-
-        let (state, actions) = handle_wait_receipt(
-            &UserInput::ImageMessage("media-1".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::MainMenu);
-        assert_eq!(context.receipt_media_id.as_deref(), Some("media-1"));
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            BotAction::SendText { to, body }
-                if to == "573009999999"
-                    && body.contains("Cliente: Ana")
-                    && body.contains("Entrega: Programada")
-                    && body.contains("Pago: Pago por transferencia")
-                    && body.contains("Domicilio: $5.000")
-                    && body.contains("Total final: $17.000")
-        )));
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            BotAction::SendText { to, body }
-                if to == "573009999999"
-                    && body.contains("Pago registrado por transferencia")
-        )));
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            BotAction::SendImage { to, media_id, .. }
-                if to == "573009999999" && media_id == "media-1"
-        )));
-    }
-
-    #[test]
-    fn wait_receipt_after_timeout_returns_to_payment_buttons() {
-        let mut context = context();
-        context.payment_method = Some("transfer".to_string());
-        context.receipt_timer_expired = true;
-
-        let (state, _) = handle_wait_receipt(
-            &UserInput::ButtonPress("change_payment_method".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::SelectPaymentMethod);
-        assert_eq!(context.payment_method, None);
-    }
 }
