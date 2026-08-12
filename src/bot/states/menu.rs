@@ -31,51 +31,6 @@ pub fn handle_main_menu(input: &UserInput, context: &mut ConversationContext) ->
     }
 }
 
-pub fn handle_view_menu(input: &UserInput, context: &mut ConversationContext) -> TransitionResult {
-    match selection_id(input).as_deref() {
-        Some(MAKE_ORDER) => Ok((
-            ConversationState::WhenDelivery,
-            scheduling::when_delivery_actions(&context.phone_number),
-        )),
-        Some(BACK_MAIN_MENU) => Ok((
-            ConversationState::MainMenu,
-            main_menu_actions(&context.phone_number),
-        )),
-        _ => Ok((
-            ConversationState::ViewMenu,
-            with_retry_message(
-                &client_messages().menu.retry_view_menu,
-                view_menu_actions(&context.phone_number),
-            ),
-        )),
-    }
-}
-
-pub fn handle_view_schedule(
-    input: &UserInput,
-    context: &mut ConversationContext,
-) -> TransitionResult {
-    // Legacy compatibility: existing persisted `view_schedule` conversations
-    // should recover to the current main menu after deploy.
-    match selection_id(input).as_deref() {
-        Some(MAKE_ORDER) => Ok((
-            ConversationState::WhenDelivery,
-            scheduling::when_delivery_actions(&context.phone_number),
-        )),
-        Some(BACK_MAIN_MENU) => Ok((
-            ConversationState::MainMenu,
-            main_menu_actions(&context.phone_number),
-        )),
-        _ => Ok((
-            ConversationState::MainMenu,
-            with_retry_message(
-                &client_messages().menu.retry_main_menu,
-                main_menu_actions(&context.phone_number),
-            ),
-        )),
-    }
-}
-
 pub fn main_menu_actions(phone: &str) -> Vec<BotAction> {
     let messages = &client_messages().menu;
     vec![
@@ -133,29 +88,6 @@ fn reply_button(id: &str, title: &str) -> Button {
     }
 }
 
-fn with_retry_message(message: &str, mut actions: Vec<BotAction>) -> Vec<BotAction> {
-    let mut all = vec![BotAction::SendText {
-        to: target_phone(&actions),
-        body: message.to_string(),
-    }];
-    all.append(&mut actions);
-    all
-}
-
-fn target_phone(actions: &[BotAction]) -> String {
-    actions
-        .iter()
-        .find_map(|action| match action {
-            BotAction::SendText { to, .. }
-            | BotAction::SendButtons { to, .. }
-            | BotAction::SendList { to, .. }
-            | BotAction::SendImage { to, .. }
-            | BotAction::SendAssetImage { to, .. } => Some(to.clone()),
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
 fn selection_id(input: &UserInput) -> Option<String> {
     match input {
         UserInput::ButtonPress(id) | UserInput::ListSelection(id) => Some(id.clone()),
@@ -170,7 +102,7 @@ fn selection_id(input: &UserInput) -> Option<String> {
 mod tests {
     use crate::bot::state_machine::{ConversationContext, ConversationState, UserInput};
 
-    use super::{handle_main_menu, handle_view_menu, handle_view_schedule};
+    use super::handle_main_menu;
 
     fn context() -> ConversationContext {
         ConversationContext {
@@ -247,41 +179,4 @@ mod tests {
         assert_eq!(state, ConversationState::WhenDelivery);
     }
 
-    #[test]
-    fn view_menu_back_returns_to_main_menu() {
-        let mut context = context();
-        let (state, _) = handle_view_menu(
-            &UserInput::ButtonPress("back_main_menu".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::MainMenu);
-    }
-
-    #[test]
-    fn view_schedule_make_order_moves_forward() {
-        let mut context = context();
-        let (state, _) = handle_view_schedule(
-            &UserInput::ButtonPress("make_order".to_string()),
-            &mut context,
-        )
-        .expect("transition");
-
-        assert_eq!(state, ConversationState::WhenDelivery);
-    }
-
-    #[test]
-    fn legacy_view_schedule_state_recovers_to_main_menu() {
-        let mut context = context();
-        let (state, actions) =
-            handle_view_schedule(&UserInput::TextMessage("hola".to_string()), &mut context)
-                .expect("transition");
-
-        assert_eq!(state, ConversationState::MainMenu);
-        assert!(actions.iter().any(|action| matches!(
-            action,
-            crate::bot::state_machine::BotAction::SendButtons { .. }
-        )));
-    }
 }

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.6] - 2026-08-12
+
+### Removed
+- **`src/bot/states/menu.rs`: deleted `handle_view_menu`/`handle_view_schedule`** (dead FSM
+  handlers, only caller was the now-`unreachable!()` `transition()` arm) plus their now-orphaned
+  private helpers `with_retry_message`/`target_phone` and the 3 tests that only exercised them.
+  `handle_main_menu` and the `*_actions` builders it uses stay — `handle_main_menu` still has a
+  live caller (`AgentChat`'s match arm).
+
 ## [1.23.5] - 2026-08-12
 
 ### Changed
