@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.9] - 2026-08-12
+
+### Removed
+- **`src/bot/states/order.rs`: deleted `handle_select_type`/`handle_select_flavor`/
+  `handle_select_quantity`/`handle_add_more`/`handle_confirm_restart_order`** (dead FSM handlers)
+  plus the helpers/consts only they used (`select_flavor_actions`, `select_quantity_actions`,
+  `add_more_actions`, `confirm_restart_order_actions`, `flavor_rows`, `partial_summary`,
+  `restart_order_transition`, `retry_actions`, `selection_id`, and the `ADD_MORE`/`FINISH_ORDER`/
+  `RESTART_ORDER`/`CONFIRM_RESTART_ORDER`/`CANCEL_RESTART_ORDER`/`LIQUOR_FLAVOR_IDS`/
+  `NON_LIQUOR_FLAVOR_IDS` consts) and their 10 tests. `select_type_actions`, `validate_quantity`,
+  and `flavor_by_id` stay — live callers in `customer_data.rs` and `src/ai/tools.rs`.
+
 ## [1.23.8] - 2026-08-12
 
 ### Removed
