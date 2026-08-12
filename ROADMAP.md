@@ -141,24 +141,22 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
 
 ## Orden de ejecución
 
-### 1. CTWA + Conversions API — falta solo credenciales
+### 1. CTWA + Conversions API — credenciales ya cargadas, falta un pedido real vía anuncio
 
 **Todo el código está listo** (captura de `ctwa_clid`, migración, cliente CAPI fail-silent, wireado
-al momento real de compra). Lo único que falta:
+al momento real de compra) y **`WABA_ID`/`META_CAPI_DATASET_ID`/`META_CAPI_ACCESS_TOKEN` ya están
+cargadas en Railway** (verificado 2026-08-12). El pipeline se probó de extremo a extremo en la
+ronda de test E2E del 2026-08-12: al confirmarse el pedido de prueba (id 35), el bot sí llamó a
+`capi::report_purchase` y sí llegó a Meta — Meta respondió `400 Missing Ctwa Clid` porque ese pedido
+no vino de un clic real en un anuncio (era una conversación de prueba manual), lo cual es la
+respuesta correcta y esperada, no un fallo: confirma que el dataset ID y el access token son
+válidos y que Meta procesa el payload.
 
-1. **Samuel consigue Dataset ID + access token** desde Meta Business Manager. Flujo (WhatsApp
-   Business Messaging, distinto del Pixel de sitio web):
-   - Permisos `whatsapp_business_management` + `whatsapp_business_manage_events` en la app de
-     desarrollador (Advanced Access).
-   - Confirmar "Marketing API Access Tier" (gate de Meta: 1.500 llamadas exitosas en 15 días — puede
-     ya estar satisfecho una vez la pauta esté corriendo).
-   - `POST https://graph.facebook.com/v21.0/{WABA_ID}/dataset?access_token={TOKEN}` → devuelve
-     `dataset_id`. El `WABA_ID` es el mismo que usa la suscripción del webhook.
-   - Token: Business Settings → System Users → generar uno con esos dos scopes, sin expiración.
-2. Cargar `WABA_ID`, `META_CAPI_DATASET_ID`, `META_CAPI_ACCESS_TOKEN` en Railway.
-3. Verificar en la consola de Meta (Events Manager → dataset) que empiezan a llegar eventos
-   `Purchase` tras un pedido confirmado real.
-4. **Cambiar el evento de optimización** en Meta de "Conversaciones" a "Compras" cuando haya volumen
+Lo único que falta:
+1. Verificar en la consola de Meta (Events Manager → dataset) que un evento `Purchase` real
+   (`ctwa_clid` presente) llega y se registra, con un pedido que sí haya entrado por un clic de
+   anuncio — bloqueado en que la campaña de Meta Ads esté corriendo, no en código.
+2. **Cambiar el evento de optimización** en Meta de "Conversaciones" a "Compras" cuando haya volumen
    (~50 compras/semana).
 
 Detalle completo: `../docs/PENDIENTE_capi_meta.md`.
@@ -174,17 +172,31 @@ y probada punta a punta en producción varias veces, incluyendo la ronda de test
 (ver "Ya shippeado" arriba). Esto ya no es un bloqueo — lo que sigue es la limpieza de código muerto
 de abajo, que puede avanzar en cualquier momento sin depender de nada externo.
 
-**Lo que queda, sin bloqueo externo**: hallazgo clave de la sesión que lo investigó — el plan
-original ("borrar por archivo si `src/ai/` no lo importa") **estaba mal**: `transition()` sigue
-siendo código vivo hoy para ~15 estados de hand-off (`WaitAdvisorResponse`, `RelayMode`,
-`SelectReferralOption`, etc. — lista completa en el doc de abajo), y varias funciones `*_actions` de
-`menu.rs`/`checkout.rs`/`order.rs`/`data_collect.rs`/`scheduling.rs`/`customer_data.rs` las comparten
-con `advisor.rs`. El borrado real que queda es **función por función, no archivo por archivo**.
+**Ronda función-por-función ejecutada (2026-08-12, v1.23.5–v1.23.11)**: `transition()` sigue vivo
+hoy para los ~15 estados de hand-off no agent-owned (`WaitAdvisorResponse`, `RelayMode`,
+`SelectReferralOption`, etc. — confirmado con una conversación real de producción, `573219864356`,
+todavía sentada en `wait_advisor_response` desde 2026-03-23; ese subgrafo **no se tocó**, sigue
+siendo alcanzable). Lo que sí se confirmó y se borró: los 25 handlers que `transition()` despachaba
+para estados **agent-owned** — provablemente muertos, porque `should_use_agent`
+(`engine::is_agent_owned_state`) intercepta esos estados antes de que `transition()` se llame nunca
+con ellos. Verificado función por función con grep (no por archivo), sus arms en `transition()` ahora
+son `unreachable!()` con el motivo citado inline. Resultado: **~1.966 líneas netas borradas** (25
+handlers + ~20 helpers `*_actions`/render/validación que quedaron huérfanos + 32 tests que solo
+probaban código muerto), `cargo test` en 200/0/5 (antes 232/0/5). Commits `1e85124`…`5dbea55`,
+locales, sin push todavía.
 
-Plan corregido y lista de funciones candidatas (`handle_review_checkout`,
-`handle_select_payment_method`, `handle_main_menu`, etc. — los handlers de estados agent-owned, que
-sí parecen genuinamente muertos pero faltan verificar con grep antes de borrar):
-`docs/CLEANUP_deterministic_engine.md` (reescrito esta sesión con los hallazgos).
+**Lo que queda pendiente de esta limpieza** (encontrado como efecto colateral, fuera de alcance de
+esta ronda a propósito — cruza a `advisor.rs`, que estaba en la lista de "no tocar"):
+`start_waiting_for_contact_advisor`, `final_order_packet_actions`, `render_final_order_status`,
+`render_contact_request` en `src/bot/states/advisor.rs` quedaron sin ningún llamador tras borrar los
+handlers de `customer_data.rs`/`checkout.rs` que los alcanzaban — `cargo check` avisa dead-code en 3
+de los 4. Además, `confirm_address_actions`/`change_address_prompt_actions` en `checkout.rs` son
+código muerto preexistente, sin relación con esta ronda. Ninguno se borró por precaución — requieren
+el mismo ejercicio de verificación cruzada, próxima sesión de limpieza.
+
+`transition()` en sí sigue sin poder borrarse completo (sección 5 de
+`docs/CLEANUP_deterministic_engine.md` explica por qué: separar `ConversationState` en dos enums es
+un cambio de diseño más grande, fuera de alcance de una limpieza mecánica).
 
 ---
 
