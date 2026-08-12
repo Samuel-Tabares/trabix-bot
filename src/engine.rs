@@ -131,10 +131,14 @@ pub async fn process_customer_input(
     let transition_resets_conversation = actions
         .iter()
         .any(|action| matches!(action, BotAction::ResetConversation { .. }));
+    let order_just_confirmed = actions.iter().any(
+        |action| matches!(action, BotAction::UpsertDraftOrder { status } if status == "confirmed"),
+    );
     actions.extend(sync_customer_inactivity_timer(
         &new_state,
         &mut context,
         transition_resets_conversation,
+        order_just_confirmed,
     ));
     tracing::info!(
         actor = "customer",
@@ -441,10 +445,14 @@ pub async fn process_advisor_turn_for_case(
     let transition_resets_conversation = actions
         .iter()
         .any(|action| matches!(action, BotAction::ResetConversation { .. }));
+    let order_just_confirmed = actions.iter().any(
+        |action| matches!(action, BotAction::UpsertDraftOrder { status } if status == "confirmed"),
+    );
     actions.extend(sync_customer_inactivity_timer(
         &new_state,
         &mut context,
         transition_resets_conversation,
+        order_just_confirmed,
     ));
     tracing::info!(
         actor = "advisor",

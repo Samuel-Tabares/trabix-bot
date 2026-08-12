@@ -212,19 +212,27 @@ Reglas que no puedes romper:
   herramienta en un mensaje aparte. NUNCA escribas tú los datos de cuenta/llaves/banco en tu \
   propia respuesta — no los tienes, cualquier intento de recordarlos o inventarlos sale mal. \
   Solo confirma brevemente que ya le llegaron y que quedas atent@ al comprobante.
-- El pedido NO queda confirmado hasta que set_payment_method retorne exito. Nunca le digas al \
-  cliente que su pedido esta "confirmado", "listo" o "en camino" si todavia no llamaste \
-  set_payment_method con exito en este caso. Si el cliente ya te habia dicho el metodo de pago \
-  antes de que el asesor confirmara disponibilidad, cuando vuelva a escribir DEBES llamar \
-  set_payment_method con ese metodo (no asumas que ya quedo registrado).
+- CONTRA ENTREGA confirma el pedido de una vez (set_payment_method basta). TRANSFERENCIA es distinta \
+  y tiene DOS pasos, no uno: cuando llega la imagen del comprobante el sistema la registra solo \
+  (no llames ninguna tool para eso) y le avisa al cliente que un asesor va a verificar el pago — \
+  pero el pedido SIGUE SIN CONFIRMAR en ese momento. Solo se confirma cuando, en un turno del \
+  ASESOR, éste te diga explícitamente que YA VERIFICÓ en el banco que la plata llegó (ej. \
+  "confirmado", "sí llegó", "listo pagó") — ahí llamas confirm_payment_received, nunca antes. Una \
+  imagen de comprobante NO es lo mismo que un pago verificado.
+- El pedido NO queda confirmado hasta que set_payment_method (contra entrega) o \
+  confirm_payment_received (transferencia, verificado por el asesor) retornen éxito. Nunca le digas \
+  al cliente que su pedido esta "confirmado", "listo" o "en camino" antes de eso. Si el cliente ya \
+  te habia dicho el metodo de pago antes de que el asesor confirmara disponibilidad, cuando vuelva \
+  a escribir DEBES llamar set_payment_method con ese metodo (no asumas que ya quedo registrado).
 - No prometas nada que no puedas confirmar con una herramienta.
 - FORMATO WhatsApp: para negrilla usa UN solo asterisco (*así*), nunca dobles (**así** se ve mal \
   en WhatsApp). Para resúmenes y pedidos usa listas con guiones, queda más ordenado.
 - El cliente YA recibió un saludo de bienvenida automático antes de que tú entraras, así que no \
   vuelvas a saludar con un mensaje de bienvenida largo ni repitas el menú de opciones: responde \
   directo a lo que pide. Toda la conversación es por texto natural; NUNCA uses botones ni listas.
-- DESPUÉS DE CONFIRMAR: cuando un pedido ya quedó confirmado (pagó contra entrega o mandó \
-  comprobante) y el cliente escribe de nuevo en el mismo chat, distingue qué quiere: si quiere \
+- DESPUÉS DE CONFIRMAR: cuando un pedido ya quedó confirmado (contra entrega, o transferencia con \
+  el pago ya verificado por el asesor) y el cliente escribe de nuevo en el mismo chat, distingue \
+  qué quiere: si quiere \
   CAMBIAR ese mismo pedido (otro sabor, otra cantidad, quitar algo), llama modify_confirmed_order, \
   ajusta los items y vuelve a hacer el cierre — se actualiza LA MISMA orden, nunca crees otra ni \
   llames finalize_checkout sobre el pedido ya confirmado. Si quiere pedir algo APARTE (un pedido \
@@ -500,11 +508,16 @@ async fn run_case_turn(
         match action {
             BotAction::SendText { to, body } => {
                 *body = normalize_whatsapp_markdown(body);
-                *body = sanitize_hallucinated_amounts(body, &known_amounts, to);
+                *body = sanitize_hallucinated_amounts(body, &known_amounts, to, false);
             }
             BotAction::NotifyAdvisor { body } => {
                 *body = normalize_whatsapp_markdown(body);
-                *body = sanitize_hallucinated_amounts(body, &known_amounts, &context.phone_number);
+                *body = sanitize_hallucinated_amounts(
+                    body,
+                    &known_amounts,
+                    &context.phone_number,
+                    true,
+                );
             }
             _ => {}
         }
@@ -551,33 +564,41 @@ fn try_handle_receipt_shortcut(
     context.receipt_timer_started_at = None;
     context.receipt_timer_expired = false;
 
-    let mut actions = vec![BotAction::CancelTimer {
-        timer_type: TimerType::ReceiptUpload,
-        phone: context.phone_number.clone(),
-    }];
-    let (is_modification, confirm_actions) = confirm_order_bookkeeping(context);
-    actions.extend(confirm_actions);
-    let summary = advisor_case_summary(context);
-    let advisor_label = if is_modification {
-        "✏️ Pedido MODIFICADO (pago por transferencia)"
-    } else {
-        "Pedido confirmado (pago por transferencia)"
-    };
-    // El comprobante en sí no se reenvía al asesor: ya quedó visible en el
-    // trace de `message_events` bajo channel='client' cuando el cliente lo
-    // subió (`log_inbound_event`), y `crm-app` muestra el trace completo por
-    // caso, no solo el carril del asesor.
-    actions.extend([
+    // El comprobante NO confirma el pedido por sí solo — un asesor tiene que
+    // verificar en el banco que la plata sí llegó antes de que se marque
+    // "confirmed" (decisión de Samuel, 2026-08-12: el pedido se confirma
+    // manual, después de verificar, y se despacha después). `confirm_order_bookkeeping`
+    // (analytics, dirección, snapshot) solo corre cuando el asesor lo aprueba
+    // con `confirm_payment_received`. El comprobante en sí no se reenvía como
+    // imagen al asesor: ya quedó visible en el trace de `message_events` bajo
+    // channel='client' cuando el cliente lo subió, y `crm-app` muestra el
+    // trace completo por caso, no solo el carril del asesor.
+    let actions = vec![
+        BotAction::CancelTimer {
+            timer_type: TimerType::ReceiptUpload,
+            phone: context.phone_number.clone(),
+        },
         BotAction::NotifyAdvisor {
-            body: format!("{advisor_label}:\n\n{summary}"),
+            body: format!(
+                "🧾 Comprobante recibido, PENDIENTE de verificar en el banco. Si el pago sí \
+                 llegó, contesta confirmando (ej. \"confirmado\", \"sí llegó\") para cerrar el \
+                 pedido:\n\n{}",
+                advisor_case_summary(context)
+            ),
         },
         BotAction::SendText {
             to: context.phone_number.clone(),
-            body: "¡Comprobante recibido! Tu pedido quedó confirmado 🎉".to_string(),
+            body: "¡Comprobante recibido! 📄 Un asesor va a verificar que el pago llegó y te \
+                   confirmamos en un momento 🙏"
+                .to_string(),
         },
-    ]);
+    ];
 
-    Some((ConversationState::MainMenu, actions))
+    // Se queda en WaitReceipt (no MainMenu): sigue siendo, literalmente,
+    // "esperando el comprobante" hasta que alguien lo verifique — así
+    // confirm_payment_received puede seguir siendo un tool del motor de
+    // agente para este caso (WaitReceipt es agent-owned).
+    Some((ConversationState::WaitReceipt, actions))
 }
 
 fn format_inbound_message(actor: Actor, input: &UserInput) -> String {
@@ -686,9 +707,18 @@ fn build_dynamic_case_state(
              llama set_payment_method."
                 .to_string()
         }
+        ConversationState::WaitReceipt if context.receipt_media_id.is_some() => {
+            "\nFase del flujo: el comprobante YA llegó y el sistema ya le avisó al cliente que un \
+             asesor lo va a verificar — no le repitas ese aviso. El pedido SIGUE SIN CONFIRMAR: \
+             solo se confirma cuando el ASESOR te diga explícitamente que verificó el pago en el \
+             banco (ahí llamas confirm_payment_received). Una imagen de comprobante no es lo \
+             mismo que un pago verificado."
+                .to_string()
+        }
         ConversationState::WaitReceipt => {
             "\nFase del flujo: esperando el comprobante de transferencia del cliente. El pedido \
-             NO está confirmado hasta recibirlo."
+             NO está confirmado hasta que llegue Y el asesor verifique el pago con \
+             confirm_payment_received."
                 .to_string()
         }
         _ => String::new(),
@@ -959,6 +989,16 @@ fn dispatch_tool(
                 ));
             }
             set_payment_method(id, input, context)
+        }
+        "confirm_payment_received" => {
+            if actor != Actor::Advisor {
+                return ToolOutcome::Result(error_result(
+                    id,
+                    "confirm_payment_received solo se puede usar interpretando un mensaje real \
+                     del asesor.",
+                ));
+            }
+            confirm_payment_received(id, context)
         }
         "cancel_order" => cancel_order(id, context),
         "remember_about_customer" => remember_about_customer(id, input, context),
@@ -1435,6 +1475,37 @@ fn select_saved_address(
     }
 }
 
+/// Adjunta el aviso de "ya tenemos el costo, ¿cómo pagas?" directo al
+/// cliente. Solo tiene efecto sobre `ResultWithStateChange` (lo único que
+/// devuelve `auto_accept_order`); cualquier otra variante se deja intacta.
+fn append_customer_notice_for_advisor_quote(
+    outcome: ToolOutcome,
+    context: &ConversationContext,
+    total_final: i32,
+) -> ToolOutcome {
+    // Envío nacional es solo transferencia (ver set_payment_method) — no le
+    // ofrezcas contra entrega como opción acá tampoco.
+    let payment_prompt = if context.pending_zone_kind.as_deref() == Some("national") {
+        "Este envío es solo por transferencia (el flete va incluido). ¿Te paso los datos?"
+    } else {
+        "¿Cómo prefieres pagar: transferencia o contra entrega?"
+    };
+    let notice = BotAction::SendText {
+        to: context.phone_number.clone(),
+        body: format!(
+            "¡Ya tenemos el costo de tu envío! 📦 Tu pedido queda en total *${}*. {payment_prompt}",
+            format_thousands(u32::try_from(total_final).unwrap_or(0))
+        ),
+    };
+    match outcome {
+        ToolOutcome::ResultWithStateChange(block, state, mut actions) => {
+            actions.push(notice);
+            ToolOutcome::ResultWithStateChange(block, state, actions)
+        }
+        other => other,
+    }
+}
+
 fn set_manual_delivery_cost(
     id: &str,
     input: &Value,
@@ -1470,7 +1541,17 @@ fn set_manual_delivery_cost(
     // todavía no hay pedido (se está resolviendo la zona antes de
     // finalize_checkout), solo se guarda el costo y el flujo normal continúa.
     if can_auto_accept(context) && context.current_order_id.is_some() {
-        return auto_accept_order(id, context, delivery_cost);
+        // Este tool solo se llama en un turno del ASESOR (guard en
+        // dispatch_tool), así que el texto plano del modelo por defecto le
+        // llega al asesor, no al cliente (ver SYSTEM_PROMPT). El cliente
+        // lleva esperando esta cotización — encontrado en vivo (2026-08-12):
+        // el modelo escribió la confirmación como texto normal y quedó
+        // atrapada en el carril del asesor, el cliente nunca se enteró de
+        // que su pedido quedó listo. Se manda determinísticamente en vez de
+        // confiar en que el modelo se acuerde de usar message_customer.
+        let outcome = auto_accept_order(id, context, delivery_cost);
+        let total_final = context.total_final.unwrap_or(delivery_cost);
+        return append_customer_notice_for_advisor_quote(outcome, context, total_final);
     }
 
     context.delivery_cost = Some(delivery_cost);
@@ -1565,6 +1646,58 @@ fn confirm_order_bookkeeping(context: &mut ConversationContext) -> (bool, Vec<Bo
         phone_number_meta: context.phone_number.clone(),
     });
     (is_modification, actions)
+}
+
+/// El asesor verificó en el banco que el pago del comprobante sí llegó: acá
+/// es donde de verdad se confirma el pedido (decisión de Samuel, 2026-08-12
+/// — el comprobante por sí solo ya NO confirma nada, ver
+/// `try_handle_receipt_shortcut`). Reusa el mismo bookkeeping que contra
+/// entrega; lo único distinto es el gate de "hay comprobante que verificar" y
+/// que el aviso al cliente sale determinístico (mismo motivo que
+/// `append_customer_notice_for_advisor_quote`: este es un turno del asesor,
+/// así que el texto plano del modelo no le llega al cliente).
+fn confirm_payment_received(id: &str, context: &mut ConversationContext) -> ToolOutcome {
+    if context.receipt_media_id.is_none() {
+        return ToolOutcome::Result(error_result(
+            id,
+            "Todavía no ha llegado ningún comprobante para este pedido — no hay nada que \
+             verificar aún.",
+        ));
+    }
+    if context.order_confirmed {
+        return ToolOutcome::Result(error_result(
+            id,
+            "Este pedido ya está confirmado, no hace falta volver a confirmarlo.",
+        ));
+    }
+
+    let (is_modification, mut actions) = confirm_order_bookkeeping(context);
+    let advisor_label = if is_modification {
+        "✅ Pago verificado, pedido MODIFICADO confirmado"
+    } else {
+        "✅ Pago verificado, pedido confirmado"
+    };
+    actions.push(BotAction::NotifyAdvisor {
+        body: advisor_label.to_string(),
+    });
+    let total_text = context
+        .total_final
+        .map(|total| format_thousands(u32::try_from(total).unwrap_or(0)));
+    actions.push(BotAction::SendText {
+        to: context.phone_number.clone(),
+        body: match total_text {
+            Some(total) => format!(
+                "¡Tu pago fue verificado! 🎉 Tu pedido quedó confirmado. Total: ${total}"
+            ),
+            None => "¡Tu pago fue verificado! 🎉 Tu pedido quedó confirmado.".to_string(),
+        },
+    });
+
+    ToolOutcome::ResultWithStateChange(
+        ok_result(id, "Pago verificado, pedido confirmado."),
+        ConversationState::MainMenu,
+        actions,
+    )
 }
 
 const MAX_QUICK_REPLY_BUTTONS: usize = 3;
@@ -2275,6 +2408,7 @@ fn sanitize_hallucinated_amounts(
     body: &str,
     known_amounts: &std::collections::HashSet<String>,
     phone: &str,
+    is_advisor: bool,
 ) -> String {
     let mentioned = extract_currency_amounts(body);
     let hallucinated: Vec<&String> = mentioned
@@ -2292,8 +2426,18 @@ fn sanitize_hallucinated_amounts(
         hallucinated = ?hallucinated,
         "blocked outgoing message: mentions a $ amount not backed by any tool-result"
     );
-    "Dame un momento, estoy verificando las cifras exactas de tu pedido antes de confirmarte 🙏"
-        .to_string()
+    // El texto de reemplazo tiene que sonar coherente con a quién le llega —
+    // encontrado en vivo (2026-08-12): el mismo texto en segunda persona
+    // ("tu pedido", "antes de confirmarte") le salía al ASESOR vía
+    // NotifyAdvisor cuando el disparo era `message_advisor`, lo cual no
+    // tiene sentido ahí.
+    if is_advisor {
+        "(mensaje bloqueado: mencionaba una cifra no verificada; el bot va a reintentar)"
+            .to_string()
+    } else {
+        "Dame un momento, estoy verificando las cifras exactas de tu pedido antes de confirmarte 🙏"
+            .to_string()
+    }
 }
 
 fn tool_definitions() -> Vec<ToolDefinition> {
@@ -2562,6 +2706,11 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "confirm_payment_received".to_string(),
+            description: "SOLO el asesor: úsala cuando el asesor te diga que YA VERIFICÓ en el banco que el pago del comprobante llegó de verdad (ej. \"confirmado\", \"sí llegó\", \"listo pagó\"). Es lo único que marca el pedido como confirmado cuando el método de pago fue transferencia — nunca lo asumas solo porque llegó una imagen de comprobante.".to_string(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+        },
+        ToolDefinition {
             name: "cancel_order".to_string(),
             description: "Cancela el pedido actual por completo. Confirma con el cliente antes de llamarla.".to_string(),
             input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
@@ -2705,7 +2854,7 @@ mod tests {
         known.insert("$44.000".to_string());
         let body = "Tu total es $44.000, ¿confirmamos?";
         assert_eq!(
-            sanitize_hallucinated_amounts(body, &known, "3000000000"),
+            sanitize_hallucinated_amounts(body, &known, "3000000000", false),
             body
         );
     }
@@ -2714,9 +2863,20 @@ mod tests {
     fn sanitize_blocks_text_with_an_unbacked_amount() {
         let known = std::collections::HashSet::new();
         let body = "Tu total es $925.000, ¿confirmamos?";
-        let sanitized = sanitize_hallucinated_amounts(body, &known, "3000000000");
+        let sanitized = sanitize_hallucinated_amounts(body, &known, "3000000000", false);
         assert_ne!(sanitized, body);
         assert!(!sanitized.contains('$'));
+    }
+
+    #[test]
+    fn sanitize_uses_advisor_appropriate_wording_when_blocked() {
+        let known = std::collections::HashSet::new();
+        let body = "Confírmale que el total es $925.000";
+        let sanitized = sanitize_hallucinated_amounts(body, &known, "3000000000", true);
+        assert_ne!(sanitized, body);
+        assert!(!sanitized.contains('$'));
+        // No debe sonar como si le habláramos al cliente en segunda persona.
+        assert!(!sanitized.to_lowercase().contains("tu pedido"));
     }
 
     #[test]
@@ -2769,7 +2929,7 @@ mod tests {
         let known = std::collections::HashSet::new();
         let body = "¿Me confirmas tu dirección?";
         assert_eq!(
-            sanitize_hallucinated_amounts(body, &known, "3000000000"),
+            sanitize_hallucinated_amounts(body, &known, "3000000000", false),
             body
         );
     }
@@ -3681,13 +3841,70 @@ mod tests {
 
         assert!(result.is_some());
         let (state, actions) = result.unwrap();
-        assert_eq!(state, ConversationState::MainMenu);
+        // Sigue en WaitReceipt: el comprobante llegó pero el pedido no se
+        // confirma solo — falta que el asesor verifique el pago (ver
+        // confirm_payment_received).
+        assert_eq!(state, ConversationState::WaitReceipt);
+        assert_eq!(context.receipt_media_id.as_deref(), Some("media_123"));
+        assert!(!context.order_confirmed);
         // El comprobante ya no se reenvía como imagen al asesor (queda visible
         // vía channel='client' desde que el cliente lo subió); el asesor solo
         // recibe la notificación de texto.
         assert!(actions
             .iter()
             .any(|action| matches!(action, BotAction::NotifyAdvisor { .. })));
+    }
+
+    #[test]
+    fn confirm_payment_received_rejects_without_a_receipt() {
+        let mut context = test_context();
+        context.receipt_media_id = None;
+
+        let outcome = confirm_payment_received("id_1", &mut context);
+
+        assert!(matches!(outcome, ToolOutcome::Result(_)));
+        assert!(!context.order_confirmed);
+    }
+
+    #[test]
+    fn confirm_payment_received_rejects_when_already_confirmed() {
+        let mut context = test_context();
+        context.receipt_media_id = Some("media_123".to_string());
+        context.order_confirmed = true;
+
+        let outcome = confirm_payment_received("id_1", &mut context);
+
+        assert!(matches!(outcome, ToolOutcome::Result(_)));
+    }
+
+    #[test]
+    fn confirm_payment_received_confirms_order_and_notifies_customer() {
+        let mut context = test_context();
+        context.receipt_media_id = Some("media_123".to_string());
+        context.payment_method = Some("transfer".to_string());
+        context.total_final = Some(246_800);
+
+        let outcome = confirm_payment_received("id_1", &mut context);
+
+        assert!(context.order_confirmed);
+        match outcome {
+            ToolOutcome::ResultWithStateChange(_, state, actions) => {
+                assert_eq!(state, ConversationState::MainMenu);
+                assert!(actions
+                    .iter()
+                    .any(|action| matches!(action, BotAction::NotifyAdvisor { .. })));
+                assert!(actions.iter().any(|action| matches!(
+                    action,
+                    BotAction::SendText { to, body }
+                        if to == &context.phone_number && body.contains("246.800")
+                )));
+                assert!(actions.iter().any(|action| matches!(
+                    action,
+                    BotAction::UpsertDraftOrder { status } if status == "confirmed"
+                )));
+            }
+            _ => panic!("expected a state change"),
+        }
     }
 
     #[test]

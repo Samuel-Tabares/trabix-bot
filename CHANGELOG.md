@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-08-12
+
+### Fixed
+- **La confirmación del pedido, tras la cotización del asesor, se quedaba atrapada en el carril
+  interno.** Cuando el asesor respondía el costo de un domicilio manual/nacional y el pedido se
+  autoaceptaba en el mismo turno, el texto del modelo ("ya tenemos tu total, ¿cómo pagas?") es
+  texto plano de un turno de ASESOR, así que le llegaba a él, no al cliente — que se quedaba sin
+  saber que su pedido ya estaba listo. `set_manual_delivery_cost` ahora manda ese aviso al cliente
+  de forma determinística (`append_customer_notice_for_advisor_quote`), sin depender de que el
+  modelo se acuerde de cruzar de audiencia.
+- **El texto de "cifra no verificada" del guard anti-alucinación sonaba a que le hablaba al
+  cliente incluso cuando bloqueaba un mensaje dirigido al asesor.** `sanitize_hallucinated_amounts`
+  ahora recibe si el destino es el asesor y usa una frase acorde en vez del "Dame un momento,
+  estoy verificando las cifras exactas de tu pedido..." en segunda persona.
+- **El recordatorio de inactividad (2 min) podía dispararse justo después de confirmar un
+  pedido.** Volver a `MainMenu` tras confirmar (contra entrega o pago verificado) armaba el mismo
+  timer que usa cualquier otra visita a `MainMenu`, así que el cliente podía recibir un "¿sigues
+  por ahí? cuando quieras seguimos con tu pedido" segundos después de que su pedido ya había
+  quedado confirmado. `sync_customer_inactivity_timer` ahora recibe si este turno confirmó un
+  pedido y, si sí, no arma el timer.
+
+### Changed
+- **El comprobante de transferencia ya NO confirma el pedido por sí solo — decisión de Samuel
+  (2026-08-12): la confirmación es manual, después de que el asesor verifica en el banco que la
+  plata sí llegó, y el despacho sigue siendo un paso aparte.** `try_handle_receipt_shortcut` ahora
+  solo registra el comprobante, cancela el timer de espera, le avisa al asesor que hay un
+  comprobante PENDIENTE de verificar y le dice al cliente que un asesor va a confirmar en un
+  momento — el caso se queda en `WaitReceipt` (no `MainMenu`), sigue siendo agent-owned. Nuevo tool
+  `confirm_payment_received` (solo turnos de asesor): lo llama el modelo cuando el asesor confirma
+  explícitamente que verificó el pago ("confirmado", "sí llegó"); ahí sí corre
+  `confirm_order_bookkeeping` (analytics, dirección, snapshot) y se le avisa al cliente
+  determinísticamente, mismo motivo que el aviso de cotización de arriba.
+
 ## [1.22.0] - 2026-08-12
 
 ### Changed

@@ -10,10 +10,16 @@ pub fn sync_customer_inactivity_timer(
     state: &ConversationState,
     context: &mut ConversationContext,
     transition_resets_conversation: bool,
+    order_just_confirmed: bool,
 ) -> Vec<BotAction> {
     let phone = context.phone_number.clone();
 
-    if transition_resets_conversation || !uses_customer_inactivity_timer(state) {
+    // Un pedido recién confirmado aterriza en MainMenu, que sí usa este
+    // timer — pero no hay nada pendiente que recordarle al cliente.
+    // Encontrado en vivo (2026-08-12): a los 2 minutos de recibir "tu pedido
+    // quedó confirmado" le llegaba "¿Sigues por ahí? cuando quieras seguimos
+    // con tu pedido", contradiciendo lo que se le acababa de decir.
+    if transition_resets_conversation || order_just_confirmed || !uses_customer_inactivity_timer(state) {
         clear_customer_inactivity_tracking(context);
         return vec![BotAction::CancelTimer {
             timer_type: TimerType::ConversationAbandon,
