@@ -88,19 +88,13 @@ pub struct AgentMessages {
 pub struct MenuMessages {
     pub main_welcome: String,
     pub main_list_body: String,
-    pub main_list_button_text: String,
-    pub main_section_title: String,
     pub make_order_title: String,
-    pub make_order_description: String,
     pub view_menu_title: String,
-    pub view_menu_description: String,
-    pub retry_main_menu: String,
     pub menu_image_caption: String,
     pub menu_text: String,
     pub view_menu_buttons_body: String,
     pub view_menu_make_order_button: String,
     pub view_menu_back_button: String,
-    pub retry_view_menu: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -108,24 +102,8 @@ pub struct SchedulingMessages {
     pub when_delivery_body: String,
     pub immediate_button: String,
     pub scheduled_button: String,
-    pub retry_when_delivery: String,
     pub out_of_hours_text: String,
-    pub out_of_hours_buttons_body: String,
-    pub out_of_hours_schedule_button: String,
-    pub out_of_hours_advisor_button: String,
-    pub out_of_hours_menu_button: String,
-    pub out_of_hours_retry: String,
     pub select_date_prompt: String,
-    pub select_date_retry_non_text: String,
-    pub date_length_error: String,
-    pub select_time_prompt: String,
-    pub select_time_retry_non_text: String,
-    pub time_length_error: String,
-    pub confirm_template: String,
-    pub confirm_buttons_body: String,
-    pub confirm_button: String,
-    pub change_button: String,
-    pub confirm_retry: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,9 +111,6 @@ pub struct DataCollectMessages {
     pub ask_name: String,
     pub ask_phone: String,
     pub ask_address: String,
-    pub retry_name_non_text: String,
-    pub retry_phone_non_text: String,
-    pub retry_address_non_text: String,
     pub name_length_error: String,
     pub phone_digits_error: String,
     pub phone_length_error: String,
@@ -147,42 +122,15 @@ pub struct OrderMessages {
     pub select_type_body: String,
     pub with_liquor_button: String,
     pub without_liquor_button: String,
-    pub retry_select_type: String,
-    pub select_flavor_with_liquor_body: String,
-    pub select_flavor_without_liquor_body: String,
-    pub flavor_button_text: String,
-    pub flavor_section_title: String,
-    pub flavor_row_description: String,
-    pub retry_select_flavor: String,
     pub flavors_with_liquor: BTreeMap<String, String>,
     pub flavors_without_liquor: BTreeMap<String, String>,
-    pub quantity_prompt_template: String,
-    pub quantity_kind_with_liquor: String,
-    pub quantity_kind_without_liquor: String,
-    pub retry_quantity_non_text: String,
     pub quantity_parse_error: String,
     pub quantity_range_error: String,
-    pub added_to_order_template: String,
-    pub partial_summary_line_template: String,
-    pub partial_kind_with_liquor: String,
-    pub partial_kind_without_liquor: String,
-    pub add_more_body: String,
-    pub add_more_button: String,
-    pub finish_order_button: String,
-    pub restart_order_button: String,
-    pub retry_add_more: String,
-    pub confirm_restart_order_body: String,
-    pub confirm_restart_order_button: String,
-    pub cancel_restart_order_button: String,
-    pub retry_confirm_restart_order: String,
-    pub restart_order_success_text: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CheckoutMessages {
-    pub receipt_image_required: String,
     pub change_address_prompt: String,
-    pub change_address_non_text: String,
     pub summary_template: String,
     pub summary_delivery_immediate: String,
     pub summary_delivery_scheduled_template: String,
@@ -213,11 +161,6 @@ pub struct CheckoutMessages {
     pub change_phone_button: String,
     pub change_address_button: String,
     pub transfer_payment_text: String,
-    pub wait_receipt_prompt: String,
-    pub receipt_timeout_body: String,
-    pub receipt_timeout_change_payment_button: String,
-    pub receipt_timeout_cancel_button: String,
-    pub final_order_success_text: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -245,8 +188,6 @@ pub struct AdvisorCustomerMessages {
     pub wait_general_text: String,
     pub availability_wait_text: String,
     pub wholesale_wait_text: String,
-    pub order_sent_text: String,
-    pub scheduled_order_sent_text: String,
     pub wholesale_order_sent_text: String,
     pub proposed_hour_question_template: String,
     pub proposed_hour_buttons_body: String,
@@ -258,7 +199,6 @@ pub struct AdvisorCustomerMessages {
     pub hour_length_error: String,
     pub confirmed_order_template: String,
     pub scheduled_payment_ready_template: String,
-    pub scheduled_confirmation_template: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -273,7 +213,6 @@ pub struct RelayCustomerMessages {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TimerCustomerMessages {
     pub receipt_timeout_text: String,
-    pub receipt_timeout_buttons_body: String,
     pub advisor_timeout_text: String,
     pub advisor_timeout_wholesale_text: String,
     pub advisor_stuck_timeout_text: String,
@@ -285,7 +224,6 @@ pub struct TimerCustomerMessages {
     pub contact_timeout_leave_message_button: String,
     pub contact_timeout_menu_button: String,
     pub relay_timeout_text: String,
-    pub conversation_inactivity_reset_text: String,
     pub agent_inactivity_nudge_text: String,
 }
 
@@ -314,26 +252,6 @@ impl ClientMessages {
             &self.menu.main_welcome,
             &["business_hours"],
             "menu.main_welcome",
-        )?;
-        validate_template(
-            &self.scheduling.confirm_template,
-            &["date", "time"],
-            "scheduling.confirm_template",
-        )?;
-        validate_template(
-            &self.order.quantity_prompt_template,
-            &["flavor", "kind"],
-            "order.quantity_prompt_template",
-        )?;
-        validate_template(
-            &self.order.added_to_order_template,
-            &["summary"],
-            "order.added_to_order_template",
-        )?;
-        validate_template(
-            &self.order.partial_summary_line_template,
-            &["quantity", "flavor", "kind"],
-            "order.partial_summary_line_template",
         )?;
         validate_template(
             &self.checkout.summary_template,
@@ -407,11 +325,6 @@ impl ClientMessages {
                 "total_final",
             ],
             "advisor_customer.scheduled_payment_ready_template",
-        )?;
-        validate_template(
-            &self.advisor_customer.scheduled_confirmation_template,
-            &["date", "time"],
-            "advisor_customer.scheduled_confirmation_template",
         )?;
         validate_keys(
             &self.order.flavors_with_liquor,
@@ -554,23 +467,20 @@ mod tests {
             messages.menu.main_list_body,
             "¿Qué te gustaría hacer ahora? 👇"
         );
-        assert_eq!(
-            messages.checkout.receipt_timeout_change_payment_button,
-            "Cambiar pago"
-        );
+        assert_eq!(messages.checkout.cash_on_delivery_title, "Contra Entrega");
     }
 
     #[test]
     fn rejects_invalid_placeholders() {
         let broken = include_str!("../config/messages.toml").replace(
-            "confirm_template = \"\"\"📦 Entrega programada\nFecha: {date}\nHora de referencia: {time}\n\n¿Así está bien?\"\"\"",
-            "confirm_template = \"📦 Entrega programada\"",
+            "main_welcome = \"\"\"¡Hola! 👋 Bienvenid@ a Trabix Granizados.\n\nHorario de entrega inmediata: {business_hours}\n\nDomicilios a todo el Quindío congelados listos para consumir, por fuera se entregan descongelados\n\nRecuerda que la entregas puede ser inmediata (de ser posible), y programada ☺️\n\nSi nos escribes fuera de ese horario, igual te ayudo a programar tu pedido. Elige una opción para continuar ✨\"\"\"",
+            "main_welcome = \"¡Hola!\"",
         );
 
         let error = ClientMessages::from_toml_str(&broken).expect_err("should fail");
 
         assert!(
-            error.to_string().contains("scheduling.confirm_template"),
+            error.to_string().contains("menu.main_welcome"),
             "unexpected error: {error}"
         );
     }

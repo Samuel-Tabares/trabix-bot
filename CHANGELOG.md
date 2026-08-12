@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.14] - 2026-08-12
+
+### Removed
+- **`config/messages.toml` + `src/messages.rs`: deleted ~60 dead message keys/struct fields**
+  across `[menu]`, `[scheduling]`, `[data_collect]`, `[order]`, `[checkout]`, `[advisor_customer]`
+  and `[timers_customer]` — copy that only the FSM handler functions already deleted today
+  (`checkout.rs`/`customer_data.rs`/`order.rs`/`data_collect.rs`/`scheduling.rs`, see
+  `docs/CLEANUP_deterministic_engine.md`) ever read, now with zero references anywhere in `src/`
+  (verified with `grep -rn` per key, not by file). Also drops the 5 now-orphaned
+  `validate_template()` calls in `ClientMessages::validate()` and repoints the two tests that
+  asserted on deleted fields (`loads_messages_from_repo_fixture` now checks
+  `checkout.cash_on_delivery_title`; `rejects_invalid_placeholders` now uses `menu.main_welcome`
+  as its broken-template fixture instead of the deleted `scheduling.confirm_template`).
+
 ## [1.23.13] - 2026-08-12
 
 ### Removed
