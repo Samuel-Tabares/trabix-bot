@@ -178,6 +178,13 @@ change_customer_field_body = "¿Qué dato deseas actualizar?"
 change_name_button = "Nombre"
 change_phone_button = "Teléfono"
 change_address_button = "Cambiar dirección"
+transfer_payment_text = """💳 Puedes realizar tu pago por cualquiera de estas opciones:
+
+📱 Nequi: 3103034775
+🔑 Llaves: 1092456501
+🏦 Bancolombia ahorros: 75656448148
+
+Cuando termines, envíame la foto del comprobante por este chat 📸"""
 wait_receipt_prompt = "Quedo atent@ 😊 Envíame la foto del comprobante en los próximos 10 minutos para continuar."
 receipt_timeout_body = "Se venció el tiempo para recibir el comprobante ⏳ Puedes cambiar la forma de pago o cancelar el pedido."
 receipt_timeout_change_payment_button = "Cambiar pago"
@@ -271,15 +278,6 @@ contact_timeout_menu_button = "Menú"
 relay_timeout_text = "La conversación con el asesor se cerró por inactividad ⏳"
 conversation_inactivity_reset_text = "Reinicié la conversación por inactividad ⏳ Cuando quieras continuar, escríbeme de nuevo y retomamos desde el menú principal."
 agent_inactivity_nudge_text = "¿Sigues por ahí? 😊 Cuando quieras seguimos con tu pedido, escríbeme y continuamos."
-
-
-transfer_payment_text = """💳 Puedes realizar tu pago por cualquiera de estas opciones:
-
-📱 Nequi: 3103034775
-🔑 Llaves: 1092456501
-🏦 Bancolombia ahorros: 75656448148
-
-Cuando termines, envíame la foto del comprobante por este chat 📸"""
 
 [agent]
 welcome = """¡Hola! 👋 bienvenid@ a Trabix Granizados 🍧

@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.4] - 2026-08-12
+
+### Fixed
+- **`transfer_payment_text` quedó fuera de la tabla `[checkout]` en `config/messages.toml`** tras
+  una edición manual del contenido (commit `c783cb1`, no desplegado): el campo terminó ubicado
+  entre `[timers_customer]` y `[agent]`, sin su propio header, así que TOML lo escopeaba dentro de
+  `[timers_customer]` en vez de `[checkout]`. `CheckoutMessages::transfer_payment_text` es un campo
+  requerido (no `Option`), así que la deserialización estricta de `client_messages()` fallaba
+  siempre — nunca llegó a producción (nunca se hizo push), pero habría tumbado el bot completo en
+  el próximo deploy. Detectado por 74 tests fallando en `cargo test` durante esta sesión. Solo se
+  movió el campo de vuelta a `[checkout]`; el contenido y los demás cambios de copy de ese commit
+  quedan intactos.
+
 ## [1.23.3] - 2026-08-12
 
 ### Fixed
