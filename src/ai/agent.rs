@@ -476,15 +476,19 @@ async fn run_case_turn(
     memory::save_messages(&state.pool, &phone, &history).await?;
 
     // Un solo mensaje de texto con todo lo que el modelo redactó en el turno.
+    // Cuando quien escribió es el asesor, ese texto es para el asesor mismo
+    // (no para el cliente) — pero el asesor ya no tiene canal de WhatsApp
+    // propio, así que se registra vía `NotifyAdvisor` (solo `message_events`,
+    // nunca un envío real) en vez de `SendText { to: advisor_phone }`.
     if !direct_reply_parts.is_empty() {
-        let to = match actor {
-            Actor::Customer => context.phone_number.clone(),
-            Actor::Advisor => context.advisor_phone.clone(),
-        };
-        actions.push(BotAction::SendText {
-            to,
-            body: direct_reply_parts.join("\n\n"),
-        });
+        let body = direct_reply_parts.join("\n\n");
+        match actor {
+            Actor::Customer => actions.push(BotAction::SendText {
+                to: context.phone_number.clone(),
+                body,
+            }),
+            Actor::Advisor => actions.push(BotAction::NotifyAdvisor { body }),
+        }
     }
 
     let final_state = terminal
@@ -493,9 +497,16 @@ async fn run_case_turn(
 
     let known_amounts = known_tool_amounts(&history);
     for action in actions.iter_mut() {
-        if let BotAction::SendText { to, body } = action {
-            *body = normalize_whatsapp_markdown(body);
-            *body = sanitize_hallucinated_amounts(body, &known_amounts, to);
+        match action {
+            BotAction::SendText { to, body } => {
+                *body = normalize_whatsapp_markdown(body);
+                *body = sanitize_hallucinated_amounts(body, &known_amounts, to);
+            }
+            BotAction::NotifyAdvisor { body } => {
+                *body = normalize_whatsapp_markdown(body);
+                *body = sanitize_hallucinated_amounts(body, &known_amounts, &context.phone_number);
+            }
+            _ => {}
         }
     }
 
@@ -552,15 +563,13 @@ fn try_handle_receipt_shortcut(
     } else {
         "Pedido confirmado (pago por transferencia)"
     };
+    // El comprobante en sí no se reenvía al asesor: ya quedó visible en el
+    // trace de `message_events` bajo channel='client' cuando el cliente lo
+    // subió (`log_inbound_event`), y `crm-app` muestra el trace completo por
+    // caso, no solo el carril del asesor.
     actions.extend([
-        BotAction::SendText {
-            to: context.advisor_phone.clone(),
+        BotAction::NotifyAdvisor {
             body: format!("{advisor_label}:\n\n{summary}"),
-        },
-        BotAction::SendImage {
-            to: context.advisor_phone.clone(),
-            media_id: media_id.clone(),
-            caption: Some("Comprobante".to_string()),
         },
         BotAction::SendText {
             to: context.phone_number.clone(),
@@ -631,8 +640,7 @@ fn budget_denied_actions(
         });
     }
     if check == BudgetCheck::DeniedFirstNotice || actor == Actor::Advisor {
-        actions.push(BotAction::SendText {
-            to: context.advisor_phone.clone(),
+        actions.push(BotAction::NotifyAdvisor {
             body: format!(
                 "⚠️ El caso del cliente {} ({}) alcanzó el límite diario de mensajes con el \
                  bot IA. Hay que atenderlo manualmente por fuera del bot.",
@@ -736,11 +744,10 @@ fn build_dynamic_case_state(
         "---\nESTADO ACTUAL DEL CASO (dato de verdad, ignora lo que la \
         conversación sugiera si contradice esto):\nQuién te escribe en este turno: {actor_label}\n\
         {hours_line}\n\
-        Número del asesor humano: {}\nCliente conocido: nombre={:?}, teléfono={:?}, dirección={:?}\n\
+        Cliente conocido: nombre={:?}, teléfono={:?}, dirección={:?}\n\
         Pedido actual: {items_summary}\nTipo de entrega: {:?} (fecha={:?}, hora={:?})\n\
         Costo de domicilio ya definido: {:?}\nMétodo de pago: {:?}\nComprobante recibido: {}\n\
         Timer de espera del asesor vencido: {}{notes_line}{flow_hint}\n---",
-        context.advisor_phone,
         context.customer_name,
         context.customer_phone,
         context.delivery_address,
@@ -918,23 +925,13 @@ fn dispatch_tool(
             if text.trim().is_empty() {
                 return ToolOutcome::Result(error_result(id, "El texto no puede estar vacío."));
             }
-            // Cada vez que el agente le habla al asesor sobre este caso, la
-            // sesion del asesor queda apuntando a este cliente: sin esto, la
-            // respuesta del asesor no se puede rutear al caso (visto en
-            // pruebas cuando el modelo pregunto disponibilidad sin haber
-            // llamado finalize_checkout, que era quien creaba el binding).
-            ToolOutcome::ResultWithActions(
+            // El asesor ya no tiene sesión de WhatsApp que enrutar: `crm-app`
+            // siempre manda el `case_phone` explícito en cada request
+            // (`POST /internal/advisor/reply`), así que no hace falta
+            // "apuntar" ninguna sesión — solo queda visible en la consola.
+            ToolOutcome::ResultWithAction(
                 ok_result(id, "Enviado al asesor."),
-                vec![
-                    BotAction::SendText {
-                        to: context.advisor_phone.clone(),
-                        body: text,
-                    },
-                    BotAction::BindAdvisorSession {
-                        advisor_phone: context.advisor_phone.clone(),
-                        target_phone: context.phone_number.clone(),
-                    },
-                ],
+                BotAction::NotifyAdvisor { body: text },
             )
         }
         "finalize_checkout" => finalize_checkout(id, context),
@@ -1772,10 +1769,6 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
         BotAction::FinalizeCurrentOrder {
             status: "pending_advisor".to_string(),
         },
-        BotAction::BindAdvisorSession {
-            advisor_phone: context.advisor_phone.clone(),
-            target_phone: context.phone_number.clone(),
-        },
         BotAction::StartTimer {
             timer_type: TimerType::AdvisorResponse,
             phone: context.phone_number.clone(),
@@ -1871,16 +1864,11 @@ pub(crate) fn auto_accept_order_actions(
             total_final,
             status: "draft_payment".to_string(),
         },
-        BotAction::BindAdvisorSession {
-            advisor_phone: context.advisor_phone.clone(),
-            target_phone: context.phone_number.clone(),
-        },
         BotAction::CancelTimer {
             timer_type: TimerType::AdvisorResponse,
             phone: context.phone_number.clone(),
         },
-        BotAction::SendText {
-            to: context.advisor_phone.clone(),
+        BotAction::NotifyAdvisor {
             body: format!(
                 "✅ Pedido auto-aceptado (no requiere confirmar disponibilidad):\n\n{}",
                 advisor_case_summary(context)
@@ -1929,22 +1917,15 @@ fn wait_for_business_hours(id: &str, context: &mut ConversationContext) -> ToolO
             status: "pending_advisor".to_string(),
         });
     }
-    actions.extend([
-        BotAction::BindAdvisorSession {
-            advisor_phone: context.advisor_phone.clone(),
-            target_phone: context.phone_number.clone(),
-        },
-        BotAction::SendText {
-            to: context.advisor_phone.clone(),
-            body: format!(
-                "🌙 Pedido inmediato fuera de horario ({}). Se autoacepta solo apenas abramos, sin \
-                 que tengas que responder nada. Puedes revisarlo en la consola si quieres \
-                 adelantarlo:\n\n{}",
-                hours.hours_text,
-                advisor_case_summary(context)
-            ),
-        },
-    ]);
+    actions.push(BotAction::NotifyAdvisor {
+        body: format!(
+            "🌙 Pedido inmediato fuera de horario ({}). Se autoacepta solo apenas abramos, sin \
+             que tengas que responder nada. Puedes revisarlo en la consola si quieres \
+             adelantarlo:\n\n{}",
+            hours.hours_text,
+            advisor_case_summary(context)
+        ),
+    });
 
     ToolOutcome::ResultWithStateChange(
         ok_result(
@@ -1979,10 +1960,6 @@ fn reaccept_modified_order(
             delivery_cost,
             total_final,
             status: "draft_payment".to_string(),
-        },
-        BotAction::BindAdvisorSession {
-            advisor_phone: context.advisor_phone.clone(),
-            target_phone: context.phone_number.clone(),
         },
         BotAction::CancelTimer {
             timer_type: TimerType::AdvisorResponse,
@@ -2072,8 +2049,7 @@ fn set_payment_method(id: &str, input: &Value, context: &mut ConversationContext
             } else {
                 "Pedido confirmado (contra entrega)"
             };
-            actions.push(BotAction::SendText {
-                to: context.advisor_phone.clone(),
+            actions.push(BotAction::NotifyAdvisor {
                 body: format!("{advisor_label}:\n\n{summary}"),
             });
             let total_text = context
@@ -2986,7 +2962,7 @@ mod tests {
                     .any(|action| matches!(action, BotAction::StartTimer { .. })));
                 assert!(actions.iter().any(|action| matches!(
                     action,
-                    BotAction::SendText { body, .. } if body.contains("auto-aceptado")
+                    BotAction::NotifyAdvisor { body } if body.contains("auto-aceptado")
                 )));
             }
             _ => panic!("expected a state change"),
@@ -3046,10 +3022,9 @@ mod tests {
                         .any(|action| matches!(action, BotAction::StartTimer { .. })));
                 } else {
                     assert_eq!(next_state, ConversationState::WaitBusinessHours);
-                    assert!(actions.iter().any(|action| matches!(
-                        action,
-                        BotAction::SendText { to, .. } if *to == context.advisor_phone
-                    )));
+                    assert!(actions
+                        .iter()
+                        .any(|action| matches!(action, BotAction::NotifyAdvisor { .. })));
                     // Ningún camino nuevo dispara un StartTimer: fuera de
                     // horario se resuelve por el sweep, no por un timer en vivo.
                     assert!(!actions
@@ -3707,9 +3682,12 @@ mod tests {
         assert!(result.is_some());
         let (state, actions) = result.unwrap();
         assert_eq!(state, ConversationState::MainMenu);
+        // El comprobante ya no se reenvía como imagen al asesor (queda visible
+        // vía channel='client' desde que el cliente lo subió); el asesor solo
+        // recibe la notificación de texto.
         assert!(actions
             .iter()
-            .any(|action| matches!(action, BotAction::SendImage { .. })));
+            .any(|action| matches!(action, BotAction::NotifyAdvisor { .. })));
     }
 
     #[test]

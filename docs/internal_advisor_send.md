@@ -187,15 +187,16 @@ Mismo header `X-Internal-Token`, mismos códigos de error (`unauthorized`, `unkn
 - **No devuelve `window_closed`.** Lo que se manda no va directo a Meta; los mensajes al cliente los
   produce el agente y su envío se traza aparte.
 
-## Cómo se relaciona con `ADVISOR_WHATSAPP_ENABLED`
+## El asesor no tiene canal directo de WhatsApp
 
-Con el flag en `false`, el bot ya no le manda WhatsApp al asesor, pero **sigue escribiendo esas
-preguntas en `message_events`** con `channel='advisor'`. La consola las levanta de ahí (el caso
-queda marcado `needs_human`) y el asesor contesta con este endpoint. El circuito queda cerrado sin
-que el asesor toque WhatsApp.
-
-Con el flag en `true` (default) los dos caminos conviven: el asesor puede contestar por WhatsApp o
-desde la consola, y las dos vías escriben `actor='advisor'`, así que `needs_human` se apaga igual.
+El bot nunca le manda WhatsApp al asesor: cualquier pregunta/aviso sobre un caso (`message_advisor`,
+auto-aceptación, confirmación de pago, etc.) se escribe directo en `message_events` con
+`channel='advisor'` (`BotAction::NotifyAdvisor`, ver `src/engine.rs`/`src/ai/agent.rs`) sin pasar por
+Meta. La consola levanta esas filas de ahí (el caso queda marcado `needs_human`) y el asesor contesta
+con este endpoint. `ADVISOR_WHATSAPP_ENABLED` ya no existe — el corte es permanente, no un flag. Lo
+que queda de `ADVISOR_PHONE` en el código es residuo del FSM determinístico heredado
+(`src/bot/states/advisor.rs`/`relay.rs`), no del motor de agente — ver
+`docs/CLEANUP_deterministic_engine.md` §3.
 
 ## Prueba manual
 

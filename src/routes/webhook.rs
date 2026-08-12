@@ -12,7 +12,7 @@ use sha2::Sha256;
 use crate::{
     bot::state_machine::{extract_input, UserInput},
     db::queries::record_delivery_status,
-    engine::{mark_as_read_if_supported, process_advisor_input, process_customer_input},
+    engine::{mark_as_read_if_supported, process_customer_input},
     logging::{mask_phone, preview_text},
     whatsapp::types::{Contact, WebhookPayload},
     AppState,
@@ -199,21 +199,9 @@ async fn process_incoming_message(
 
     let extracted = extract_input(&message);
     let (message_type, content) = describe_input(&extracted.input);
-    // El corte de Fase 4 va en las DOS direcciones. Con el canal apagado el
-    // asesor atiende desde `crm-app`, así que su número deja de ser un canal de
-    // control y vuelve a ser un número cualquiera: si escribe por WhatsApp, el
-    // bot le habla como cliente. Si solo se cortara la salida, ese número
-    // seguiría secuestrado como "asesor" y no podría ni probar el bot.
-    let treat_as_advisor = state.config.advisor_whatsapp_enabled
-        && from == state.config.advisor_phone;
-    let actor = if treat_as_advisor {
-        "advisor"
-    } else {
-        "customer"
-    };
 
     tracing::info!(
-        actor = %actor,
+        actor = "customer",
         phone = %mask_phone(&from),
         message_id = %message_id,
         message_type = %message_type,
@@ -230,27 +218,28 @@ async fn process_incoming_message(
         );
     }
 
-    if treat_as_advisor {
-        process_advisor_input(state, extracted.input, extracted.reply_to_message_id).await?;
-    } else {
-        let profile_name = contact
-            .as_ref()
-            .and_then(|contact| contact.profile.as_ref())
-            .and_then(|profile| profile.name.clone());
-        let username = contact
-            .as_ref()
-            .and_then(|contact| contact.username.as_deref())
-            .map(|u| u.to_string());
-        process_customer_input(
-            state,
-            from,
-            profile_name,
-            username,
-            ctwa_clid,
-            extracted.input,
-        )
-        .await?;
-    }
+    // El asesor ya no tiene canal directo de WhatsApp (`crm-app` es la única
+    // superficie donde trabaja un caso, ver `docs/CLEANUP_deterministic_engine.md`
+    // §3): cualquier número que escriba por WhatsApp, incluido `ADVISOR_PHONE`
+    // si alguien lo usa para autoprobar el flujo de cliente, se trata como un
+    // cliente cualquiera.
+    let profile_name = contact
+        .as_ref()
+        .and_then(|contact| contact.profile.as_ref())
+        .and_then(|profile| profile.name.clone());
+    let username = contact
+        .as_ref()
+        .and_then(|contact| contact.username.as_deref())
+        .map(|u| u.to_string());
+    process_customer_input(
+        state,
+        from,
+        profile_name,
+        username,
+        ctwa_clid,
+        extracted.input,
+    )
+    .await?;
 
     Ok(())
 }

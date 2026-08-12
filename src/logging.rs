@@ -47,6 +47,7 @@ pub fn action_kind(action: &BotAction) -> &'static str {
         BotAction::SendImage { .. } => "send_image",
         BotAction::SendAssetImage { .. } => "send_asset_image",
         BotAction::SendTransferInstructions { .. } => "send_transfer_instructions",
+        BotAction::NotifyAdvisor { .. } => "notify_advisor",
         BotAction::StartTimer { .. } => "start_timer",
         BotAction::CancelTimer { .. } => "cancel_timer",
         BotAction::UpsertDraftOrder { .. } => "upsert_draft_order",
@@ -130,6 +131,13 @@ pub fn log_bot_action(action: &BotAction) {
             tracing::info!(
                 recipient = %mask_phone(to),
                 action = "send_transfer_instructions",
+                "dispatching bot action"
+            );
+        }
+        BotAction::NotifyAdvisor { body } => {
+            tracing::info!(
+                action = "notify_advisor",
+                preview = %preview_text(body),
                 "dispatching bot action"
             );
         }

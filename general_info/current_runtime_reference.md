@@ -329,8 +329,9 @@ distinta a Armenia/municipios, donde llega listo para consumir).
 - El resultado de la tool trae el aviso obligatorio de "llega descongelado" en el texto que el
   modelo debe repetirle al cliente — reforzado también como regla dura en `SYSTEM_PROMPT`, para
   que no dependa solo de que el modelo la recuerde.
-- Escala únicamente por `needs_human`/consola (`message_advisor` ya respeta
-  `ADVISOR_WHATSAPP_ENABLED=false`), nunca por WhatsApp directo al asesor.
+- Escala únicamente por `needs_human`/consola (`message_advisor` usa `BotAction::NotifyAdvisor`,
+  que solo escribe en `message_events` y nunca pasa por Meta), nunca por WhatsApp directo al asesor
+  — ese canal ya no existe, ver `docs/CLEANUP_deterministic_engine.md` §3.
 - Al confirmar el pedido (`confirm_order_bookkeeping`, llamado desde el flujo de transferencia y
   el de contraentrega), si hay `delivery_address` + zona pendiente resueltos se dispara
   `BotAction::UpsertCustomerAddress`: `queries::upsert_customer_address` actualiza la dirección si

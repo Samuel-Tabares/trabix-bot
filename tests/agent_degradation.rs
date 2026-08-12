@@ -60,7 +60,6 @@ async fn setup_state() -> AppState {
         capi_dataset_id: None,
         capi_access_token: None,
         internal_api_token: None,
-        advisor_whatsapp_enabled: true,
         advisor_takeover_hours: 6,
     };
 
@@ -160,7 +159,6 @@ async fn advisor_turn_failure_still_notifies_the_customer() {
         &state,
         &phone,
         UserInput::TextMessage("tranqui, ya te ayudo".to_string()),
-        false,
     )
     .await
     .expect("advisor degradation path should not propagate the agent error");

@@ -283,7 +283,6 @@ pub async fn advisor_reply(
         &state,
         &case_phone,
         UserInput::TextMessage(body.clone()),
-        false,
     )
     .await
     .map_err(|err| {

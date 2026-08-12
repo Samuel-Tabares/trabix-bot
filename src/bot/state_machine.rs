@@ -341,6 +341,15 @@ pub enum BotAction {
     SendTransferInstructions {
         to: String,
     },
+    /// Notifica al asesor sobre el caso actual SIN pasar por WhatsApp: se
+    /// escribe directo en `message_events` (channel='advisor'), que es de
+    /// donde `crm-app` arma su cola de `needs_human` — nunca se intenta un
+    /// envío a Meta. Reemplaza el patrón viejo `SendText { to: advisor_phone
+    /// }` para el motor de agente (ver `docs/CLEANUP_deterministic_engine.md`
+    /// §3): el asesor ya no tiene canal directo de WhatsApp, solo `crm-app`.
+    NotifyAdvisor {
+        body: String,
+    },
     StartTimer {
         timer_type: TimerType,
         phone: String,

@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-08-12
+
+### Changed
+- **El asesor pierde su canal directo de WhatsApp para siempre — no era un flag, era un
+  descubrimiento a medio camino.** Durante el test E2E de esta sesión, autoprobar el flujo de
+  cliente desde el propio `ADVISOR_PHONE` mostró que el mismo mensaje "avísale al asesor cuánto
+  cuesta el envío" le llegaba al cliente disfrazado de mensaje normal — porque, con un solo número
+  jugando los dos roles, el bot no tenía forma de distinguir "esto es para el asesor" de "esto es
+  para el cliente" más que comparando números de teléfono. La decisión de fondo ya estaba tomada
+  desde 2026-07-31 (`docs/CLEANUP_deterministic_engine.md` §3: "el bot deja de mandarle WhatsApp al
+  asesor; `crm-app` pasa a ser la única superficie") y bloqueada solo en el envío saliente de
+  `crm-app`, que ya está shippeado — así que se ejecutó ahora en el motor de agente:
+  - Nuevo `BotAction::NotifyAdvisor { body }`: escribe directo en `message_events`
+    (`channel='advisor'`) sin pasar nunca por Meta — de ahí es de donde `crm-app` arma su cola de
+    `needs_human`. Reemplaza el patrón `SendText { to: advisor_phone }` + `BindAdvisorSession` en
+    `message_advisor`, la auto-aceptación de pedidos, el aviso de fuera de horario, la confirmación
+    de pago (transferencia y contra entrega) y el aviso de presupuesto diario agotado.
+  - El comprobante de pago ya no se reenvía como imagen al asesor — ya queda visible en el trace
+    de `message_events` bajo `channel='client'` desde que el cliente lo sube, y `crm-app` muestra
+    el trace completo por caso, no solo el carril del asesor.
+  - `routes/webhook.rs` deja de tener una rama "tratar como asesor": **todo** inbound de WhatsApp
+    se procesa como cliente, sin importar el número — así que autoprobar desde `ADVISOR_PHONE`
+    ahora funciona sin ambigüedad. `ADVISOR_WHATSAPP_ENABLED` desaparece (era un flag de corte por
+    fases; el corte ya es permanente, no hace falta apagar nada).
+  - `process_advisor_input` (el wrapper que resolvía a qué caso responder a partir de un botón o
+    reply de WhatsApp) se elimina — sin canal de WhatsApp no hay nada que resolver.
+    `process_advisor_turn_for_case` (usado por `crm-app` vía `POST /internal/advisor/reply`) pierde
+    el parámetro `from_whatsapp`, que ya no tenía más que un único valor posible.
+  - **Fuera de alcance de este cambio, a propósito:** `src/bot/states/advisor.rs` (~2100 líneas) y
+    `relay.rs` (~270 líneas) — el FSM determinístico heredado — todavía construyen
+    `BindAdvisorSession`/`SendText` hacia `ADVISOR_PHONE` para los ~15 estados no-agente que
+    siguen vivos (`WaitAdvisorResponse`, `NegotiateHour`, `RelayMode`, etc., ver el mismo doc §1).
+    Tocar eso requiere el ejercicio función-por-función que el propio doc deja pendiente — no se
+    intentó aquí para no arriesgar esos estados con cambios a medio verificar. `ADVISOR_PHONE`
+    sigue existiendo en `Config` únicamente por esto.
+
 ## [1.21.2] - 2026-08-12
 
 ### Fixed

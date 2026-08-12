@@ -14,7 +14,7 @@ use crate::{
             transition, transition_advisor, BotAction, ConversationContext, ConversationState,
             ImageAsset, TimerType, UserInput,
         },
-        states::{advisor::parse_advisor_button_id, data_collect},
+        states::data_collect,
         timers::{
             cancel_timer, effective_duration_for_start_timer, expire_advisor_timer,
             expire_receipt_timer, expire_relay_timer, start_timer,
@@ -198,14 +198,6 @@ pub async fn process_customer_input(
     Ok(())
 }
 
-/// Advisor sends this daily to keep the 24h WhatsApp service window open
-/// before it lapses; the bot must stay silent so it isn't mistaken for a reply.
-const WINDOW_KEEPALIVE_PING: &str = "✅";
-
-fn is_window_keepalive_ping(input: &UserInput) -> bool {
-    matches!(input, UserInput::TextMessage(text) if text.trim() == WINDOW_KEEPALIVE_PING)
-}
-
 // --- Conversation trace (message_events) ---------------------------------
 // Best-effort append-only log of every message so the CRM can replay the full
 // flow: the customer<->bot lane ("client") and the internal bot<->advisor lane
@@ -370,52 +362,11 @@ async fn log_outbound_text(state: &AppState, case_phone: &str, to: &str, body: &
     }
 }
 
-pub async fn process_advisor_input(
-    state: AppState,
-    input: UserInput,
-    reply_to_message_id: Option<String>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if is_window_keepalive_ping(&input) {
-        return Ok(());
-    }
-
-    let advisor_phone = state.config.advisor_phone.clone();
-    let advisor_conversation = load_or_create_conversation(&state, &advisor_phone).await?;
-
-    let target_phone = resolve_advisor_target_phone(
-        &advisor_conversation.state_data.0,
-        &input,
-        reply_to_message_id.as_deref(),
-    );
-    let Some(target_phone) = target_phone else {
-        tracing::info!(
-            advisor_phone = %mask_phone(&advisor_phone),
-            "advisor message arrived without an active target"
-        );
-        send_text(
-            &state,
-            &advisor_phone,
-            &advisor_phone,
-            "Primero usa un botón de un caso pendiente para indicar a qué cliente responder.",
-        )
-        .await?;
-        update_last_message(&state.pool, &advisor_phone).await?;
-        return Ok(());
-    };
-
-    process_advisor_turn_for_case(&state, &target_phone, input, true).await
-}
-
-/// El turno del asesor sobre un caso concreto, sin la parte de "¿a qué cliente
-/// le está respondiendo?".
-///
-/// Existe separado porque hay dos formas de que llegue un mensaje del asesor y
-/// solo difieren en cómo se resuelve el caso:
-///
-/// - **WhatsApp** (`process_advisor_input`): el caso sale del botón que apretó
-///   o del mensaje al que le hizo reply.
-/// - **`crm-app`** (`POST /internal/advisor/reply`): la consola ya sabe en qué
-///   conversación está parada y manda el `case_phone` explícito.
+/// El turno del asesor sobre un caso concreto. Único caller: `crm-app`
+/// (`POST /internal/advisor/reply`, ver `routes/internal.rs::advisor_reply`),
+/// que ya sabe en qué conversación está parada y manda el `case_phone`
+/// explícito — el asesor no tiene canal de WhatsApp propio (ver
+/// `docs/CLEANUP_deterministic_engine.md` §3).
 ///
 /// En los dos casos el mensaje entra al **motor de agente**, no directo al
 /// cliente. Eso importa: `set_manual_delivery_cost` (el costo de domicilio de
@@ -428,7 +379,6 @@ pub async fn process_advisor_turn_for_case(
     state: &AppState,
     target_phone: &str,
     input: UserInput,
-    from_whatsapp: bool,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let state = state.clone();
     let advisor_phone = state.config.advisor_phone.clone();
@@ -438,21 +388,17 @@ pub async fn process_advisor_turn_for_case(
 
     log_inbound_event(&state, &target_phone, CHANNEL_ADVISOR, ACTOR_ADVISOR, &input).await;
 
+    // `crm-app` (el único caller) ya valida que el caso existe antes de
+    // llamar acá (ver `routes/internal.rs::advisor_reply`), así que esto solo
+    // cubre una carrera improbable (el caso se resetea entre esa validación y
+    // este turno) — no hay a quién notificar por WhatsApp, ya no existe ese
+    // canal.
     let Some(client_conversation) = get_conversation(&state.pool, &target_phone).await? else {
         tracing::warn!(
-            advisor_phone = %mask_phone(&advisor_phone),
             target_phone = %mask_phone(&target_phone),
             "advisor target conversation no longer exists"
         );
         clear_advisor_session(&state, &advisor_phone).await?;
-        send_text(
-            &state,
-            &advisor_phone,
-            &advisor_phone,
-            "Ese caso ya no está disponible. Usa un botón de un caso pendiente.",
-        )
-        .await?;
-        update_last_message(&state.pool, &advisor_phone).await?;
         return Ok(());
     };
 
@@ -502,8 +448,7 @@ pub async fn process_advisor_turn_for_case(
     ));
     tracing::info!(
         actor = "advisor",
-        source = if from_whatsapp { "whatsapp" } else { "crm-app" },
-        advisor_phone = %mask_phone(&advisor_phone),
+        source = "crm-app",
         target_phone = %mask_phone(&target_phone),
         from_state = %current_state.as_storage_key(),
         to_state = %new_state.as_storage_key(),
@@ -542,12 +487,6 @@ pub async fn process_advisor_turn_for_case(
         .await?;
     }
 
-    // `last_message_at` del asesor solo tiene sentido si de verdad hubo un
-    // mensaje suyo por WhatsApp: es lo que mantiene viva esa ventana de 24h.
-    // Desde `crm-app` no hay tal conversación, así que no se toca.
-    if from_whatsapp {
-        update_last_message(&state.pool, &advisor_phone).await?;
-    }
     update_last_message(&state.pool, &target_phone).await?;
     Ok(())
 }
@@ -826,6 +765,22 @@ pub async fn execute_actions(
                     message_id,
                 )
                 .await?;
+            }
+            BotAction::NotifyAdvisor { body } => {
+                if let Err(err) = crate::db::queries::record_message_event(
+                    &state.pool,
+                    &case_phone,
+                    CHANNEL_ADVISOR,
+                    ACTOR_BOT,
+                    "text",
+                    Some(body),
+                    None,
+                    None,
+                )
+                .await
+                {
+                    tracing::warn!(error = %err, "failed to record advisor notification");
+                }
             }
             BotAction::ResetConversation { phone } => {
                 reset_conversation(&state.pool, phone).await?;
@@ -1214,27 +1169,6 @@ fn seed_customer_data(
     seeded
 }
 
-fn resolve_advisor_target_phone(
-    state_data: &ConversationStateData,
-    input: &UserInput,
-    reply_to_message_id: Option<&str>,
-) -> Option<String> {
-    if let Some(target) = reply_to_message_id
-        .and_then(|message_id| state_data.advisor_reply_threads.get(message_id))
-        .cloned()
-    {
-        return Some(target);
-    }
-
-    match input {
-        UserInput::ButtonPress(id) | UserInput::ListSelection(id) => parse_advisor_button_id(id)
-            .map(|(_, phone)| phone)
-            .or_else(|| state_data.advisor_target_phone.clone()),
-        UserInput::TextMessage(_) => state_data.advisor_target_phone.clone(),
-        UserInput::ImageMessage(_) => state_data.advisor_target_phone.clone(),
-    }
-}
-
 fn should_record_advisor_thread(state: Option<&ConversationState>) -> bool {
     matches!(
         state,
@@ -1356,26 +1290,26 @@ async fn send_via_transport(
     body: Option<String>,
     payload: serde_json::Value,
 ) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
-    // Corte de Fase 4: con el canal directo apagado, nada dirigido al asesor
-    // SOBRE EL CASO DE OTRO NÚMERO sale a Meta. Se descarta acá, en el único
-    // punto por el que pasa TODO lo saliente, y a propósito DESPUÉS de
-    // `log_outbound_event` — el evento ya quedó en `message_events` con
-    // `channel='advisor'`, que es de donde `crm-app` arma la cola de casos.
-    // El asesor no recibe WhatsApp; la información no se pierde.
+    // El asesor no tiene canal directo de WhatsApp (Fase 4, permanente — ver
+    // `docs/CLEANUP_deterministic_engine.md` §3): nada dirigido a
+    // `ADVISOR_PHONE` sobre el caso de OTRO número sale a Meta. Se descarta
+    // acá, en el único punto por el que pasa TODO lo saliente, y a propósito
+    // DESPUÉS de `log_outbound_event` — el evento ya quedó en
+    // `message_events` con `channel='advisor'`, que es de donde `crm-app`
+    // arma la cola de casos. La información no se pierde, solo no sale a Meta.
     //
-    // `case_phone != to` es lo que distingue "notificación al asesor sobre
-    // el caso de un cliente" de "respuesta dentro de la propia conversación
-    // de `to`" — esta última debe salir siempre, incluso cuando `to` es
-    // `ADVISOR_PHONE` jugando de cliente en autopruebas
-    // (`ADVISOR_WHATSAPP_ENABLED=false`).
-    if !state.config.advisor_whatsapp_enabled
-        && to == state.config.advisor_phone
-        && case_phone != to
-    {
+    // El motor de agente ya no construye este patrón (usa `NotifyAdvisor`,
+    // que ni siquiera pasa por acá), pero algunos flujos heredados del FSM
+    // determinístico (`src/bot/states/advisor.rs`, `relay.rs`, timers de esos
+    // estados) todavía sí. `case_phone != to` es lo que distingue "notificación
+    // al asesor sobre el caso de un cliente" de "respuesta dentro de la propia
+    // conversación de `to`" — esta última debe salir siempre, incluso cuando
+    // `to` es `ADVISOR_PHONE` jugando de cliente en autopruebas.
+    if to == state.config.advisor_phone && case_phone != to {
         tracing::debug!(
             advisor_phone = %mask_phone(to),
             message_kind,
-            "advisor whatsapp disabled; message kept in trace only"
+            "advisor has no direct whatsapp channel; message kept in trace only"
         );
         return Ok(None);
     }
@@ -1584,66 +1518,7 @@ fn schedule_values_for_persistence(context: &ConversationContext) -> PersistedSc
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
-    use crate::{bot::state_machine::UserInput, db::models::ConversationStateData};
-
-    use super::resolve_advisor_target_phone;
-
-    #[test]
-    fn advisor_quoted_message_wins_over_active_session() {
-        let mut threads = BTreeMap::new();
-        threads.insert("wamid-old-case".to_string(), "573001111111".to_string());
-        let state_data = ConversationStateData {
-            advisor_target_phone: Some("573002222222".to_string()),
-            advisor_reply_threads: threads,
-            ..Default::default()
-        };
-
-        let target = resolve_advisor_target_phone(
-            &state_data,
-            &UserInput::TextMessage("Confirmo".to_string()),
-            Some("wamid-old-case"),
-        );
-
-        assert_eq!(target.as_deref(), Some("573001111111"));
-    }
-
-    #[test]
-    fn advisor_routing_falls_back_to_active_session_without_valid_quote() {
-        let state_data = ConversationStateData {
-            advisor_target_phone: Some("573002222222".to_string()),
-            ..Default::default()
-        };
-
-        let target = resolve_advisor_target_phone(
-            &state_data,
-            &UserInput::TextMessage("Confirmo".to_string()),
-            Some("wamid-missing"),
-        );
-
-        assert_eq!(target.as_deref(), Some("573002222222"));
-    }
-
-    #[test]
-    fn keepalive_ping_matches_bare_checkmark_ignoring_whitespace() {
-        assert!(super::is_window_keepalive_ping(&UserInput::TextMessage(
-            "✅".to_string()
-        )));
-        assert!(super::is_window_keepalive_ping(&UserInput::TextMessage(
-            "  ✅  ".to_string()
-        )));
-    }
-
-    #[test]
-    fn keepalive_ping_does_not_match_other_text_or_buttons() {
-        assert!(!super::is_window_keepalive_ping(&UserInput::TextMessage(
-            "✅ listo".to_string()
-        )));
-        assert!(!super::is_window_keepalive_ping(&UserInput::ButtonPress(
-            "✅".to_string()
-        )));
-    }
+    use crate::bot::state_machine::UserInput;
 
     #[test]
     fn channel_classification_splits_client_and_advisor_lanes() {
