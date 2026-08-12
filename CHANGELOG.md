@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.8] - 2026-08-12
+
+### Removed
+- **`src/bot/states/data_collect.rs`: deleted `handle_collect_name`/`handle_collect_phone`/
+  `handle_collect_address`** (dead FSM handlers) plus the now-orphaned `retry_actions` and their 3
+  tests. `validate_name`/`validate_phone`/`validate_address`/`collect_*_actions` all stay — they
+  have live callers in `customer_data.rs`, `advisor.rs`, `engine.rs`, and `src/ai/tools.rs`.
+
 ## [1.23.7] - 2026-08-12
 
 ### Removed
