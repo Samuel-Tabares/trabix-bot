@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.13] - 2026-08-12
+
+### Removed
+- **Deleted `crm-web/`** — the old read-only Next.js conversation console. It was already retired
+  2026-08-02 (`general_info/runbook.md`) once the Railway service `crm` was removed after `crm-app`'s
+  outbound send was proven end-to-end; the directory only remained as a leftover local checkout, not
+  deployed or referenced anywhere.
+
 ## [1.23.12] - 2026-08-12
 
 ### Added
