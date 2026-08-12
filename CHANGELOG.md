@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.21.2] - 2026-08-12
+
+### Fixed
+- **Envío nacional podía terminar en contra entrega.** `set_payment_method` aceptaba
+  `cash_on_delivery` sin importar la zona; para envío nacional (transportadora) eso es
+  inviable — nadie del equipo viaja con el pedido para cobrar, y el flete también se paga por
+  adelantado. Encontrado en vivo durante el test E2E: el bot llegó a preguntarle método de pago
+  al cliente antes incluso de tener el costo de envío confirmado por el asesor. Ahora
+  `set_payment_method` rechaza `cash_on_delivery` de forma determinista cuando
+  `pending_zone_kind == "national"` y el prompt de `set_delivery_national` ya le dice al modelo
+  que no ofrezca esa opción. Corregido junto con un bug relacionado: `set_manual_delivery_cost`
+  pisaba `pending_zone_kind` a `"manual"` genérico en cuanto el asesor cotizaba, perdiendo la
+  distinción "esto era envío nacional" — necesaria tanto para el bloqueo anterior como para que
+  reordenar desde una dirección guardada (`select_saved_address`) siga reconociendo el envío
+  como nacional.
+
 ## [1.21.1] - 2026-08-11
 
 ### Fixed

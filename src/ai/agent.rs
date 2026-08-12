@@ -31,7 +31,9 @@ use crate::{
     },
     bot::{
         delivery_zone::{self, ArmeniaZone},
-        state_machine::{BotAction, ConversationContext, ConversationState, ImageAsset, TimerType, UserInput},
+        state_machine::{
+            BotAction, ConversationContext, ConversationState, ImageAsset, TimerType, UserInput,
+        },
         states::checkout,
         timers::{ADVISOR_RESPONSE_TIMEOUT, RECEIPT_TIMEOUT},
     },
@@ -73,8 +75,7 @@ acento, texto plano, usa emojis, se directo, sin sonar a formulario.
 
 Eres el puente completo entre el cliente y el asesor humano: hablas con ambos. Cada uno tiene su \
 propio numero de WhatsApp. Cuando le respondas directamente a quien te acaba de escribir en este \
-turno, simplemente escribe tu respuesta como texto normal (no necesitas ninguna herramienta para \
-eso, se envia automaticamente a esa persona). Usa message_customer o message_advisor solo cuando \
+turno, simplemente escribe tu respuesta como texto normal. Usa message_customer o message_advisor solo cuando \
 en el mismo turno necesites decirle algo a la OTRA persona (por ejemplo: el cliente te escribe y \
 tu, ademas de responderle, necesitas avisarle algo al asesor).
 
@@ -85,10 +86,6 @@ CUÁNDO USAR message_advisor (solo en estos casos):
 3. Domicilio en municipio desconocido, o envío nacional (tras set_delivery_national) → pide el \
    costo: "¿Cuál es el domicilio/costo de envío a [destino]?".
 4. Casos fuera de tema o que requieren criterio comercial → redirige al asesor con contexto claro.
-
-INTERACCIÓN BOTONES VS. TEXTO LIBRE:
-- Si el cliente presiona un botón (Hacer Pedido, Ver Menú): respuesta determinista, sin comentario extra.
-- Si el cliente escribe texto libre: analiza, ejecuta tools necesarias, responde con flexibilidad.
 
 REGLA MAYORISTA + REFERRAL:
 - Un pedido es mayorista si tiene 20+ unidades del MISMO tipo (con o sin licor).
@@ -424,7 +421,15 @@ async fn run_case_turn(
                 input = %tool_input,
                 "agent tool call"
             );
-            match dispatch_tool(&id, &name, &tool_input, context, actor, &effective_state, saved_addresses) {
+            match dispatch_tool(
+                &id,
+                &name,
+                &tool_input,
+                context,
+                actor,
+                &effective_state,
+                saved_addresses,
+            ) {
                 ToolOutcome::Result(block) => tool_results.push(block),
                 ToolOutcome::ResultWithAction(block, action) => {
                     tool_results.push(block);
@@ -691,7 +696,11 @@ fn build_dynamic_case_state(
                     "{} x {} ({})",
                     item.quantity,
                     item.flavor,
-                    if item.has_liquor { "con licor" } else { "sin licor" }
+                    if item.has_liquor {
+                        "con licor"
+                    } else {
+                        "sin licor"
+                    }
                 )
             })
             .collect::<Vec<_>>()
@@ -882,7 +891,11 @@ fn dispatch_tool(
             ))
         }
         "message_customer" => {
-            let text = input.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+            let text = input
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             if text.trim().is_empty() {
                 return ToolOutcome::Result(error_result(id, "El texto no puede estar vacío."));
             }
@@ -897,7 +910,11 @@ fn dispatch_tool(
         "send_quick_replies" => send_quick_replies(id, input, context),
         "send_options_list" => send_options_list(id, input, context),
         "message_advisor" => {
-            let text = input.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+            let text = input
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             if text.trim().is_empty() {
                 return ToolOutcome::Result(error_result(id, "El texto no puede estar vacío."));
             }
@@ -1002,13 +1019,20 @@ const MAX_CUSTOMER_NOTES_CHARS: usize = 300;
 /// modelo ve la nota vigente en el bloque ESTADO y debe reescribirla
 /// fusionando lo viejo con lo nuevo, no acumularla sin límite.
 fn remember_about_customer(id: &str, input: &Value, context: &ConversationContext) -> ToolOutcome {
-    let note = input.get("note").and_then(Value::as_str).unwrap_or("").trim();
+    let note = input
+        .get("note")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
     if note.is_empty() {
         return ToolOutcome::Result(error_result(id, "La nota no puede estar vacía."));
     }
     let truncated: String = note.chars().take(MAX_CUSTOMER_NOTES_CHARS).collect();
     ToolOutcome::ResultWithAction(
-        ok_result(id, "Nota guardada para futuras conversaciones con este cliente."),
+        ok_result(
+            id,
+            "Nota guardada para futuras conversaciones con este cliente.",
+        ),
         BotAction::UpdateCustomerNotes {
             phone_number_meta: context.phone_number.clone(),
             notes: truncated,
@@ -1043,20 +1067,32 @@ fn set_delivery_schedule(input: &Value, context: &mut ConversationContext) -> (S
     // time=HH:MM (24h). Aquí se valida de forma determinista y se guarda en
     // ISO, para que las columnas tipadas de la BD se llenen y para poder
     // exigir el mínimo de 24h de anticipación.
-    let date_raw = input.get("date").and_then(Value::as_str).unwrap_or("").trim();
-    let time_raw = input.get("time").and_then(Value::as_str).unwrap_or("").trim();
+    let date_raw = input
+        .get("date")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let time_raw = input
+        .get("time")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
 
     let Ok(date) = chrono::NaiveDate::parse_from_str(date_raw, "%Y-%m-%d") else {
         return (
-            format!("Fecha inválida: '{date_raw}'. Pásala en formato YYYY-MM-DD (resuélvela tú a \
-                     partir de lo que dijo el cliente usando la fecha actual del bloque ESTADO)."),
+            format!(
+                "Fecha inválida: '{date_raw}'. Pásala en formato YYYY-MM-DD (resuélvela tú a \
+                     partir de lo que dijo el cliente usando la fecha actual del bloque ESTADO)."
+            ),
             true,
         );
     };
     let Ok(time) = chrono::NaiveTime::parse_from_str(time_raw, "%H:%M") else {
         return (
-            format!("Hora inválida: '{time_raw}'. Pásala en formato HH:MM de 24 horas (ej. las 3 \
-                     de la tarde es 15:00)."),
+            format!(
+                "Hora inválida: '{time_raw}'. Pásala en formato HH:MM de 24 horas (ej. las 3 \
+                     de la tarde es 15:00)."
+            ),
             true,
         );
     };
@@ -1090,7 +1126,6 @@ fn set_delivery_schedule(input: &Value, context: &mut ConversationContext) -> (S
     )
 }
 
-
 fn add_order_item(input: &Value, context: &mut ConversationContext) -> (String, bool) {
     let has_liquor = input
         .get("has_liquor")
@@ -1122,7 +1157,8 @@ fn add_order_item(input: &Value, context: &mut ConversationContext) -> (String, 
     // existen como productos DISTINTOS en ambas variantes. Si lo que dijo el
     // cliente no trae ninguna palabra que distinga la variante, no confiamos
     // en que el LLM adivinó bien (ver docs/canary-fixes-2026-07-19.md #5).
-    if let Err(other_names) = tools::check_flavor_disambiguation(flavor_id, has_liquor, customer_wording)
+    if let Err(other_names) =
+        tools::check_flavor_disambiguation(flavor_id, has_liquor, customer_wording)
     {
         return (
             format!(
@@ -1258,7 +1294,11 @@ fn set_delivery_nearby_town(input: &Value, context: &mut ConversationContext) ->
                     found.name,
                     format_thousands(found.delivery_cost),
                     total_units,
-                    if found.min_units > 0 { ", cumple el mínimo" } else { ", sin mínimo de unidades" },
+                    if found.min_units > 0 {
+                        ", cumple el mínimo"
+                    } else {
+                        ", sin mínimo de unidades"
+                    },
                 ),
                 false,
             )
@@ -1282,7 +1322,11 @@ fn set_delivery_nearby_town(input: &Value, context: &mut ConversationContext) ->
 /// de "llega descongelado" va en el resultado para que sea imposible de
 /// omitir, no solo una instrucción del prompt.
 fn set_delivery_national(input: &Value, context: &mut ConversationContext) -> (String, bool) {
-    let city = input.get("city").and_then(Value::as_str).unwrap_or("").trim();
+    let city = input
+        .get("city")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
     let total_units: u32 = context.items.iter().map(|item| item.quantity).sum();
 
     if total_units < delivery_zone::MIN_UNITS_NATIONAL {
@@ -1317,7 +1361,10 @@ fn set_delivery_national(input: &Value, context: &mut ConversationContext) -> (S
          (dile ciudad/dirección y unidades) y usa set_manual_delivery_cost cuando responda — eso \
          autoacepta el pedido solo, igual que cualquier domicilio manual. Si en el bloque ESTADO \
          ACTUAL DEL CASO la hora actual dice CERRADO, dile también al cliente que la cotización \
-         llega apenas abramos, igual que un pedido en espera de horario."
+         llega apenas abramos, igual que un pedido en espera de horario. Este envío es SOLO POR \
+         TRANSFERENCIA — el flete va incluido en esa misma transferencia, nada de contra entrega \
+         (nadie del equipo viaja con el pedido para cobrar). No le ofrezcas contra entrega como \
+         opción de pago a este cliente; si igual la pide, set_payment_method la va a rechazar."
             .to_string(),
         false,
     )
@@ -1391,7 +1438,11 @@ fn select_saved_address(
     }
 }
 
-fn set_manual_delivery_cost(id: &str, input: &Value, context: &mut ConversationContext) -> ToolOutcome {
+fn set_manual_delivery_cost(
+    id: &str,
+    input: &Value,
+    context: &mut ConversationContext,
+) -> ToolOutcome {
     let Some(delivery_cost) = input
         .get("amount")
         .and_then(Value::as_i64)
@@ -1404,9 +1455,17 @@ fn set_manual_delivery_cost(id: &str, input: &Value, context: &mut ConversationC
         ));
     };
 
-    context.pending_zone_kind = Some("manual".to_string());
+    // Envío nacional ya trae su propia etiqueta/zone_kind desde
+    // `set_delivery_national`; no lo pises con el genérico "manual" o se
+    // pierde la distinción que `set_payment_method` necesita para bloquear
+    // contra entrega en este canal (ver ahí) y la que reutiliza
+    // `select_saved_address` si el cliente reordena a la misma dirección.
+    if context.pending_zone_kind.as_deref() != Some("national") {
+        context.pending_zone_kind = Some("manual".to_string());
+        context.pending_zone_label =
+            Some("Domicilio manual (confirmado por el asesor)".to_string());
+    }
     context.pending_zone_value = None;
-    context.pending_zone_label = Some("Domicilio manual (confirmado por el asesor)".to_string());
 
     // Si ya existe un pedido finalizado esperando justo este dato (el único
     // que faltaba), autoaceptarlo aquí mismo: programados siempre, inmediatos
@@ -1420,7 +1479,10 @@ fn set_manual_delivery_cost(id: &str, input: &Value, context: &mut ConversationC
     context.delivery_cost = Some(delivery_cost);
     ToolOutcome::Result(ok_result(
         id,
-        format!("Domicilio manual guardado: ${}.", format_thousands(delivery_cost as u32)),
+        format!(
+            "Domicilio manual guardado: ${}.",
+            format_thousands(delivery_cost as u32)
+        ),
     ))
 }
 
@@ -1450,7 +1512,8 @@ fn apply_referral_code(input: &Value, context: &mut ConversationContext) -> (Str
         Some(i32::try_from(applied.total_ambassador_commission).unwrap_or(i32::MAX));
 
     let delivery_cost = context.delivery_cost.unwrap_or(0);
-    let subtotal_after_discount = i32::try_from(applied.subtotal_after_discount).unwrap_or(i32::MAX);
+    let subtotal_after_discount =
+        i32::try_from(applied.subtotal_after_discount).unwrap_or(i32::MAX);
     let total_final = subtotal_after_discount.saturating_add(delivery_cost);
     context.total_final = Some(total_final);
 
@@ -1536,7 +1599,10 @@ fn send_quick_replies(id: &str, input: &Value, context: &ConversationContext) ->
         let option_id = option.get("id").and_then(Value::as_str).unwrap_or("");
         let title = option.get("title").and_then(Value::as_str).unwrap_or("");
         if option_id.trim().is_empty() || title.trim().is_empty() {
-            return ToolOutcome::Result(error_result(id, "Cada opción necesita \"id\" y \"title\"."));
+            return ToolOutcome::Result(error_result(
+                id,
+                "Cada opción necesita \"id\" y \"title\".",
+            ));
         }
         if title.chars().count() > 20 {
             return ToolOutcome::Result(error_result(
@@ -1568,7 +1634,10 @@ fn send_quick_replies(id: &str, input: &Value, context: &ConversationContext) ->
 /// de `id`/`title` que `send_quick_replies`.
 fn send_options_list(id: &str, input: &Value, context: &ConversationContext) -> ToolOutcome {
     let text = input.get("text").and_then(Value::as_str).unwrap_or("");
-    let button_text = input.get("button_text").and_then(Value::as_str).unwrap_or("");
+    let button_text = input
+        .get("button_text")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if text.trim().is_empty() || button_text.trim().is_empty() {
         return ToolOutcome::Result(error_result(id, "Faltan \"text\" y/o \"button_text\"."));
     }
@@ -1593,7 +1662,10 @@ fn send_options_list(id: &str, input: &Value, context: &ConversationContext) -> 
     for option in options {
         let option_id = option.get("id").and_then(Value::as_str).unwrap_or("");
         let title = option.get("title").and_then(Value::as_str).unwrap_or("");
-        let description = option.get("description").and_then(Value::as_str).unwrap_or("");
+        let description = option
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         if option_id.trim().is_empty() || title.trim().is_empty() {
             return ToolOutcome::Result(error_result(id, "Cada fila necesita \"id\" y \"title\"."));
         }
@@ -1819,7 +1891,11 @@ pub(crate) fn auto_accept_order_actions(
     (total_final, actions)
 }
 
-fn auto_accept_order(id: &str, context: &mut ConversationContext, delivery_cost: i32) -> ToolOutcome {
+fn auto_accept_order(
+    id: &str,
+    context: &mut ConversationContext,
+    delivery_cost: i32,
+) -> ToolOutcome {
     let (total_final, actions) = auto_accept_order_actions(context, delivery_cost);
 
     ToolOutcome::ResultWithStateChange(
@@ -1971,6 +2047,20 @@ fn checkout_precondition_error(context: &ConversationContext) -> Option<String> 
 fn set_payment_method(id: &str, input: &Value, context: &mut ConversationContext) -> ToolOutcome {
     let method = input.get("method").and_then(Value::as_str).unwrap_or("");
 
+    // Envío nacional va por transportadora sin nadie del equipo presente para
+    // cobrar en efectivo, así que todo — incluido el flete — se paga por
+    // transferencia por adelantado. Bloqueado acá, no solo en el prompt: es
+    // la misma lógica de "la plata no se le confía al modelo" que ya rige
+    // `finalize_checkout` para sin-licor por debajo del mínimo mayorista.
+    if method == "cash_on_delivery" && context.pending_zone_kind.as_deref() == Some("national") {
+        return ToolOutcome::Result(error_result(
+            id,
+            "Envío nacional (transportadora) no admite contra entrega: nadie del equipo viaja con \
+             el pedido para cobrar. Todo, incluido el flete, se paga por transferencia antes del \
+             envío. Explícale eso al cliente y llama set_payment_method con \"transfer\".",
+        ));
+    }
+
     match method {
         "cash_on_delivery" => {
             context.payment_method = Some("cash_on_delivery".to_string());
@@ -2090,8 +2180,12 @@ fn advisor_case_summary(context: &ConversationContext) -> String {
         Some(code) if !code.trim().is_empty() => format!(
             "\nCódigo referido: {}\nDescuento al cliente: -${}\nComisión embajador: ${}",
             code,
-            format_thousands(u32::try_from(context.referral_discount_total.unwrap_or(0)).unwrap_or(0)),
-            format_thousands(u32::try_from(context.ambassador_commission_total.unwrap_or(0)).unwrap_or(0)),
+            format_thousands(
+                u32::try_from(context.referral_discount_total.unwrap_or(0)).unwrap_or(0)
+            ),
+            format_thousands(
+                u32::try_from(context.ambassador_commission_total.unwrap_or(0)).unwrap_or(0)
+            ),
         ),
         _ => String::new(),
     };
@@ -2152,7 +2246,10 @@ fn extract_currency_amounts(text: &str) -> Vec<String> {
                 trimmed_end -= 1;
             }
             if trimmed_end > start && chars[start..trimmed_end].iter().any(char::is_ascii_digit) {
-                amounts.push(format!("${}", chars[start..trimmed_end].iter().collect::<String>()));
+                amounts.push(format!(
+                    "${}",
+                    chars[start..trimmed_end].iter().collect::<String>()
+                ));
             }
             i = end.max(i + 1);
         } else {
@@ -2563,7 +2660,10 @@ mod tests {
     fn window_keeps_only_recent_messages_for_long_histories() {
         let mut history = Vec::new();
         for i in 0..200 {
-            history.push(text_message(if i % 2 == 0 { "user" } else { "assistant" }, "x"));
+            history.push(text_message(
+                if i % 2 == 0 { "user" } else { "assistant" },
+                "x",
+            ));
         }
         let start = llm_window_start(&history);
         assert!(history.len() - start <= LLM_HISTORY_WINDOW);
@@ -2685,17 +2785,17 @@ mod tests {
             normalize_whatsapp_markdown("*ya está bien*"),
             "*ya está bien*"
         );
-        assert_eq!(
-            normalize_whatsapp_markdown("__cursiva__"),
-            "_cursiva_"
-        );
+        assert_eq!(normalize_whatsapp_markdown("__cursiva__"), "_cursiva_");
     }
 
     #[test]
     fn sanitize_ignores_text_without_any_amount() {
         let known = std::collections::HashSet::new();
         let body = "¿Me confirmas tu dirección?";
-        assert_eq!(sanitize_hallucinated_amounts(body, &known, "3000000000"), body);
+        assert_eq!(
+            sanitize_hallucinated_amounts(body, &known, "3000000000"),
+            body
+        );
     }
 
     fn test_context() -> ConversationContext {
@@ -2832,7 +2932,15 @@ mod tests {
         let outcome = send_options_list("id_1", &input, &context);
 
         match outcome {
-            ToolOutcome::ResultWithAction(_, BotAction::SendList { to, button_text, sections, .. }) => {
+            ToolOutcome::ResultWithAction(
+                _,
+                BotAction::SendList {
+                    to,
+                    button_text,
+                    sections,
+                    ..
+                },
+            ) => {
                 assert_eq!(to, context.phone_number);
                 assert_eq!(button_text, "Ver sabores");
                 assert_eq!(sections[0].rows.len(), 2);
@@ -2986,7 +3094,10 @@ mod tests {
                     .any(|action| matches!(action, BotAction::FinalizeCurrentOrder { .. })));
                 assert!(actions.iter().any(|action| matches!(
                     action,
-                    BotAction::UpdateCurrentOrderDeliveryCost { delivery_cost: 15_000, .. }
+                    BotAction::UpdateCurrentOrderDeliveryCost {
+                        delivery_cost: 15_000,
+                        ..
+                    }
                 )));
             }
             _ => panic!("expected a state change"),
@@ -3010,8 +3121,7 @@ mod tests {
     fn set_delivery_national_rejects_below_minimum_units() {
         // test_context() trae 5 unidades por defecto, por debajo del mínimo nacional.
         let mut context = test_context();
-        let (message, is_error) =
-            set_delivery_national(&json!({ "city": "Bogotá" }), &mut context);
+        let (message, is_error) = set_delivery_national(&json!({ "city": "Bogotá" }), &mut context);
 
         assert!(is_error);
         assert!(message.contains("20"));
@@ -3027,8 +3137,7 @@ mod tests {
             quantity: 20,
         }];
 
-        let (message, is_error) =
-            set_delivery_national(&json!({ "city": "Bogotá" }), &mut context);
+        let (message, is_error) = set_delivery_national(&json!({ "city": "Bogotá" }), &mut context);
 
         assert!(!is_error);
         assert!(message.contains("DESCONGELADO"));
@@ -3068,6 +3177,64 @@ mod tests {
     }
 
     #[test]
+    fn set_manual_delivery_cost_preserves_national_zone_kind() {
+        let mut context = test_context();
+        context.items = vec![crate::db::models::OrderItemData {
+            flavor: "Uva Vodka".to_string(),
+            has_liquor: true,
+            quantity: 20,
+        }];
+        set_delivery_national(&json!({ "city": "Bogotá" }), &mut context);
+
+        set_manual_delivery_cost("id_1", &json!({ "amount": 90_000 }), &mut context);
+
+        assert_eq!(context.pending_zone_kind.as_deref(), Some("national"));
+        assert_eq!(
+            context.pending_zone_label.as_deref(),
+            Some("Envío nacional (transportadora) — Bogotá")
+        );
+    }
+
+    #[test]
+    fn set_manual_delivery_cost_defaults_to_manual_zone_kind_for_unknown_towns() {
+        let mut context = test_context();
+
+        let outcome = set_manual_delivery_cost("id_1", &json!({ "amount": 15_000 }), &mut context);
+
+        assert!(matches!(outcome, ToolOutcome::Result(_)));
+        assert_eq!(context.pending_zone_kind.as_deref(), Some("manual"));
+        assert_eq!(
+            context.pending_zone_label.as_deref(),
+            Some("Domicilio manual (confirmado por el asesor)")
+        );
+    }
+
+    #[test]
+    fn set_payment_method_rejects_cash_on_delivery_for_national_shipping() {
+        let mut context = test_context();
+        context.pending_zone_kind = Some("national".to_string());
+
+        let outcome =
+            set_payment_method("id_1", &json!({ "method": "cash_on_delivery" }), &mut context);
+
+        assert!(matches!(outcome, ToolOutcome::Result(_)));
+        assert!(tool_result_text(&outcome).contains("transferencia"));
+        assert_eq!(context.payment_method, None);
+    }
+
+    #[test]
+    fn set_payment_method_still_allows_cash_on_delivery_outside_national() {
+        let mut context = test_context();
+        context.pending_zone_kind = Some("armenia".to_string());
+
+        let outcome =
+            set_payment_method("id_1", &json!({ "method": "cash_on_delivery" }), &mut context);
+
+        assert!(matches!(outcome, ToolOutcome::ResultWithStateChange(..)));
+        assert_eq!(context.payment_method.as_deref(), Some("cash_on_delivery"));
+    }
+
+    #[test]
     fn finalize_checkout_blocks_wholesale_until_referral_prompt_resolved() {
         // test_context() es programado con domicilio; solo lo hacemos mayorista.
         let mut context = test_context();
@@ -3082,7 +3249,9 @@ mod tests {
         let outcome = finalize_checkout("id_1", &mut context);
 
         match outcome {
-            ToolOutcome::Result(ContentBlock::ToolResult { content, is_error, .. }) => {
+            ToolOutcome::Result(ContentBlock::ToolResult {
+                content, is_error, ..
+            }) => {
                 assert_eq!(is_error, Some(true));
                 assert!(content.contains("código"));
                 assert!(content.contains("skip_referral_code"));
@@ -3158,7 +3327,9 @@ mod tests {
 
         let outcome = finalize_checkout("id_1", &mut context);
         match outcome {
-            ToolOutcome::Result(ContentBlock::ToolResult { content, is_error, .. }) => {
+            ToolOutcome::Result(ContentBlock::ToolResult {
+                content, is_error, ..
+            }) => {
                 assert_eq!(is_error, Some(true));
                 assert!(content.to_lowercase().contains("sin licor"));
             }
@@ -3203,7 +3374,9 @@ mod tests {
         let outcome = finalize_checkout("id_1", &mut context);
 
         match outcome {
-            ToolOutcome::Result(ContentBlock::ToolResult { content, is_error, .. }) => {
+            ToolOutcome::Result(ContentBlock::ToolResult {
+                content, is_error, ..
+            }) => {
                 assert_eq!(is_error, Some(true));
                 assert!(content.contains("modify_confirmed_order"));
                 assert!(content.contains("start_new_order"));
@@ -3310,7 +3483,9 @@ mod tests {
                 )),
                 _ => None,
             })
-            .expect("UpsertCustomerAddress action must be present when address + zone are resolved");
+            .expect(
+                "UpsertCustomerAddress action must be present when address + zone are resolved",
+            );
 
         assert_eq!(saved.0, "573001234567");
         assert_eq!(saved.1, "Cra 15 #20-30 Armenia");
@@ -3355,7 +3530,10 @@ mod tests {
                 BotAction::ClearAgentMemory { phone_number_meta } if phone_number_meta == "573001234567"
             )
         });
-        assert!(cleared, "ClearAgentMemory action must be present after confirming");
+        assert!(
+            cleared,
+            "ClearAgentMemory action must be present after confirming"
+        );
     }
 
     #[test]
@@ -3446,8 +3624,12 @@ mod tests {
         );
         assert!(with_notes.contains("Le gusta que le hablen informal."));
 
-        let without_notes =
-            build_dynamic_case_state(&context, Actor::Customer, &ConversationState::MainMenu, None);
+        let without_notes = build_dynamic_case_state(
+            &context,
+            Actor::Customer,
+            &ConversationState::MainMenu,
+            None,
+        );
         assert!(!without_notes.contains("Notas guardadas"));
     }
 
@@ -3490,7 +3672,11 @@ mod tests {
                     total_units_purchased,
                     referral_times_used_inc,
                     ..
-                } => Some((*total_spent_cop, *total_units_purchased, *referral_times_used_inc)),
+                } => Some((
+                    *total_spent_cop,
+                    *total_units_purchased,
+                    *referral_times_used_inc,
+                )),
                 _ => None,
             })
             .expect("analytics action present");
