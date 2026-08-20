@@ -36,7 +36,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Tiers mayoristas: fuente viva es `crm-app` (`/settings/precios`), no un
     // espejo estático a mano. Sin las dos variables el bot arranca igual con
-    // los tiers compilados por defecto — nunca bloquea el arranque.
+    // los tiers compilados por defecto — nunca bloquea el arranque. La
+    // propagación normal es instantánea (`crm-app` llama
+    // `POST /internal/pricing/refresh` justo después de guardar, ver
+    // `routes/internal.rs::refresh_pricing`) — este refresco cada hora es
+    // solo la red de seguridad, igual que el de `referrals.rs` cada 30s para
+    // ese cache (acá una hora alcanza de sobra: los precios cambian mucho
+    // menos seguido que los códigos de referido).
     let pricing_http_client = reqwest::Client::new();
     if let (Some(pricing_url), Some(pricing_token)) = (
         config.crm_app_pricing_url.clone(),
@@ -52,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let refresh_client = pricing_http_client.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3_600));
             loop {
                 interval.tick().await;
                 match fetch_pricing_table(&refresh_client, &pricing_url, &pricing_token).await {

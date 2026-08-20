@@ -506,7 +506,7 @@ dependencies = [
 
 [[package]]
 name = "granizado-bot"
-version = "1.23.15"
+version = "1.23.16"
 dependencies = [
  "axum",
  "chrono",

@@ -470,6 +470,43 @@ pub async fn boost_referral_code(
     Ok(Json(updated))
 }
 
+/// `crm-app` llama esto justo después de guardar una `pricing_version` nueva
+/// en `/settings/precios`, para que el bot la recoja al instante en vez de
+/// esperar su refresco periódico (safety net, `main.rs`) — mismo principio
+/// que `refresh_referral_cache` arriba, solo que la fuente de este dato vive
+/// en la base de `crm-app`, no en la propia, así que refrescar significa
+/// volver a pedírsela por HTTP en vez de releerla de `state.pool`.
+///
+/// Siempre responde 204: la escritura en `crm-app` ya se hizo, esto es
+/// best-effort de ambos lados. Si `CRM_APP_PRICING_URL`/`_TOKEN` no están
+/// configurados acá no hay nada que refrescar tampoco.
+pub async fn refresh_pricing(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+
+    let (Some(url), Some(token)) = (
+        state.config.crm_app_pricing_url.as_deref(),
+        state.config.crm_app_pricing_token.as_deref(),
+    ) else {
+        return Ok(StatusCode::NO_CONTENT);
+    };
+
+    let http_client = reqwest::Client::new();
+    match crate::bot::pricing::fetch_pricing_table(&http_client, url, token).await {
+        Ok(table) => {
+            crate::bot::pricing::swap_pricing_table(table);
+            tracing::info!("pricing table refreshed from crm-app notification");
+        }
+        Err(err) => {
+            tracing::warn!(%err, "failed to refresh pricing table after crm-app notification")
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 fn is_unique_violation(err: &sqlx::Error) -> bool {
     err.as_database_error()
         .is_some_and(DatabaseError::is_unique_violation)

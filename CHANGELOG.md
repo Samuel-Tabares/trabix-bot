@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.16] - 2026-08-20
+
+### Added
+- **New `POST /internal/pricing/refresh`**: `crm-app` calls this right after saving a new
+  `pricing_version` in `/settings/precios`, so the bot's pricing cache updates within seconds
+  instead of waiting for the periodic poll. Same shared-secret pattern as the other `/internal/*`
+  routes, best-effort on both ends — the save already committed either way.
+
+### Changed
+- **Periodic pricing refresh moved from 5 min to 1h.** Now that `/internal/pricing/refresh` covers
+  the normal case instantly, the timer is just a safety net (same role the 30s refresh already plays
+  for `referrals.rs`) — pricing changes far less often than referral codes do, so an hour is plenty.
+
 ## [1.23.15] - 2026-08-20
 
 ### Added
