@@ -1,8 +1,167 @@
+use std::{
+    error::Error,
+    fmt,
+    sync::{Arc, OnceLock, RwLock},
+};
+
+use serde::Deserialize;
+
 use crate::db::models::OrderItemData;
 
 const LIQUOR_DETAIL_FULL_PRICE: u32 = 8_000;
 const LIQUOR_DETAIL_PROMO_PRICE: u32 = 4_000;
 const NON_LIQUOR_DETAIL_PRICE: u32 = 7_000;
+
+static PRICING_TABLE: OnceLock<RwLock<Arc<PricingTable>>> = OnceLock::new();
+
+/// Un tier mayorista: desde cuántas unidades aplica, precio unitario y los
+/// dos porcentajes de referido (comisión del embajador, descuento al
+/// cliente) para ese rango.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WholesaleTier {
+    pub min_quantity: u32,
+    pub unit_price: u32,
+    pub commission_pct: u8,
+    pub client_discount_pct: u8,
+}
+
+/// Tiers mayoristas por variante, sincronizados con la `pricing_version`
+/// activa de `crm-app` (`GET /api/internal/pricing`) — reemplaza el espejo
+/// estático manual que se volvía obsoleto cada vez que se cambiaban precios
+/// desde `/settings/precios` sin editar este archivo también. Ver
+/// `init_pricing_table`/`swap_pricing_table` para cómo se carga.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PricingTable {
+    pub with_alcohol: Vec<WholesaleTier>,
+    pub without_alcohol: Vec<WholesaleTier>,
+}
+
+impl Default for PricingTable {
+    /// Precios vigentes de Trabix al momento de este cambio (CLAUDE.md raíz
+    /// del workspace) — usados hasta el primer fetch exitoso a `crm-app`, y
+    /// como red de seguridad si un fetch alguna vez devuelve un tier que no
+    /// cubre la cantidad pedida.
+    fn default() -> Self {
+        Self {
+            with_alcohol: vec![
+                WholesaleTier { min_quantity: 20, unit_price: 4_900, commission_pct: 15, client_discount_pct: 10 },
+                WholesaleTier { min_quantity: 50, unit_price: 4_700, commission_pct: 18, client_discount_pct: 12 },
+                WholesaleTier { min_quantity: 100, unit_price: 4_500, commission_pct: 20, client_discount_pct: 15 },
+            ],
+            without_alcohol: vec![
+                WholesaleTier { min_quantity: 20, unit_price: 4_800, commission_pct: 15, client_discount_pct: 10 },
+                WholesaleTier { min_quantity: 50, unit_price: 4_500, commission_pct: 18, client_discount_pct: 12 },
+                WholesaleTier { min_quantity: 100, unit_price: 4_200, commission_pct: 20, client_discount_pct: 15 },
+            ],
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum PricingSyncError {
+    Http(reqwest::Error),
+    Status(u16),
+}
+
+impl fmt::Display for PricingSyncError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Http(source) => write!(f, "failed to fetch pricing table: {source}"),
+            Self::Status(status) => write!(f, "crm-app returned status {status} for pricing table"),
+        }
+    }
+}
+
+impl Error for PricingSyncError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Http(source) => Some(source),
+            Self::Status(_) => None,
+        }
+    }
+}
+
+/// Primera carga al boot, antes de aceptar tráfico — ver `main.rs`.
+pub fn init_pricing_table(table: PricingTable) {
+    PRICING_TABLE
+        .set(RwLock::new(Arc::new(table)))
+        .expect("pricing table must only be initialized once");
+}
+
+/// Reemplaza la tabla cacheada. La llama el refresco de background
+/// (`main.rs`) cada vez que vuelve a consultar `crm-app`.
+pub fn swap_pricing_table(table: PricingTable) {
+    if let Some(lock) = PRICING_TABLE.get() {
+        *lock.write().expect("pricing table lock poisoned") = Arc::new(table);
+    }
+}
+
+fn current_pricing_table() -> Arc<PricingTable> {
+    match PRICING_TABLE.get() {
+        Some(lock) => lock.read().expect("pricing table lock poisoned").clone(),
+        // No debería pasar en producción (main.rs inicializa antes de servir
+        // tráfico) pero los tests unitarios de este módulo nunca llaman
+        // init_pricing_table — caen al default compilado, que es justo lo
+        // que esos tests esperan.
+        None => Arc::new(PricingTable::default()),
+    }
+}
+
+/// Pide a `crm-app` la `pricing_version` activa. Se usa tanto en el fetch
+/// inicial del boot como en el refresco periódico — nunca panics, un fallo
+/// de red o un 5xx solo se loguea y el bot se queda con la tabla anterior.
+pub async fn fetch_pricing_table(
+    http_client: &reqwest::Client,
+    url: &str,
+    token: &str,
+) -> Result<PricingTable, PricingSyncError> {
+    let response = http_client
+        .get(url)
+        .header("X-Internal-Token", token)
+        .send()
+        .await
+        .map_err(PricingSyncError::Http)?;
+
+    if !response.status().is_success() {
+        return Err(PricingSyncError::Status(response.status().as_u16()));
+    }
+
+    response
+        .json::<PricingTable>()
+        .await
+        .map_err(PricingSyncError::Http)
+}
+
+fn select_tier(tiers: &[WholesaleTier], cantidad: u32) -> Option<WholesaleTier> {
+    tiers
+        .iter()
+        .filter(|tier| tier.min_quantity <= cantidad)
+        .max_by_key(|tier| tier.min_quantity)
+        .cloned()
+}
+
+/// El tier aplicable para una cantidad + variante, leído de la tabla viva si
+/// la cubre y si no del default compilado — nunca deja un pedido real sin
+/// tier por un fetch que trajo datos incompletos.
+fn resolve_tier(cantidad: u32, has_liquor: bool) -> WholesaleTier {
+    let table = current_pricing_table();
+    let tiers = if has_liquor { &table.with_alcohol } else { &table.without_alcohol };
+    if let Some(tier) = select_tier(tiers, cantidad) {
+        return tier;
+    }
+
+    tracing::warn!(
+        cantidad,
+        has_liquor,
+        "pricing table has no matching tier, falling back to compiled default"
+    );
+    let default = PricingTable::default();
+    let default_tiers = if has_liquor { &default.with_alcohol } else { &default.without_alcohol };
+    select_tier(default_tiers, cantidad)
+        .expect("compiled default pricing table must always cover cantidad >= 20")
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistedOrderItem {
@@ -69,15 +228,7 @@ pub fn calcular_precio_sin_licor_detal(cantidad: u32) -> u32 {
 }
 
 pub fn precio_unitario_mayor(cantidad: u32, has_liquor: bool) -> u32 {
-    match (has_liquor, cantidad) {
-        (true, 20..=49) => 4_900,
-        (true, 50..=99) => 4_700,
-        (true, 100..) => 4_500,
-        (false, 20..=49) => 4_800,
-        (false, 50..=99) => 4_500,
-        (false, 100..) => 4_200,
-        _ => unreachable!("solo se llama con cantidad >= 20"),
-    }
+    resolve_tier(cantidad, has_liquor).unit_price
 }
 
 pub fn calcular_pedido(items: &[OrderItemData]) -> PedidoCalculado {
@@ -216,7 +367,7 @@ fn calcular_bucket_referido(
     has_boost: bool,
 ) -> ReferralBucketCalculated {
     let (client_discount_percent, mut ambassador_commission_percent) =
-        porcentaje_referido(quantity);
+        porcentaje_referido(quantity, has_liquor);
     if has_boost {
         ambassador_commission_percent += 5;
     }
@@ -238,13 +389,9 @@ fn calcular_bucket_referido(
     }
 }
 
-fn porcentaje_referido(quantity: u32) -> (u8, u8) {
-    match quantity {
-        20..=49 => (10, 15),
-        50..=99 => (12, 18),
-        100.. => (15, 20),
-        _ => unreachable!("solo se llama con buckets al por mayor"),
-    }
+fn porcentaje_referido(quantity: u32, has_liquor: bool) -> (u8, u8) {
+    let tier = resolve_tier(quantity, has_liquor);
+    (tier.client_discount_pct, tier.commission_pct)
 }
 
 fn aplicar_porcentaje(value: u32, percent: u8) -> u32 {

@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 
 use axum::Router;
 use granizado_bot::{
+    bot::pricing::{fetch_pricing_table, init_pricing_table, swap_pricing_table, PricingTable},
     bot::timers::{new_timer_map, restore_pending_timers, spawn_timer_sweeper},
     config::Config,
     db::init_pool,
@@ -32,6 +33,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let initial_referral_registry = ReferralRegistry::load_from_db(&pool).await?;
     init_referral_registry(initial_referral_registry);
+
+    // Tiers mayoristas: fuente viva es `crm-app` (`/settings/precios`), no un
+    // espejo estático a mano. Sin las dos variables el bot arranca igual con
+    // los tiers compilados por defecto — nunca bloquea el arranque.
+    let pricing_http_client = reqwest::Client::new();
+    if let (Some(pricing_url), Some(pricing_token)) = (
+        config.crm_app_pricing_url.clone(),
+        config.crm_app_pricing_token.clone(),
+    ) {
+        match fetch_pricing_table(&pricing_http_client, &pricing_url, &pricing_token).await {
+            Ok(table) => init_pricing_table(table),
+            Err(err) => {
+                tracing::warn!(%err, "initial pricing fetch failed, using compiled defaults");
+                init_pricing_table(PricingTable::default());
+            }
+        }
+
+        let refresh_client = pricing_http_client.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                match fetch_pricing_table(&refresh_client, &pricing_url, &pricing_token).await {
+                    Ok(table) => swap_pricing_table(table),
+                    Err(err) => tracing::warn!(%err, "failed to refresh pricing table"),
+                }
+            }
+        });
+    } else {
+        init_pricing_table(PricingTable::default());
+    }
 
     let transport = WhatsAppClient::new(
         config.whatsapp_token.clone(),

@@ -33,6 +33,13 @@ pub struct Config {
     /// variable falta o no es un número válido — un typo no debe tumbar el
     /// arranque.
     pub advisor_takeover_hours: u64,
+    /// URL de `GET /api/internal/pricing` en `crm-app` y el secreto para
+    /// `X-Internal-Token` (sentido inverso a `internal_api_token`, ahí el
+    /// bot expone y `crm-app` llama; acá `crm-app` expone y el bot llama).
+    /// Opcionales a propósito: sin las dos, el bot se queda con los tiers
+    /// mayoristas compilados por defecto — igual que siempre.
+    pub crm_app_pricing_url: Option<String>,
+    pub crm_app_pricing_token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +90,8 @@ impl Config {
             capi_access_token: read_optional("META_CAPI_ACCESS_TOKEN"),
             internal_api_token: read_optional("INTERNAL_API_TOKEN"),
             advisor_takeover_hours: read_u64("ADVISOR_TAKEOVER_HOURS", 6),
+            crm_app_pricing_url: read_optional("CRM_APP_PRICING_URL"),
+            crm_app_pricing_token: read_optional("CRM_APP_PRICING_TOKEN"),
         })
     }
 }

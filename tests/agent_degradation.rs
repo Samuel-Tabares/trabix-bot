@@ -61,6 +61,8 @@ async fn setup_state() -> AppState {
         capi_access_token: None,
         internal_api_token: None,
         advisor_takeover_hours: 6,
+        crm_app_pricing_url: None,
+        crm_app_pricing_token: None,
     };
 
     AppState {

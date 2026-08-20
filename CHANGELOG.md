@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.15] - 2026-08-20
+
+### Added
+- **`bot/pricing.rs` now syncs wholesale tiers from `crm-app` instead of a hardcoded snapshot.**
+  `precio_unitario_mayor`/`porcentaje_referido` used to be `match` statements on the tiers as they
+  stood the day someone last hand-copied them from `/settings/precios` — a price or commission
+  change in the CRM never reached the bot. New `CRM_APP_PRICING_URL`/`CRM_APP_PRICING_TOKEN` (both
+  optional, same degrade-gracefully pattern as `INTERNAL_API_TOKEN`) make the bot fetch the active
+  `pricing_version` on boot and refresh it every 5 min into an in-memory cache
+  (`init_pricing_table`/`swap_pricing_table`, same shape as `referrals.rs`'s registry). Falls back to
+  the compiled-in default tiers (today's values) if the fetch fails or the two variables aren't set —
+  never blocks startup, never leaves a checkout without a matching tier.
+
+### Fixed
+- **`porcentaje_referido` ignored `has_liquor`.** Commission/discount percentages came from a single
+  quantity-only table shared by both variants, even though the CRM's `pricing_wholesale_tier` schema
+  already allows con-licor and sin-licor to carry different percentages. Today they happen to match,
+  so no order was ever mispriced, but the bug would have silently mispriced the sin-licor bucket the
+  moment someone diverged the two in `/settings/precios`.
+
 ## [1.23.14] - 2026-08-12
 
 ### Removed
