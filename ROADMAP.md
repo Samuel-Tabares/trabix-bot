@@ -102,8 +102,8 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
   resuelve y descarga el adjunto desde la Graph API y lo sirve con el `Content-Type` correcto, porque
   `crm-app` no tiene credenciales de Meta propias. `crm-app` ya renderiza `<img>` real en vez de la
   etiqueta "📎 Imagen".
-- **E2E round 2 (2026-08-12): 3 bugs reales encontrados y corregidos en vivo, commiteados
-  localmente, sin push todavía** (ver `~/.claude/plans/e2e-advisor-push-test-round2.md` para el
+- **E2E round 2 (2026-08-12): 3 bugs reales encontrados y corregidos en vivo** — ya pusheados y
+  desplegados (ver `~/.claude/plans/e2e-advisor-push-test-round2.md` para el
   detalle completo de la sesión):
   - **v1.23.2** — el saludo fijo de primer contacto (`engine.rs`, ahorra una llamada al LLM) dejaba
     el primer mensaje del cliente ausente de `agent_case_messages` (memoria propia del LLM), aunque
@@ -182,17 +182,16 @@ para estados **agent-owned** — provablemente muertos, porque `should_use_agent
 con ellos. Verificado función por función con grep (no por archivo), sus arms en `transition()` ahora
 son `unreachable!()` con el motivo citado inline. Resultado: **~1.966 líneas netas borradas** (25
 handlers + ~20 helpers `*_actions`/render/validación que quedaron huérfanos + 32 tests que solo
-probaban código muerto), `cargo test` en 200/0/5 (antes 232/0/5). Commits `1e85124`…`5dbea55`,
-locales, sin push todavía.
+probaban código muerto), `cargo test` en 200/0/5 (antes 232/0/5). Commits `1e85124`…`5dbea55`, ya pusheados a `master`.
 
-**Lo que queda pendiente de esta limpieza** (encontrado como efecto colateral, fuera de alcance de
-esta ronda a propósito — cruza a `advisor.rs`, que estaba en la lista de "no tocar"):
-`start_waiting_for_contact_advisor`, `final_order_packet_actions`, `render_final_order_status`,
-`render_contact_request` en `src/bot/states/advisor.rs` quedaron sin ningún llamador tras borrar los
-handlers de `customer_data.rs`/`checkout.rs` que los alcanzaban — `cargo check` avisa dead-code en 3
-de los 4. Además, `confirm_address_actions`/`change_address_prompt_actions` en `checkout.rs` son
-código muerto preexistente, sin relación con esta ronda. Ninguno se borró por precaución — requieren
-el mismo ejercicio de verificación cruzada, próxima sesión de limpieza.
+**~~Lo que queda pendiente de esta limpieza~~ — HECHO (2026-08-25, v1.23.17).** Las 4 funciones de
+`advisor.rs` (`start_waiting_for_contact_advisor`, `final_order_packet_actions`,
+`render_final_order_status`, `render_contact_request`) y las 2 de `checkout.rs`
+(`confirm_address_actions`, `change_address_prompt_actions`) se verificaron caller-by-caller con
+grep y se borraron: forman un grupo muerto cerrado. De paso salió el import `customer_data` que
+quedó sin uso y `ToolOutcome::ResultWithActions` en `src/ai/agent.rs` (variante nunca construida,
+preexistente y sin relación con esta limpieza). **`cargo check` corre ahora sin ningún warning**, y
+`cargo test` sigue en 200/0/5.
 
 `transition()` en sí sigue sin poder borrarse completo (sección 5 de
 `docs/CLEANUP_deterministic_engine.md` explica por qué: separar `ConversationState` en dos enums es

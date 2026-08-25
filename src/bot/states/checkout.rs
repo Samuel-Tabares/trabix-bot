@@ -13,7 +13,7 @@ use crate::{
     whatsapp::types::{Button, ButtonReplyPayload},
 };
 
-use super::{advisor, customer_data, menu};
+use super::{advisor, menu};
 
 const REVIEW_CONTINUE: &str = "continue_review_checkout";
 const REVIEW_CHANGE: &str = "change_review_checkout";
@@ -296,14 +296,6 @@ pub fn select_payment_method_actions(phone: &str) -> Vec<BotAction> {
             reply_button(PAY_NOW, &messages.pay_now_title),
         ],
     }]
-}
-
-pub fn confirm_address_actions(context: &ConversationContext) -> Vec<BotAction> {
-    customer_data::confirm_customer_data_actions(context)
-}
-
-pub fn change_address_prompt_actions(phone: &str) -> Vec<BotAction> {
-    customer_data::edit_customer_address_actions(phone)
 }
 
 pub fn render_summary(context: &ConversationContext, pedido: &PedidoCalculado) -> String {

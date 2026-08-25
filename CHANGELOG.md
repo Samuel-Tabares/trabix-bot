@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.17] - 2026-08-25
+
+### Removed
+- **Dead-code round closed: the 6 functions the previous pass left behind, plus one dead enum
+  variant.** `cargo check` now runs with **zero warnings**.
+  - `src/bot/states/advisor.rs`: `start_waiting_for_contact_advisor`, `final_order_packet_actions`
+    and the two renderers only they reached (`render_final_order_status`, `render_contact_request`).
+    They lost their last callers when v1.23.5–v1.23.11 deleted the agent-owned handlers in
+    `customer_data.rs`/`checkout.rs`; that pass deliberately skipped `advisor.rs` and left them
+    flagged in `ROADMAP.md`. Verified caller-by-caller with grep before deleting: the four form a
+    closed dead cluster (the two `render_*` were called only from the two dead entry points).
+  - `src/bot/states/checkout.rs`: `confirm_address_actions` and `change_address_prompt_actions` —
+    one-line wrappers over `customer_data::*`, dead before that pass and unrelated to it. Their
+    removal made the `customer_data` import unused; `advisor` and `menu` stay.
+  - `src/ai/agent.rs`: `ToolOutcome::ResultWithActions` and its match arm. Never constructed by any
+    tool — pre-existing, unrelated to the deterministic-engine cleanup, and the only warning left
+    once the rest was gone. `ResultWithAction` (singular) and `ResultWithStateChange` cover every
+    real case.
+  `cargo test` stays at 200 passed / 0 failed / 5 ignored — no test covered any of this.
+
+### Changed
+- **Docs: `accountability_app` is gone.** `CLAUDE.md` pointed at it as the sibling project that
+  shares the business model; that app was absorbed into `crm-app` and deleted on 2026-08-25. It now
+  points at `crm-app` and states that wholesale prices are no longer duplicated in Rust —
+  `/settings/precios` is the source and this bot caches it over `GET /api/internal/pricing`.
+
 ## [1.23.16] - 2026-08-20
 
 ### Added

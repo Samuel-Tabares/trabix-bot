@@ -1094,75 +1094,6 @@ fn handle_wait_client_hour(
     }
 }
 
-pub(crate) fn start_waiting_for_contact_advisor(
-    context: &mut ConversationContext,
-) -> (ConversationState, Vec<BotAction>) {
-    context.advisor_timer_started_at = Some(chrono::Utc::now());
-    context.advisor_timer_expired = false;
-    context.relay_kind = None;
-    context.relay_timer_started_at = None;
-
-    (
-        ConversationState::WaitAdvisorContact,
-        vec![
-            BotAction::SendText {
-                to: context.advisor_phone.clone(),
-                body: render_contact_request(context),
-            },
-            BotAction::SendButtons {
-                to: context.advisor_phone.clone(),
-                body: "Selecciona cómo deseas responder.".to_string(),
-                buttons: vec![reply_button(
-                    &advisor_button_id(ADVISOR_ATTEND_PREFIX, &context.phone_number),
-                    &advisor_title("Atender", &context.phone_number),
-                )],
-            },
-            BotAction::SendText {
-                to: context.phone_number.clone(),
-                body: client_messages()
-                    .advisor_customer
-                    .wait_contact_initial_text
-                    .clone(),
-            },
-            BotAction::StartTimer {
-                timer_type: TimerType::AdvisorResponse,
-                phone: context.phone_number.clone(),
-                duration: ADVISOR_RESPONSE_TIMEOUT,
-            },
-        ],
-    )
-}
-
-pub(crate) fn final_order_packet_actions(
-    context: &ConversationContext,
-    receipt_media_id: Option<&str>,
-) -> Vec<BotAction> {
-    let pedido = calcular_pedido(&context.items);
-    let mut actions = vec![
-        BotAction::SendText {
-            to: context.advisor_phone.clone(),
-            body: render_order_summary(context, &pedido),
-        },
-        BotAction::SendText {
-            to: context.advisor_phone.clone(),
-            body: render_final_order_status(context, receipt_media_id.is_some()),
-        },
-    ];
-
-    if let Some(media_id) = receipt_media_id {
-        actions.push(BotAction::SendImage {
-            to: context.advisor_phone.clone(),
-            media_id: media_id.to_string(),
-            caption: Some(format!(
-                "Comprobante {}",
-                phone_marker(&context.phone_number)
-            )),
-        });
-    }
-
-    actions
-}
-
 fn ask_delivery_cost_entry_actions(
     context: &ConversationContext,
     pedido: &PedidoCalculado,
@@ -1431,37 +1362,6 @@ fn render_order_summary(context: &ConversationContext, pedido: &PedidoCalculado)
         render_items(&pedido.items_detalle),
         referral_details,
         totals,
-    )
-}
-
-fn render_final_order_status(context: &ConversationContext, receipt_attached: bool) -> String {
-    let pago = match context.payment_method.as_deref() {
-        Some("cash_on_delivery") => "contra entrega",
-        Some("transfer") => "pago ahora",
-        Some(other) => other,
-        None => "pendiente",
-    };
-
-    if receipt_attached {
-        return format!(
-            "Pedido {} confirmado. Pago registrado por transferencia; revisa el comprobante adjunto.",
-            phone_marker(&context.phone_number)
-        );
-    }
-
-    format!(
-        "Pedido {} confirmado. Método de pago final: {}.",
-        phone_marker(&context.phone_number),
-        pago
-    )
-}
-
-fn render_contact_request(context: &ConversationContext) -> String {
-    format!(
-        "Cliente quiere hablar con asesor {}\n\nNombre: {}\nTeléfono: {}",
-        phone_marker(&context.phone_number),
-        context.customer_name.as_deref().unwrap_or("pendiente"),
-        context.customer_phone.as_deref().unwrap_or("pendiente"),
     )
 }
 

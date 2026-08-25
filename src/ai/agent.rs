@@ -449,10 +449,6 @@ async fn run_case_turn(
                     tool_results.push(block);
                     actions.push(action);
                 }
-                ToolOutcome::ResultWithActions(block, mut tool_actions) => {
-                    tool_results.push(block);
-                    actions.append(&mut tool_actions);
-                }
                 ToolOutcome::ResultWithMenuImage(block) => {
                     tool_results.push(block);
                     actions.push(BotAction::SendAssetImage {
@@ -854,7 +850,6 @@ fn error_result(tool_use_id: &str, content: impl Into<String>) -> ContentBlock {
 enum ToolOutcome {
     Result(ContentBlock),
     ResultWithAction(ContentBlock, BotAction),
-    ResultWithActions(ContentBlock, Vec<BotAction>),
     ResultWithMenuImage(ContentBlock),
     ResultWithStateChange(ContentBlock, ConversationState, Vec<BotAction>),
 }

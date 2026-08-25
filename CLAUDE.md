@@ -103,8 +103,11 @@ runtime logic, and tests together.
 ## Shared model with the sibling app
 
 This bot shares one conceptual model (embajador codes, commissions, wholesale tiers, boost) with
-the sibling `accountability_app` project — keep business-rule changes consistent across both when
-instructed to.
+the sibling `crm-app` project — keep business-rule changes consistent across both when instructed
+to. **Wholesale prices are no longer duplicated**: `crm-app` serves the active `pricing_version`
+over `GET /api/internal/pricing` and this bot caches it (`src/bot/pricing.rs`), so a price change is
+made in `crm-app`'s `/settings/precios`, not by editing Rust. (`accountability_app`, the previous
+financial app, was absorbed into `crm-app` and deleted on 2026-08-25.)
 
 ## Commit conventions (overrides the generic `commit` skill for this repo)
 
