@@ -14,6 +14,7 @@ use tokio::time::{interval, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    ai::agent::checkout_precondition_error,
     bot::{
         inactivity::CONVERSATION_REMINDER_TIMEOUT,
         state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
@@ -379,7 +380,15 @@ fn timer_recovery(
 ) -> Option<TimerRecovery> {
     let state_data = &conversation.state_data.0;
 
-    if customer_inactivity_state(conversation.state.as_str()) {
+    if customer_inactivity_state(conversation.state.as_str())
+        && !order_already_gestioned(
+            &conversation.phone_number,
+            conversation.customer_name.clone(),
+            conversation.customer_phone.clone(),
+            conversation.delivery_address.clone(),
+            state_data,
+        )
+    {
         let Some(started_at) = state_data.conversation_abandon_started_at else {
             return None;
         };
@@ -494,7 +503,15 @@ fn boot_expiration_action(
             }
         }
         TimerType::ConversationAbandon => {
-            if !customer_inactivity_state(conversation.state.as_str()) {
+            if !customer_inactivity_state(conversation.state.as_str())
+                || order_already_gestioned(
+                    &conversation.phone_number,
+                    conversation.customer_name.clone(),
+                    conversation.customer_phone.clone(),
+                    conversation.delivery_address.clone(),
+                    state_data,
+                )
+            {
                 return BootExpirationAction::None;
             }
 
@@ -836,7 +853,15 @@ async fn expire_conversation_abandon_with_source(
         return Ok(());
     }
 
-    if !customer_inactivity_state(&conversation.state) {
+    if !customer_inactivity_state(&conversation.state)
+        || order_already_gestioned(
+            &conversation.phone_number,
+            conversation.customer_name.clone(),
+            conversation.customer_phone.clone(),
+            conversation.delivery_address.clone(),
+            &conversation.state_data.0,
+        )
+    {
         return Ok(());
     }
 
@@ -1086,6 +1111,34 @@ fn customer_inactivity_state(state: &str) -> bool {
     )
 }
 
+/// Espejo de `bot::inactivity::sync_customer_inactivity_timer`'s
+/// `order_already_gestioned`: una vez el pedido está confirmado o ya se sabe
+/// qué va a pedir, a dónde y con qué se paga, el recordatorio de "¿sigues por
+/// ahí?" ya no aporta nada. Este path (recuperación al boot / sweep) no tiene
+/// el `ConversationContext` vivo, solo lo persistido — se reconstruye con
+/// `rehydrate_context_for_timer` para reusar el mismo criterio
+/// (`checkout_precondition_error`) en vez de duplicarlo.
+fn order_already_gestioned(
+    phone_number: &str,
+    customer_name: Option<String>,
+    customer_phone: Option<String>,
+    delivery_address: Option<String>,
+    state_data: &ConversationStateData,
+) -> bool {
+    if state_data.order_confirmed {
+        return true;
+    }
+    let context = rehydrate_context_for_timer(
+        phone_number.to_string(),
+        String::new(),
+        customer_name,
+        customer_phone,
+        delivery_address,
+        state_data,
+    );
+    checkout_precondition_error(&context).is_none()
+}
+
 pub fn rehydrate_context_for_timer(
     phone_number: String,
     advisor_phone: String,
@@ -1228,6 +1281,29 @@ mod tests {
             recovery,
             Some(TimerRecovery::Expired(TimerType::ConversationAbandon))
         );
+    }
+
+    #[test]
+    fn timer_recovery_ignores_customer_inactivity_once_order_is_gestioned() {
+        let now = chrono::Utc::now();
+        let conversation = active_timer_conversation(
+            "review_checkout",
+            ConversationStateData {
+                items: vec![crate::db::models::OrderItemData {
+                    flavor: "Mora".to_string(),
+                    has_liquor: true,
+                    quantity: 2,
+                }],
+                delivery_type: Some("immediate".to_string()),
+                conversation_abandon_started_at: Some(now - ChronoDuration::minutes(3)),
+                ..Default::default()
+            },
+            now,
+        );
+
+        let recovery = timer_recovery(&conversation, now);
+
+        assert!(recovery.is_none());
     }
 
     #[test]

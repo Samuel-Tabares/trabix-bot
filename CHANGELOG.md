@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.18] - 2026-08-30
+
+### Changed
+- **El recordatorio "¿sigues por ahí?" ya no dispara una vez el pedido está gestionado.** Antes se
+  armaba en cualquier estado de la whitelist de `uses_customer_inactivity_timer` sin mirar si ya se
+  sabía qué iba a pedir el cliente, a dónde y cómo pagaba — solo se suprimía en la transición
+  puntual justo después de confirmar (hallazgo del 2026-08-12). Ahora `sync_customer_inactivity_timer`
+  (`src/bot/inactivity.rs`) reusa `checkout_precondition_error` (`src/ai/agent.rs`, ahora
+  `pub(crate)`) para no armar el timer desde que el checkout está completo — cubre confirmación de
+  pago y todo lo posterior, sin tocar las etapas tempranas (menú, sabor, cantidad, dirección). El
+  mismo criterio se replicó en `src/bot/timers.rs` (`order_already_gestioned`) para la recuperación
+  al boot y el sweep cada 60s, reconstruyendo el contexto persistido en vez de duplicar la lógica.
+
 ## [1.23.17] - 2026-08-25
 
 ### Removed

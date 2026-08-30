@@ -2167,7 +2167,7 @@ fn reaccept_modified_order(
     )
 }
 
-fn checkout_precondition_error(context: &ConversationContext) -> Option<String> {
+pub(crate) fn checkout_precondition_error(context: &ConversationContext) -> Option<String> {
     let mut missing = Vec::new();
 
     if context.items.is_empty() {
