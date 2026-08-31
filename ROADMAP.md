@@ -3,7 +3,8 @@
 > Léeme al iniciar sesión, junto con `CLAUDE.md`. Este archivo dice **qué sigue y en qué orden**;
 > `CLAUDE.md` dice **cómo está construido**. Actualizar este archivo cuando algo se complete.
 >
-> Última revisión: 2026-08-12.
+> Última revisión: 2026-08-31 (parcial — ver punto 4, el resto de este archivo sigue fechado
+> 2026-08-12 y tiene datos desactualizados sobre embajadores).
 
 ## Contexto de negocio mínimo (para no tener que salir del repo)
 
@@ -203,6 +204,25 @@ un cambio de diseño más grande, fuera de alcance de una limpieza mecánica).
 
 - Docs obsoletos (`docs/archive/MASTER_PROMPT.md`, etc.) — ya archivados, candidatos a borrar
   cuando alguien pase por ahí. Cero urgencia.
+
+---
+
+### 4. Timer "¿sigues por ahí?" ya no molesta tras gestionar el pedido — HECHO, falta QA end-to-end (2026-08-31, v1.23.18)
+
+`sync_customer_inactivity_timer` (`src/bot/inactivity.rs`) y el path de recuperación al boot/sweep
+(`order_already_gestioned`, `src/bot/timers.rs`) dejan de armar el recordatorio de 2 min una vez
+`checkout_precondition_error` da `None` (ítems, datos del cliente y entrega ya conocidos) — antes
+solo se suprimía en la transición puntual justo después de confirmar. 8 tests unitarios nuevos en
+verde; **el path de recuperación al boot/sweep no se probó contra un pedido real** (no hay forma de
+hacerlo desde `crm-app`, que nunca escribe en estas tablas). Plan de QA compartido con `crm-app`
+(sembrar un pedido de prueba, verificar Pendientes/ventas ahí, y de paso este timer) en
+`../crm-app/docs/qa_pendientes_ventas_2026-08-31.md`, sección 8.
+
+Nota aparte: **este archivo está desactualizado en varios sitios** (dice "embajadores no está
+corriendo" y `config/referrals.toml` como fuente de códigos — ambos cambiaron con la Fase 6 de
+`crm-app`, código de referido ahora vive en la tabla compartida `referral_codes`). No se corrigió
+en esta pasada por no ser el foco de la sesión; hace falta una revisión completa de este ROADMAP
+contra el estado real del programa de embajadores.
 
 ---
 
