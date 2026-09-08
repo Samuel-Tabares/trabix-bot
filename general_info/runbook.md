@@ -86,7 +86,14 @@ envío saliente empieza a fallar con `not_connected` (el puerto 8080 ya no sirve
 
 - Límite por cliente: 50 llamadas/día (constante `PER_PHONE_DAILY_LIMIT` en `src/ai/budget.rs`).
   Cuenta llamadas al LLM, no mensajes: un turno con tools gasta varias, y armar un pedido
-  completo por chat consume del orden de 25-35. Subido de 30 a 50 el 2026-09-08.
+  completo por chat consume del orden de 25-35. Subido de 30 a 50 el 2026-09-08, después de que un
+  cliente real se quedara sin bot a media tarde con el pedido ya armado.
+- Costo por turno: cada llamada al modelo deja una línea a nivel `info` en los logs de Railway con
+  `input_tokens`, `output_tokens`, `cache_creation_input_tokens` y `cache_read_input_tokens`. Es la
+  única fuente confiable del costo real — las cifras que circulan en los docs de negocio se midieron
+  con `claude-sonnet-4-5` y sin prompt caching, y están infladas. Si `cache_read_input_tokens` sale
+  en cero de forma sostenida, el caching dejó de funcionar: revisar el breakpoint de `cache_control`
+  en `src/ai/client.rs`.
 - Kill-switch global: variable `AGENT_DAILY_LLM_CALL_LIMIT` en Railway (sin definir = sin límite
   global). Al alcanzarlo, todos los casos degradan a mensaje fijo + aviso al asesor.
 - Gasto real: consola de Anthropic → Usage. Cada turno de cliente consume 1–8 llamadas Haiku

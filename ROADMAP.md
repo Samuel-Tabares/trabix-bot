@@ -3,8 +3,8 @@
 > Léeme al iniciar sesión, junto con `CLAUDE.md`. Este archivo dice **qué sigue y en qué orden**;
 > `CLAUDE.md` dice **cómo está construido**. Actualizar este archivo cuando algo se complete.
 >
-> Última revisión: 2026-08-31 (parcial — ver punto 4, el resto de este archivo sigue fechado
-> 2026-08-12 y tiene datos desactualizados sobre embajadores).
+> Última revisión: 2026-09-08 (ver punto 5). Los puntos 1–3 siguen fechados 2026-08-12 y tienen
+> datos desactualizados sobre embajadores — ver la nota al final del punto 4.
 
 ## Contexto de negocio mínimo (para no tener que salir del repo)
 
@@ -33,11 +33,10 @@ mayorista**, mínimo 20 u — el bot ya lo bloquea de forma determinista (`final
   producción el 2026-08-01 (`message_events` id 32: `actor='advisor'`, `payload.source='crm-app'`,
   `wa_message_id` real de Meta). `crm-app` lo llama por la **red privada**
   (`http://trabix-bot.railway.internal:8080`), así que ese tráfico ya no sale a internet.
-  ⚠️ **Pendiente de seguridad:** el endpoint sigue expuesto igual — el dominio público del bot
-  enruta `/internal/*` porque el mismo listener sirve `/webhook` (verificado: 401 desde internet).
-  Lo único que lo protege es el token. El cierre real es un **segundo listener** (otro puerto, p.ej.
-  8081) que sirva solo `/internal/*`: Railway expone un solo puerto al edge público, así que ese
-  queda accesible únicamente por la red privada. Cambio chico en `src/main.rs` + `src/routes/mod.rs`.
+  ✅ **Cerrado (Fase 8):** `/internal/*` ya no se sirve desde el listener público. Hay un segundo
+  listener en `INTERNAL_PORT` (default `8081`) al que Railway no le asigna dominio, así que solo se
+  alcanza por la red privada (`trabix-bot.railway.internal:8081`). Confirmado en los logs de
+  arranque de cada deploy: `internal server listening on 0.0.0.0:8081 (private network only)`.
 - **Prompt caching** (v1.9.0): `cache_control` en el system prompt estático + tools de
   `src/ai/agent.rs`. Ver `docs/PENDIENTE_prompt_caching.md`.
 - **Domicilio gratis Armenia (6–19u) + detal sin mínimo en pueblos aledaños** (v1.9.0):
@@ -223,6 +222,51 @@ corriendo" y `config/referrals.toml` como fuente de códigos — ambos cambiaron
 `crm-app`, código de referido ahora vive en la tabla compartida `referral_codes`). No se corrigió
 en esta pasada por no ser el foco de la sesión; hace falta una revisión completa de este ROADMAP
 contra el estado real del programa de embajadores.
+
+---
+
+### 5. Recompra que sobrescribía el pedido anterior — CERRADO (2026-09-08, v1.24.0 y v1.25.0)
+
+Salió revisando por qué el chat de un cliente real (Kall Díaz) se había quedado sin bot. El
+autopsy completo está en `docs/incidente_pedido_sobrescrito_2026-09-08.md`; el resumen es que
+`current_order_id` sobrevivía indefinidamente al checkout, así que una recompra días después
+dependía de que el modelo eligiera `start_new_order` y no `modify_confirmed_order`. Eligió mal: la
+orden anterior quedó reescrita, la venta nueva ($104.000, 20 u) nunca apareció en Pendientes y no
+llegó al sistema financiero.
+
+Shippeado y **desplegado en producción** (deploy `d3134b3c`, 2026-09-08):
+
+- `release_delivered_order_binding` corre al inicio de cada turno, antes de que el modelo vea nada,
+  y suelta el binding cuando el pedido confirmado ya se entregó (inmediato +6h, o programado con la
+  fecha pasada). Campo nuevo `order_confirmed_at`.
+- Un pedido MODIFICADO notifica con `requires_action: true` → vuelve a Pendientes de `crm-app`.
+- `free_delivery_status_line` en cada resumen del pedido: el estado del domicilio gratis lo resuelve
+  el código, no el modelo.
+- `modify_confirmed_order` enumera los items que ya están en el carrito.
+- Pedido programado: 3h de anticipación en vez de 24 (`SCHEDULED_MIN_LEAD_HOURS`).
+- `PER_PHONE_DAILY_LIMIT` 30 → 50.
+- Bloque `ESTILO DE RESPUESTA` en el prompt: respuestas cortas, sin narrar el proceso interno.
+- `claude-sonnet-4-5` → `claude-sonnet-5` con thinking adaptativo y `effort: low`; `max_tokens`
+  1024 → 4096; el consumo por llamada pasa de `debug` a `info`.
+
+Datos remediados en producción el mismo día: venta de la segunda compra registrada (factura 29, 20 u,
+FIFO consumido), `customers` de Kall corregido a 40 u / $208.000, y su conversación reiniciada.
+
+**Lo que sigue abierto de este hilo (no lo cerró este trabajo):**
+
+- **Cancelar un pedido desde Pendientes no le avisa nada al cliente.** `crm-app`
+  (`apps/crm/src/server/inbox/order-resolution.ts`) solo escribe la fila de `order_dispatch`; el bot
+  ni se entera (`orders.status` sigue en `confirmed`) y la conversación sigue creyendo que el pedido
+  va en camino. Hoy la única salida es tomar control manual y avisarle a mano. Relacionado: desde la
+  Fase 1 el bot **auto-acepta todo** pedido inmediato en horario, así que no existe ningún camino
+  por el que el asesor pueda decir "no puedo gestionarlo".
+- **Medir el costo real por conversación con Sonnet 5.** Ahora que el consumo se loguea a `info`,
+  hace falta mirar `input_tokens`/`output_tokens`/`cache_read_input_tokens` de unas cuantas
+  conversaciones reales y actualizar las cifras de negocio, que están fechadas en Sonnet 4.5 sin
+  caching y por tanto infladas. Si `cache_read_input_tokens` sale consistentemente en cero, el
+  cambio de modelo dejó el caching sin efecto y hay que revisar el breakpoint.
+- **El pedido 36 quedó representando la compra del 09-05, no la del 08-30.** Los sabores del primer
+  pedido solo existen en `message_events`. No se restauró.
 
 ---
 

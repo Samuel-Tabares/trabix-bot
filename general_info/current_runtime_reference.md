@@ -65,6 +65,23 @@ Componentes principales:
 El motor de agente es el único runtime (el toggle `BOT_ENGINE` se eliminó — no hay rollback a un
 motor determinista global, `ANTHROPIC_API_KEY` es obligatoria para arrancar).
 
+Modelo y parametros de la llamada (`src/ai/client.rs`, desde v1.25.0 / 2026-09-08):
+
+- `claude-sonnet-5` ($2/$10 por millon de tokens; venia de `claude-sonnet-4-5`, $3/$15).
+- `thinking: {type: "adaptive"}` con `output_config: {effort: "low"}`. Adaptativo porque los fallos
+  caros en produccion fueron de razonamiento, no de falta de datos — el modelo tenia
+  "Total de unidades en el pedido: 40" en un tool-result y le hablo de 20 al cliente. `low` porque
+  son turnos cortos de atencion por chat: los niveles altos se pagan en tokens sin rendir aca.
+- `max_tokens: 4096`. Los tokens de thinking cuentan contra ese tope; con los 1024 que traiamos de
+  Sonnet 4.5 una respuesta larga se cortaba. Se cobra por tokens generados, no por el tope.
+- El request NO manda `temperature`, `top_p`, `top_k`, `budget_tokens` ni prefill del asistente —
+  Sonnet 5 los rechaza con 400. Si algun dia se agregan, revisar eso primero.
+- El consumo por llamada se loguea a nivel `info` (`input_tokens`, `output_tokens`,
+  `cache_creation_input_tokens`, `cache_read_input_tokens`). Estuvo en `debug` hasta v1.25.0, y como
+  el filtro de produccion es `granizado_bot=info` nunca se vio: el costo real por conversacion no
+  era medible desde los logs de Railway. **Las cifras de costo por conversacion que circulan en los
+  docs de negocio se midieron con Sonnet 4.5 y sin caching — re-medir aca antes de reusarlas.**
+
 - El agente es dueño de los estados de autoservicio del cliente (menu, pedido, datos, checkout,
   `ask_delivery_cost`, `wait_business_hours`, `select_payment_method`, `wait_receipt`) — ver
   `is_agent_owned_state()` en `src/engine.rs`. Los estados de negociacion de hora, esperas de
@@ -82,6 +99,10 @@ Protecciones activas en modo agente:
 - presupuesto diario: 50 llamadas LLM por telefono por dia (Bogota) + kill-switch global opcional
   `AGENT_DAILY_LLM_CALL_LIMIT`. Al agotarse: mensaje fijo `[agent].daily_limit_customer` al
   cliente y aviso al asesor una vez por dia por caso. Contadores en memoria (reset al redeploy).
+- presupuesto: el limite cuenta LLAMADAS AL LLM, no mensajes del cliente. Un turno con tools gasta
+  varias (hasta `MAX_TOOL_ITERATIONS`, 8) y armar un pedido completo por chat consume del orden de
+  25-35. Subido de 30 a 50 el 2026-09-08 tras un caso real en que un cliente se quedo sin bot a
+  media tarde con el pedido ya armado.
 - ventana de memoria: `agent_case_messages` es el transcript crudo que se le reenvia al LLM en
   cada turno (interno, no es lo que ve el CRM — eso es `message_events`, que nunca se borra). Al
   LLM solo van los ultimos 40 mensajes, cortados en frontera segura de tool-use. Mensajes
@@ -110,6 +131,11 @@ Correcciones del canary 2026-07-19 (`docs/canary-fixes-2026-07-19.md`):
   $0" (`Some(0)`): si el domicilio no se conoce todavia, la cifra se etiqueta como "Subtotal de
   productos (sin domicilio aun, no es el total final)" en vez de "Total", para no cotizar un total
   incompleto como si fuera el final.
+- ANTICIPACION MINIMA DE UN PEDIDO PROGRAMADO: **3 horas** (`SCHEDULED_MIN_LEAD_HOURS` en
+  `src/ai/agent.rs`), validada de forma determinista en `set_delivery_schedule` — si la fecha/hora
+  es muy pronto el tool rechaza y le dice al modelo desde cuando si se puede. Bajado de 24h el
+  2026-09-08 por decision de Samuel: con 24h se rechazaban pedidos del mismo dia que si eran
+  gestionables y el cliente terminaba empujado a "inmediato" aunque quisiera una hora concreta.
 - **Fase 1 (v1.14.0): ningun pedido pasa por una confirmacion de disponibilidad del asesor.** La
   tool `confirm_advisor_availability` se borro por completo (quedo sin call-sites reales). Regla
   unificada, ver `can_auto_accept()` en `src/ai/agent.rs`: un pedido se autoacepta si es
@@ -157,6 +183,33 @@ Correcciones del canary 2026-07-20 (resto del backlog de `docs/canary-fixes-2026
   re-confirmacion suma solo la diferencia sin re-contar `times_used` (`referral_times_used_inc` en
   `UpdateCustomerAndAnalytics`). El motor determinista sigue reseteando y nunca setea snapshot, asi
   que su comportamiento no cambia.
+- EL BINDING SE SUELTA SOLO CUANDO EL PEDIDO YA SE ENTREGO (v1.24.0, 2026-09-08). Lo de arriba
+  dejaba la eleccion "modificar vs pedido nuevo" en manos del modelo, para siempre. Una recompra
+  seis dias despues es indistinguible de una correccion, y el 2026-09-05 el modelo eligio modificar:
+  reescribio la orden del pedido anterior (items reemplazados), la venta nueva nunca aparecio en
+  Pendientes de `crm-app` y no llego al sistema financiero
+  (`docs/incidente_pedido_sobrescrito_2026-09-08.md`). Ahora `release_delivered_order_binding`
+  (`src/ai/agent.rs`) corre al INICIO de cada turno, antes de que el modelo vea nada, y llama
+  `start_new_order()` si el pedido confirmado ya se entrego:
+  - inmediato: confirmado hace mas de `IMMEDIATE_ORDER_ACTIVE_HOURS` (6h);
+  - programado: su fecha/hora de entrega ya paso;
+  - sin `order_confirmed_at` (estado escrito por una version anterior): se trata como entregado.
+  El sello `order_confirmed_at` lo pone `confirm_order_bookkeeping` y vive en
+  `ConversationStateData` con `#[serde(default)]`, asi que es compatible con el estado ya
+  persistido. `modify_confirmed_order` sigue existiendo para la ventana en la que el pedido SI esta
+  vivo, y su tool-result ahora enumera los items que ya estan en el carrito (si el cliente dicta su
+  lista completa de nuevo y el modelo solo agrega, quedan sumados — asi es como un pedido de 20
+  unidades mostro un subtotal de 40).
+- UNA MODIFICACION VUELVE A PENDIENTES (v1.24.0): la `NotifyAdvisor` de un pedido MODIFICADO va con
+  `requires_action: true`. `crm-app` filtra su cola por `order_dispatch`, que esta indexado por
+  `order_id`; sin esto un pedido ya aceptado que cambia quedaba invisible en la consola y el asesor
+  iba a entregar la version vieja.
+- ESTADO DEL DOMICILIO GRATIS, RESUELTO POR CODIGO (v1.24.0): `get_order_summary` y
+  `add_order_item` terminan con la linea de `free_delivery_status_line` — no aplica por mayorista /
+  faltan N unidades / ya califica / fuera de Armenia. El prompt prohibe calcular ese numero. Existe
+  porque el modelo lo invento: con 40 unidades en el carrito le dijo a un cliente real "te faltan 6
+  unidades mas para completar domicilio gratis", numero que ninguna herramienta devolvio
+  (`units_until_free_delivery` da `None` desde 6).
 - CODIGO DE REFERIDO OBLIGATORIO EN MAYORISTA (item 9): `finalize_checkout` bloquea la confirmacion
   de un pedido con bucket mayorista hasta que el tema del codigo este resuelto — se aplica un codigo
   valido (`apply_referral_code`) o el cliente dice que no tiene (nuevo tool `skip_referral_code`);

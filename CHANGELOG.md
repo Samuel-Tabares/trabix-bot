@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.25.1] - 2026-09-08
+
+### Fixed
+- **La descripción de la tool `set_delivery_schedule` seguía diciendo "mínimo 24 horas de
+  anticipación"** después de que v1.25.0 bajara `SCHEDULED_MIN_LEAD_HOURS` a 3. Esa descripción es
+  parte de lo que ve el modelo, así que le habría dicho 24h al cliente aunque el código aceptara 3 —
+  el cliente terminaba empujado a "inmediato" igual que antes del cambio.
+
+### Changed
+- Documentación al día con v1.24.0/v1.25.0: `general_info/current_runtime_reference.md` (ciclo de
+  vida del pedido confirmado y por qué el binding ahora se suelta por código, modelo y parámetros de
+  la llamada, anticipación de 3h, presupuesto que cuenta llamadas y no mensajes),
+  `general_info/runbook.md` (cómo medir el costo real por turno) y `ROADMAP.md` (§5 con lo cerrado y
+  lo que sigue abierto; se marcó como cerrado el pendiente de seguridad del segundo listener, que
+  llevaba shippeado desde la Fase 8).
+
+
 ## [1.25.0] - 2026-09-08
 
 ### Changed

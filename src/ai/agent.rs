@@ -1261,7 +1261,7 @@ fn set_delivery_schedule(input: &Value, context: &mut ConversationContext) -> (S
     // "el sábado a las 3") y la pasa ya resuelta en ISO: date=YYYY-MM-DD,
     // time=HH:MM (24h). Aquí se valida de forma determinista y se guarda en
     // ISO, para que las columnas tipadas de la BD se llenen y para poder
-    // exigir el mínimo de 24h de anticipación.
+    // exigir `SCHEDULED_MIN_LEAD_HOURS` de anticipación.
     let date_raw = input
         .get("date")
         .and_then(Value::as_str)
@@ -2684,7 +2684,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "set_delivery_schedule".to_string(),
-            description: "Marca el pedido como PROGRAMADO. Resuelve tú la fecha/hora que dijo el cliente (\"mañana\", \"el sábado a las 3\") a formato ISO usando la fecha/hora actual del bloque ESTADO: date = YYYY-MM-DD, time = HH:MM en 24 horas (las 3 de la tarde = 15:00). Los programados requieren mínimo 24 horas de anticipación; la herramienta rechaza fechas más próximas y te dice desde cuándo se puede.".to_string(),
+            description: "Marca el pedido como PROGRAMADO. Resuelve tú la fecha/hora que dijo el cliente (\"mañana\", \"el sábado a las 3\") a formato ISO usando la fecha/hora actual del bloque ESTADO: date = YYYY-MM-DD, time = HH:MM en 24 horas (las 3 de la tarde = 15:00). Los programados requieren mínimo 3 horas de anticipación; la herramienta rechaza fechas más próximas y te dice desde cuándo se puede.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
