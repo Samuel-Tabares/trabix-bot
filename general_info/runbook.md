@@ -84,7 +84,9 @@ envío saliente empieza a fallar con `not_connected` (el puerto 8080 ya no sirve
 
 ## Control de gasto LLM
 
-- Límite por cliente: 30 llamadas/día (constante `PER_PHONE_DAILY_LIMIT` en `src/ai/budget.rs`).
+- Límite por cliente: 50 llamadas/día (constante `PER_PHONE_DAILY_LIMIT` en `src/ai/budget.rs`).
+  Cuenta llamadas al LLM, no mensajes: un turno con tools gasta varias, y armar un pedido
+  completo por chat consume del orden de 25-35. Subido de 30 a 50 el 2026-09-08.
 - Kill-switch global: variable `AGENT_DAILY_LLM_CALL_LIMIT` en Railway (sin definir = sin límite
   global). Al alcanzarlo, todos los casos degradan a mensaje fijo + aviso al asesor.
 - Gasto real: consola de Anthropic → Usage. Cada turno de cliente consume 1–8 llamadas Haiku

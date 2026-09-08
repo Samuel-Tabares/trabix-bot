@@ -44,6 +44,11 @@ pub struct ConversationStateData {
     /// `modify_confirmed_order`, y para un pedido aparte hay que limpiar con
     /// `start_new_order` (ver docs/canary-fixes-2026-07-19.md hallazgo A).
     pub order_confirmed: bool,
+    /// Momento en que `current_order_id` quedó CONFIRMADO. Se usa para soltar
+    /// el binding con esa orden cuando ya pasó su momento de entrega: sin esto,
+    /// una recompra días después reabría y SOBRESCRIBÍA el pedido anterior
+    /// (incidente Kall Díaz, 2026-09-05 — ver docs/incidente_pedido_sobrescrito_2026-09-08.md).
+    pub order_confirmed_at: Option<DateTime<Utc>>,
     /// Cifras ya acumuladas en analytics para `current_order_id`. Permite, al
     /// reabrir y re-confirmar, mandar el DELTA (nuevo − viejo) en vez de sumar
     /// de nuevo el total completo (analytics es incremental).
@@ -116,6 +121,7 @@ impl Default for ConversationStateData {
             conversation_abandon_started_at: None,
             conversation_abandon_reminder_sent: false,
             order_confirmed: false,
+            order_confirmed_at: None,
             confirmed_order_snapshot: None,
             referral_prompt_resolved: false,
             has_greeted: false,

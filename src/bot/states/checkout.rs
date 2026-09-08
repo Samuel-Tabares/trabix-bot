@@ -638,6 +638,7 @@ mod tests {
             conversation_abandon_started_at: None,
             conversation_abandon_reminder_sent: false,
             order_confirmed: false,
+            order_confirmed_at: None,
             confirmed_order_snapshot: None,
             referral_prompt_resolved: false,
             has_greeted: false,

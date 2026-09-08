@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-09-08
+
+### Fixed
+- **Una recompra ya no puede sobrescribir el pedido anterior.** `current_order_id` sobrevivía
+  indefinidamente al checkout, así que un cliente que volvía a pedir días después seguía atado a su
+  orden confirmada y la decisión "¿modificar o pedido nuevo?" quedaba en manos del modelo. El
+  2026-09-05 el modelo eligió modificar: la orden 36 fue reescrita con los items del segundo
+  pedido, el primero dejó de existir en la base, y la segunda compra ($104.000, 20 unidades) nunca
+  reapareció en Pendientes ni llegó al sistema financiero. Ahora `release_delivered_order_binding`
+  (`src/ai/agent.rs`) corre al inicio de cada turno, antes de que el modelo vea nada, y suelta el
+  binding cuando el pedido confirmado ya se entregó — inmediato confirmado hace más de
+  `IMMEDIATE_ORDER_ACTIVE_HOURS` (6h), o programado cuya fecha/hora ya pasó. Se agrega
+  `order_confirmed_at` a `ConversationStateData`/`ConversationContext` (`#[serde(default)]`,
+  compatible con el estado ya persistido); un pedido confirmado sin ese sello se trata como
+  entregado. Detalle completo en `docs/incidente_pedido_sobrescrito_2026-09-08.md`.
+- **Un pedido MODIFICADO vuelve a Pendientes.** La notificación al asesor pasa de
+  `requires_action: false` a `requires_action: is_modification`. `crm-app` filtra su cola por
+  `order_dispatch` (indexado por `order_id`), así que un pedido ya resuelto que cambia quedaba
+  invisible en la consola y el asesor iba a entregar la versión vieja.
+- **El bot ya no se inventa cuántas unidades faltan para el domicilio gratis.** Con 40 unidades en
+  el carrito le dijo a un cliente real "te faltan 6 unidades más" — un número que ninguna
+  herramienta devolvió (`units_until_free_delivery` da `None` desde 6). Cada `get_order_summary` y
+  `add_order_item` termina ahora con `free_delivery_status_line`, que resuelve el estado de forma
+  determinista (no aplica por mayorista / faltan N / ya califica / fuera de Armenia), y el prompt
+  prohíbe calcular ese número por cuenta propia.
+- **`modify_confirmed_order` enumera los items que ya están en el pedido** y advierte que hay que
+  quitarlos si el cliente dicta su lista completa de nuevo. Así fue como un pedido de 20 unidades
+  se convirtió en uno de 40 y el cliente vio un subtotal del doble.
+
+### Changed
+- **Pedido programado: mínimo 3 horas de anticipación en vez de 24** (`SCHEDULED_MIN_LEAD_HOURS`,
+  decisión de Samuel 2026-09-08). Con 24h el bot rechazaba pedidos del mismo día que sí eran
+  gestionables y empujaba al cliente a "inmediato" aunque quisiera una hora concreta.
+- **Presupuesto de LLM por cliente: 50 llamadas/día en vez de 30** (`PER_PHONE_DAILY_LIMIT`). El
+  límite cuenta llamadas al LLM, no mensajes: un turno con tools gasta varias y armar un pedido
+  completo consume del orden de 25-35, así que un cliente real se quedó sin bot a media tarde con
+  el pedido ya armado.
+- **El agente responde más corto y más directo.** Nuevo bloque `ESTILO DE RESPUESTA` en el
+  `SYSTEM_PROMPT`: máximo 2-3 líneas por mensaje, una pregunta por mensaje, 1-2 emojis, sin
+  "¡Perfecto!"/"¡Claro que sí!"/disculpas largas, y prohibido narrar lo que está haciendo por
+  dentro ("déjame limpiar esto", "veo que el sistema tiene guardadas unas cantidades"). Las únicas
+  excepciones son el resumen del pedido y la recapitulación antes de confirmar.
+
+
 ## [1.23.18] - 2026-08-30
 
 ### Changed

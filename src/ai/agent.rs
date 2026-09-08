@@ -50,7 +50,17 @@ const SIN_LICOR_RETAIL_AVAILABLE: bool = false;
 // Un pedido sin licor debe llegar a este mínimo para considerarse mayorista.
 const SIN_LICOR_WHOLESALE_MIN: u32 = 20;
 // Un pedido PROGRAMADO necesita al menos esta anticipación para poder gestionarlo.
-const SCHEDULED_MIN_LEAD_HOURS: i64 = 24;
+// Bajado de 24h a 3h el 2026-09-08 (decisión de Samuel): 24h descartaba pedidos
+// del mismo día que sí eran gestionables y empujaba al cliente a "inmediato"
+// cuando en realidad quería una hora concreta.
+const SCHEDULED_MIN_LEAD_HOURS: i64 = 3;
+// Ventana en la que un pedido INMEDIATO ya confirmado sigue siendo "el pedido en
+// curso" y por tanto modificable. Pasada esa ventana el pedido ya se entregó, así
+// que el binding con esa orden se suelta solo: si el cliente vuelve a escribir es
+// una RECOMPRA y tiene que crear una orden nueva. Sin esto, una recompra reabría
+// y SOBRESCRIBÍA la orden anterior — sus items, su total y su fila en Pendientes
+// (incidente Kall Díaz, pedido 36, 2026-09-05).
+const IMMEDIATE_ORDER_ACTIVE_HOURS: i64 = 6;
 // La memoria permanente en `agent_case_messages` guarda TODO el historial
 // (CRM), pero al LLM solo se le manda una ventana de los ultimos mensajes:
 // el bloque "ESTADO ACTUAL DEL CASO" del system prompt ya lleva los datos
@@ -70,8 +80,22 @@ pub enum Actor {
 
 const SYSTEM_PROMPT: &str = r#"Eres quien atiende WhatsApp para Trabix Granizados, una marca de \
 granizados sellados listos para consumir (con licor 12% y sin licor) en Armenia, Quindio, \
-Colombia. Hablas como una persona real del negocio: calida, breve, en espanol colombiano, sin \
-acento, texto plano, usa emojis, se directo, sin sonar a formulario.
+Colombia. Hablas como una persona real del negocio: en espanol colombiano sin acento, texto \
+plano, directa y al grano.
+
+ESTILO DE RESPUESTA (regla dura, no es una sugerencia):
+- Maximo 2 o 3 lineas cortas por mensaje. Si te salen parrafos, estas explicando de mas.
+- Responde SOLO lo que te preguntaron. Nada de contexto extra, nada de repetir lo que el cliente \
+  acaba de decir, nada de cerrar cada mensaje con "¿necesitas algo mas?".
+- Una pregunta por mensaje, no tres.
+- Emojis si, pero 1 o 2 por mensaje como maximo y solo donde aportan.
+- Nada de "¡Perfecto!", "¡Claro que si!", "Ay", "Uy espera", ni disculpas largas.
+- Nunca narres lo que estas haciendo por dentro ("dejame limpiar esto", "veo que el sistema tiene \
+  guardadas unas cantidades", "dame un momento mientras verifico"). El cliente no ve tus \
+  herramientas: resuelve callado y responde solo el resultado.
+- Las UNICAS excepciones a la brevedad son el resumen del pedido y la recapitulacion antes de \
+  confirmar: ahi si va la lista completa de productos, direccion, entrega y total.
+- Todo gira alrededor del pedido y los granizados. Si te sacan del tema, una linea y de vuelta.
 
 Eres el puente completo entre el cliente y el asesor humano: hablas con ambos. Cada uno tiene su \
 propio numero de WhatsApp. Cuando le respondas directamente a quien te acaba de escribir en este \
@@ -116,11 +140,15 @@ DOMICILIO AUTOMÁTICO (no pidas al asesor si puedes resolverlo):
 - Armenia: apenas sepas la zona/barrio (norte/centro/sur) llama set_delivery_zone_armenia \
   INMEDIATAMENTE — no le preguntes el costo al asesor, la herramienta te lo da sola. Si la \
   dirección dice "sur/norte/centro de Armenia" ya tienes la zona, úsala sin volver a preguntar. ✓
-- DOMICILIO GRATIS EN ARMENIA: pedidos de 6 a 19 unidades tienen domicilio $0 en Armenia (la \
-  herramienta lo calcula sola). Por debajo de 6 se cobra la tarifa de zona; si el cliente va en \
-  1-5 unidades, avísale cuántas le faltan para el domicilio gratis (la herramienta te dice el \
-  número exacto) — es el empujón de mayor impacto en el ticket. Desde 20 unidades es precio \
-  mayorista y el domicilio SIEMPRE se cobra, sin excepción.
+- DOMICILIO GRATIS EN ARMENIA: aplica ÚNICAMENTE entre 6 y 19 unidades, y solo en Armenia. Por \
+  debajo de 6 se cobra tarifa de zona. Desde 20 unidades es precio mayorista y el domicilio \
+  SIEMPRE se cobra, sin excepción. Fuera de Armenia nunca es gratis, en ninguna cantidad.
+- NUNCA calcules tú cuántas unidades le faltan al cliente para el domicilio gratis. Cada resumen \
+  del pedido (get_order_summary y add_order_item) termina con una línea entre paréntesis que te \
+  dice el estado exacto del domicilio gratis para ese carrito. Di lo que dice esa línea y nada \
+  más: si dice que NO aplica, no menciones el domicilio gratis; si dice que faltan N unidades, el \
+  número que dices es N. Inventar un "te faltan X" con el carrito ya por encima de 19 unidades ya \
+  pasó en producción y confundió a un cliente real.
 - Pueblo cercano conocido: llama lookup_nearby_town para saber si existe y si tiene mínimo de \
   unidades. Algunos pueblos aledaños (Calarcá, El Caimo, Circasia, Montenegro, La Tebaida, \
   Pueblo Tapao, Barcelona) NO tienen mínimo — se vende cualquier cantidad. Otros más lejanos \
@@ -205,7 +233,7 @@ Reglas que no puedes romper:
   autoacepta solo; (3) horario CERRADO → la herramienta guarda el pedido igual, no lo rechaces ni \
   lo fuerces a programar: dile al cliente que su pedido quedó registrado y se confirma \
   AUTOMÁTICAMENTE apenas abramos, sin que tenga que volver a escribir ni hacer nada más.
-- PEDIDO PROGRAMADO: mínimo 24 HORAS de anticipación. Cuando el cliente dé la fecha/hora, \
+- PEDIDO PROGRAMADO: mínimo 3 HORAS de anticipación. Cuando el cliente dé la fecha/hora, \
   resuélvela tú a ISO (usando la fecha/hora actual del bloque ESTADO) y pásala a \
   set_delivery_schedule como date=YYYY-MM-DD y time=HH:MM 24h; si es muy pronto la herramienta te \
   rechaza y te dice desde cuándo se puede — pídele al cliente una fecha más adelante. Igual que el \
@@ -236,14 +264,18 @@ Reglas que no puedes romper:
 - El cliente YA recibió un saludo de bienvenida automático antes de que tú entraras, así que no \
   vuelvas a saludar con un mensaje de bienvenida largo ni repitas el menú de opciones: responde \
   directo a lo que pide. Toda la conversación es por texto natural; NUNCA uses botones ni listas.
-- DESPUÉS DE CONFIRMAR: cuando un pedido ya quedó confirmado (contra entrega, o transferencia con \
-  el pago ya verificado por el asesor) y el cliente escribe de nuevo en el mismo chat, distingue \
-  qué quiere: si quiere \
-  CAMBIAR ese mismo pedido (otro sabor, otra cantidad, quitar algo), llama modify_confirmed_order, \
-  ajusta los items y vuelve a hacer el cierre — se actualiza LA MISMA orden, nunca crees otra ni \
-  llames finalize_checkout sobre el pedido ya confirmado. Si quiere pedir algo APARTE (un pedido \
-  nuevo distinto), llama start_new_order y ármalo desde cero. Nunca armes un pedido encima de uno \
-  ya confirmado sin llamar una de esas dos herramientas primero.
+- DESPUÉS DE CONFIRMAR: si el bloque ESTADO ACTUAL DEL CASO muestra un pedido ya confirmado y el \
+  cliente escribe otra vez, hay solo dos caminos y tienes que elegir uno explícitamente:
+  · modify_confirmed_order — SOLO si el cliente quiere corregir ESE mismo pedido, que todavía no \
+    le ha llegado (cambiar un sabor, subir o bajar una cantidad, quitar algo). Reabre la MISMA \
+    orden con los items que ya tenía: si el cliente te dicta la lista completa de nuevo, quita \
+    primero los items viejos con remove_order_item o quedarán sumados a los nuevos.
+  · start_new_order — para CUALQUIER otra cosa que sea comprar de nuevo. Si el pedido anterior ya \
+    se entregó, o el cliente dice "otro pedido", "quiero pedir otra vez", "lo mismo de la vez \
+    pasada", es un pedido NUEVO, no una modificación. En la duda, start_new_order: crear una orden \
+    de más es corregible, pisar la anterior no.
+  Si el bloque ESTADO no muestra ningún pedido confirmado, no llames ninguna de las dos: arma el \
+  pedido normal.
 - MEMORIA DEL CLIENTE: justo antes de despedirte de un pedido recién confirmado, evalúa si de \
   verdad aprendiste algo de esta conversación que valga la pena recordar la próxima vez (cómo le \
   gusta que le hablen, alguna preferencia o dato recurrente) — si sí, llama \
@@ -315,6 +347,13 @@ async fn run_case_turn(
     saved_addresses: &[CustomerAddress],
     customer_notes: Option<&str>,
 ) -> Result<(ConversationState, Vec<BotAction>), Box<dyn Error + Send + Sync>> {
+    // Antes de que el modelo vea nada: si el pedido confirmado que arrastra la
+    // conversación ya se entregó, se suelta el binding. Es determinista a
+    // propósito — dejarle al LLM la decisión "¿modificar o pedido nuevo?" fue
+    // exactamente lo que sobrescribió el pedido 36 (ver
+    // `release_delivered_order_binding`).
+    release_delivered_order_binding(context);
+
     if let Some((next_state, actions)) =
         try_handle_receipt_shortcut(context, current_state, actor, input)
     {
@@ -640,6 +679,66 @@ pub(crate) async fn record_greeting_turn(
     memory::save_messages(pool, phone, &messages).await
 }
 
+/// Suelta el binding con un pedido ya CONFIRMADO cuyo momento de entrega ya
+/// pasó, dejando la conversación lista para un pedido nuevo.
+///
+/// Por qué es determinista y no una instrucción del prompt: `modify_confirmed_order`
+/// reabre y REESCRIBE la misma fila de `orders`. El 2026-09-05 un cliente que ya
+/// había comprado el 2026-08-30 volvió a pedir; el modelo eligió "modificar" en vez
+/// de `start_new_order` y el segundo pedido pisó al primero — items reemplazados,
+/// una sola venta registrada, y la fila invisible en Pendientes de `crm-app` porque
+/// su `order_dispatch` ya estaba resuelto. Mientras la decisión dependa del modelo,
+/// ese caso puede repetirse; acá no puede.
+///
+/// Criterio: un pedido deja de ser modificable cuando ya se entregó.
+/// - Inmediato: `IMMEDIATE_ORDER_ACTIVE_HOURS` después de confirmarse.
+/// - Programado: cuando pasa su fecha/hora de entrega.
+/// - Sin `order_confirmed_at` (estado escrito por una versión anterior): se trata
+///   como entregado. Es la dirección segura — como mucho crea una orden de más,
+///   que sí es visible y corregible, en vez de destruir una existente.
+fn release_delivered_order_binding(context: &mut ConversationContext) {
+    if !context.order_confirmed || context.current_order_id.is_none() {
+        return;
+    }
+    if !confirmed_order_already_delivered(context, chrono::Utc::now()) {
+        return;
+    }
+    tracing::info!(
+        order_id = ?context.current_order_id,
+        delivery_type = ?context.delivery_type,
+        "releasing binding to delivered order; next order will be a new one"
+    );
+    context.start_new_order();
+}
+
+fn confirmed_order_already_delivered(
+    context: &ConversationContext,
+    now_utc: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    if context.delivery_type.as_deref() == Some("scheduled") {
+        if let (Some(date), Some(time)) = (
+            context.scheduled_date.as_deref(),
+            context.scheduled_time.as_deref(),
+        ) {
+            if let (Ok(date), Ok(time)) = (
+                chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d"),
+                chrono::NaiveTime::parse_from_str(time, "%H:%M"),
+            ) {
+                let now_bogota =
+                    crate::bot::states::scheduling::current_bogota_now().naive_local();
+                return chrono::NaiveDateTime::new(date, time) < now_bogota;
+            }
+        }
+    }
+
+    match context.order_confirmed_at {
+        Some(confirmed_at) => {
+            now_utc - confirmed_at > chrono::Duration::hours(IMMEDIATE_ORDER_ACTIVE_HOURS)
+        }
+        None => true,
+    }
+}
+
 fn format_inbound_message(actor: Actor, input: &UserInput) -> String {
     let who = match actor {
         Actor::Customer => "CLIENTE",
@@ -918,11 +1017,21 @@ fn dispatch_tool(
             context.receipt_media_id = None;
             context.receipt_timer_started_at = None;
             context.receipt_timer_expired = false;
+            // Los items del pedido original SIGUEN en el carrito. Si el cliente
+            // dicta su lista completa otra vez y el modelo solo agrega, quedan
+            // sumados: así fue como un pedido de 20 unidades se convirtió en uno
+            // de 40 y el cliente vio un subtotal del doble (2026-09-05). Por eso
+            // el tool-result los enumera explícitamente.
+            let (current, _) = get_order_summary(context);
             ToolOutcome::Result(ok_result(
                 id,
-                "Pedido reabierto para modificar (es la MISMA orden, no se crea otra). Ajusta los \
-                 items con add_order_item / remove_order_item. El código de referido NO cambia. \
-                 Cuando el cliente confirme los cambios, recapitula todo y llama finalize_checkout.",
+                format!(
+                    "Pedido reabierto para modificar (es la MISMA orden, no se crea otra). El \
+                     código de referido NO cambia.\n\nOJO: los items de abajo YA están en el \
+                     pedido. Si el cliente te dicta su lista completa de nuevo, quítalos primero \
+                     con remove_order_item o vas a terminar con el doble de unidades.\n\n{current}\n\n                     Cuando el cliente confirme los cambios, recapitula todo y llama \
+                     finalize_checkout."
+                ),
             ))
         }
         "start_new_order" => {
@@ -1307,10 +1416,48 @@ fn get_order_summary(context: &ConversationContext) -> (String, bool) {
     // cuando en realidad había agregado 35. NO calcules el total tú mismo, usa
     // esta cifra.
     let summary = format!(
-        "{}\n\n(Total de unidades en el pedido: {total_units} — usa EXACTAMENTE este número, no lo recalcules)",
-        checkout::render_summary(context, &pedido)
+        "{}\n\n(Total de unidades en el pedido: {total_units} — usa EXACTAMENTE este número, no lo recalcules)\n{}",
+        checkout::render_summary(context, &pedido),
+        free_delivery_status_line(context, total_units)
     );
     (summary, false)
+}
+
+/// Estado del domicilio gratis, resuelto de forma determinista y adjunto a cada
+/// resumen del pedido.
+///
+/// Existe porque el modelo se inventó el dato: con 40 unidades en el carrito le
+/// dijo a un cliente "te faltan 6 unidades más para completar domicilio gratis"
+/// (2026-09-05). El número no salía de ninguna herramienta — `units_until_free_delivery`
+/// devuelve `None` desde 6 unidades. Al venir la frase ya resuelta en el
+/// tool-result no queda nada que inventar.
+fn free_delivery_status_line(context: &ConversationContext, total_units: u32) -> String {
+    if matches!(
+        context.pending_zone_kind.as_deref(),
+        Some("nearby_town") | Some("national") | Some("manual")
+    ) {
+        return "(Domicilio gratis: NO aplica en este destino — es exclusivo de Armenia. No lo \
+                menciones ni ofrezcas unidades para alcanzarlo.)"
+            .to_string();
+    }
+
+    match delivery_zone::units_until_free_delivery(total_units) {
+        Some(faltan) => format!(
+            "(Domicilio gratis en Armenia: todavía NO. Faltan {faltan} unidad{} para las 6 que lo \
+             activan — si mencionas un número de unidades faltantes, tiene que ser EXACTAMENTE \
+             {faltan}.)",
+            if faltan == 1 { "" } else { "es" }
+        ),
+        None if total_units > delivery_zone::ARMENIA_FREE_DELIVERY_MAX => format!(
+            "(Domicilio gratis en Armenia: NO aplica. Con {total_units} unidades el pedido es \
+             MAYORISTA y el domicilio SIEMPRE se cobra. No ofrezcas domicilio gratis ni digas que \
+             faltan unidades para conseguirlo.)"
+        ),
+        None => format!(
+            "(Domicilio gratis en Armenia: SÍ, este pedido de {total_units} unidades ya califica. \
+             No digas que faltan unidades.)"
+        ),
+    }
 }
 
 fn set_delivery_zone_armenia(input: &Value, context: &mut ConversationContext) -> (String, bool) {
@@ -1687,6 +1834,7 @@ fn confirm_order_bookkeeping(context: &mut ConversationContext) -> (bool, Vec<Bo
     let totals = checkout::current_order_totals(context);
     context.confirmed_order_snapshot = Some(checkout::snapshot_from_totals(context, &totals));
     context.order_confirmed = true;
+    context.order_confirmed_at = Some(chrono::Utc::now());
     // El transcript crudo (`agent_case_messages`) se limpia al confirmar: lo
     // que sobrevive de un pedido al siguiente es la nota semántica de
     // `remember_about_customer` (`customers.customer_notes`), no el chat
@@ -1728,7 +1876,11 @@ fn confirm_payment_received(id: &str, context: &mut ConversationContext) -> Tool
     };
     actions.push(BotAction::NotifyAdvisor {
         body: advisor_label.to_string(),
-        requires_action: false,
+        // Una MODIFICACIÓN sí necesita acción: el pedido pudo haberse aceptado ya
+        // en Pendientes, y `crm-app` filtra por `order_dispatch` (resuelto = no se
+        // vuelve a mostrar). Sin `requires_action`, el cambio queda invisible y el
+        // asesor entrega lo que decía el pedido viejo.
+        requires_action: is_modification,
     });
     let total_text = context
         .total_final
@@ -2236,7 +2388,9 @@ fn set_payment_method(id: &str, input: &Value, context: &mut ConversationContext
             };
             actions.push(BotAction::NotifyAdvisor {
                 body: format!("{advisor_label}:\n\n{summary}"),
-                requires_action: false,
+                // Ver `confirm_payment_received`: una modificación tiene que volver
+                // a Pendientes o el asesor entrega el pedido viejo.
+                requires_action: is_modification,
             });
             let total_text = context
                 .total_final
@@ -3034,6 +3188,7 @@ mod tests {
             conversation_abandon_started_at: None,
             conversation_abandon_reminder_sent: false,
             order_confirmed: false,
+            order_confirmed_at: None,
             confirmed_order_snapshot: None,
             referral_prompt_resolved: false,
             has_greeted: false,
@@ -3532,10 +3687,10 @@ mod tests {
     }
 
     #[test]
-    fn set_delivery_schedule_rejects_dates_under_24h() {
+    fn set_delivery_schedule_rejects_dates_under_the_minimum_lead() {
         let mut context = test_context();
         let now = crate::bot::states::scheduling::current_bogota_now();
-        let too_soon = now + chrono::Duration::hours(2);
+        let too_soon = now + chrono::Duration::minutes(30);
         let outcome = set_delivery_schedule(
             &json!({
                 "date": too_soon.format("%Y-%m-%d").to_string(),
@@ -3543,8 +3698,26 @@ mod tests {
             }),
             &mut context,
         );
-        assert!(outcome.1, "expected an error result for a <24h schedule");
-        assert!(outcome.0.contains("24"));
+        assert!(outcome.1, "expected an error result for a schedule under the lead time");
+        assert!(outcome.0.contains(&SCHEDULED_MIN_LEAD_HOURS.to_string()));
+    }
+
+    /// 3h de anticipación (bajado de 24h el 2026-09-08): un pedido para dentro de
+    /// 4 horas tiene que pasar. Antes lo rechazaba y empujaba al cliente a
+    /// "inmediato" aunque quisiera una hora concreta.
+    #[test]
+    fn set_delivery_schedule_accepts_a_same_day_slot_four_hours_out() {
+        let mut context = test_context();
+        let soon = crate::bot::states::scheduling::current_bogota_now() + chrono::Duration::hours(4);
+        let outcome = set_delivery_schedule(
+            &json!({
+                "date": soon.format("%Y-%m-%d").to_string(),
+                "time": soon.format("%H:%M").to_string(),
+            }),
+            &mut context,
+        );
+        assert!(!outcome.1, "expected success 4h out with a 3h minimum: {}", outcome.0);
+        assert_eq!(context.delivery_type.as_deref(), Some("scheduled"));
     }
 
     #[test]
@@ -3555,8 +3728,153 @@ mod tests {
             &json!({ "date": far.format("%Y-%m-%d").to_string(), "time": "15:00" }),
             &mut context,
         );
-        assert!(!outcome.1, "expected success for a >24h schedule");
+        assert!(!outcome.1, "expected success for a far-out schedule");
         assert_eq!(context.scheduled_time.as_deref(), Some("15:00"));
+    }
+
+    /// Regresión del incidente del 2026-09-05 (pedido 36, Kall Díaz): el cliente
+    /// compró el 08-30 y volvió a pedir el 09-05. Como la conversación seguía
+    /// atada a la orden confirmada, el segundo pedido la reabrió y la SOBRESCRIBIÓ.
+    /// Ahora el binding se suelta antes de que el modelo pueda decidir nada.
+    #[test]
+    fn a_delivered_immediate_order_releases_its_binding_on_the_next_turn() {
+        let mut context = test_context();
+        context.current_order_id = Some(36);
+        context.order_confirmed = true;
+        context.order_confirmed_at =
+            Some(chrono::Utc::now() - chrono::Duration::days(6));
+        context.delivery_type = Some("immediate".to_string());
+
+        release_delivered_order_binding(&mut context);
+
+        assert_eq!(context.current_order_id, None);
+        assert!(!context.order_confirmed);
+        assert!(context.items.is_empty());
+        assert!(context.confirmed_order_snapshot.is_none());
+    }
+
+    /// La contracara: un pedido recién confirmado SÍ se puede modificar. Si esto
+    /// se rompe, el cliente que corrige un sabor 5 minutos después termina con
+    /// dos órdenes en Pendientes.
+    #[test]
+    fn a_just_confirmed_immediate_order_keeps_its_binding() {
+        let mut context = test_context();
+        context.current_order_id = Some(36);
+        context.order_confirmed = true;
+        context.order_confirmed_at =
+            Some(chrono::Utc::now() - chrono::Duration::minutes(10));
+        context.delivery_type = Some("immediate".to_string());
+
+        release_delivered_order_binding(&mut context);
+
+        assert_eq!(context.current_order_id, Some(36));
+        assert!(context.order_confirmed);
+    }
+
+    #[test]
+    fn a_scheduled_order_stays_modifiable_until_its_delivery_moment_passes() {
+        let mut context = test_context();
+        context.current_order_id = Some(36);
+        context.order_confirmed = true;
+        context.order_confirmed_at = Some(chrono::Utc::now() - chrono::Duration::days(3));
+        context.delivery_type = Some("scheduled".to_string());
+        let future = crate::bot::states::scheduling::current_bogota_now()
+            + chrono::Duration::days(2);
+        context.scheduled_date = Some(future.format("%Y-%m-%d").to_string());
+        context.scheduled_time = Some("15:00".to_string());
+
+        release_delivered_order_binding(&mut context);
+
+        assert_eq!(context.current_order_id, Some(36));
+
+        let past = crate::bot::states::scheduling::current_bogota_now()
+            - chrono::Duration::days(1);
+        context.scheduled_date = Some(past.format("%Y-%m-%d").to_string());
+
+        release_delivered_order_binding(&mut context);
+
+        assert_eq!(context.current_order_id, None);
+    }
+
+    /// Estado escrito por una versión anterior del bot (sin `order_confirmed_at`):
+    /// se trata como entregado. Crear una orden de más es corregible; pisar la
+    /// anterior no.
+    #[test]
+    fn a_confirmed_order_without_a_timestamp_is_treated_as_delivered() {
+        let mut context = test_context();
+        context.current_order_id = Some(36);
+        context.order_confirmed = true;
+        context.order_confirmed_at = None;
+
+        release_delivered_order_binding(&mut context);
+
+        assert_eq!(context.current_order_id, None);
+    }
+
+    /// El modelo le dijo a un cliente "te faltan 6 unidades más para completar
+    /// domicilio gratis" con 40 unidades en el carrito. Ningún tool devolvía ese
+    /// número. Ahora el estado va resuelto en cada resumen.
+    #[test]
+    fn order_summary_states_free_delivery_does_not_apply_to_a_wholesale_cart() {
+        let mut context = test_context();
+        context.items = vec![OrderItemData {
+            flavor: "Smirnoff de tamarindo".to_string(),
+            has_liquor: true,
+            quantity: 40,
+        }];
+        context.pending_zone_kind = Some("armenia".to_string());
+
+        let (summary, is_error) = get_order_summary(&context);
+
+        assert!(!is_error);
+        assert!(summary.contains("NO aplica"), "{summary}");
+        assert!(summary.contains("MAYORISTA"), "{summary}");
+        assert!(!summary.contains("Faltan"), "{summary}");
+    }
+
+    #[test]
+    fn order_summary_gives_the_exact_countdown_below_the_free_delivery_threshold() {
+        let mut context = test_context();
+        context.items = vec![OrderItemData {
+            flavor: "Smirnoff de tamarindo".to_string(),
+            has_liquor: true,
+            quantity: 4,
+        }];
+        context.pending_zone_kind = Some("armenia".to_string());
+
+        let (summary, _) = get_order_summary(&context);
+
+        assert!(summary.contains("Faltan 2 unidades"), "{summary}");
+    }
+
+    #[test]
+    fn order_summary_says_free_delivery_already_applies_between_six_and_nineteen() {
+        let mut context = test_context();
+        context.items = vec![OrderItemData {
+            flavor: "Smirnoff de tamarindo".to_string(),
+            has_liquor: true,
+            quantity: 8,
+        }];
+        context.pending_zone_kind = Some("armenia".to_string());
+
+        let (summary, _) = get_order_summary(&context);
+
+        assert!(summary.contains("ya califica"), "{summary}");
+    }
+
+    #[test]
+    fn order_summary_rules_out_free_delivery_outside_armenia() {
+        let mut context = test_context();
+        context.items = vec![OrderItemData {
+            flavor: "Smirnoff de tamarindo".to_string(),
+            has_liquor: true,
+            quantity: 8,
+        }];
+        context.pending_zone_kind = Some("nearby_town".to_string());
+
+        let (summary, _) = get_order_summary(&context);
+
+        assert!(summary.contains("exclusivo de Armenia"), "{summary}");
     }
 
     #[test]

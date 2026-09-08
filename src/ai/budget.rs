@@ -4,6 +4,11 @@
 //! opcional (`AGENT_DAILY_LLM_CALL_LIMIT`, kill-switch de gasto). Vive en
 //! memoria: un redeploy reinicia los contadores, lo cual es aceptable porque
 //! el límite protege contra abuso sostenido, no contra contabilidad exacta.
+//!
+//! El límite cuenta LLAMADAS AL LLM, no mensajes del cliente: un solo turno puede
+//! gastar varias (hasta `MAX_TOOL_ITERATIONS`). Armar un pedido por chat consume
+//! del orden de 25-35. Subido de 30 a 50 el 2026-09-08 tras un caso real en que un
+//! cliente se quedó sin bot a media tarde con el pedido ya armado.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -11,7 +16,7 @@ use std::sync::Arc;
 use chrono::{FixedOffset, NaiveDate, Utc};
 use tokio::sync::Mutex;
 
-pub const PER_PHONE_DAILY_LIMIT: u32 = 30;
+pub const PER_PHONE_DAILY_LIMIT: u32 = 50;
 
 pub type LlmBudgetHandle = Arc<Mutex<LlmBudget>>;
 

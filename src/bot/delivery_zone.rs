@@ -21,8 +21,8 @@ pub const MIN_UNITS_NATIONAL: u32 = 20;
 /// Umbral inferior/superior (inclusive) de unidades para domicilio gratis en
 /// Armenia. Por debajo se cobra tarifa de zona; en o por encima de
 /// `ARMENIA_FREE_DELIVERY_MAX` (mayorista) tambien se cobra.
-const ARMENIA_FREE_DELIVERY_MIN: u32 = 6;
-const ARMENIA_FREE_DELIVERY_MAX: u32 = 19;
+pub const ARMENIA_FREE_DELIVERY_MIN: u32 = 6;
+pub const ARMENIA_FREE_DELIVERY_MAX: u32 = 19;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArmeniaZone {

@@ -480,6 +480,7 @@ pub struct ConversationContext {
     pub conversation_abandon_started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub conversation_abandon_reminder_sent: bool,
     pub order_confirmed: bool,
+    pub order_confirmed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub confirmed_order_snapshot: Option<crate::db::models::ConfirmedOrderSnapshot>,
     pub referral_prompt_resolved: bool,
     pub has_greeted: bool,
@@ -535,6 +536,7 @@ impl ConversationContext {
             conversation_abandon_started_at: state_data.conversation_abandon_started_at,
             conversation_abandon_reminder_sent: state_data.conversation_abandon_reminder_sent,
             order_confirmed: state_data.order_confirmed,
+            order_confirmed_at: state_data.order_confirmed_at,
             confirmed_order_snapshot: state_data.confirmed_order_snapshot.clone(),
             referral_prompt_resolved: state_data.referral_prompt_resolved,
             has_greeted: state_data.has_greeted,
@@ -579,6 +581,7 @@ impl ConversationContext {
             conversation_abandon_started_at: self.conversation_abandon_started_at,
             conversation_abandon_reminder_sent: self.conversation_abandon_reminder_sent,
             order_confirmed: self.order_confirmed,
+            order_confirmed_at: self.order_confirmed_at,
             confirmed_order_snapshot: self.confirmed_order_snapshot.clone(),
             referral_prompt_resolved: self.referral_prompt_resolved,
             has_greeted: self.has_greeted,
@@ -620,6 +623,7 @@ impl ConversationContext {
         self.receipt_timer_expired = false;
         self.current_order_id = None;
         self.order_confirmed = false;
+        self.order_confirmed_at = None;
         self.confirmed_order_snapshot = None;
         self.referral_prompt_resolved = false;
     }
