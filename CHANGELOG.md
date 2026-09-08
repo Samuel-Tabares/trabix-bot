@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-09-08
+
+### Changed
+- **El agente pasa de `claude-sonnet-4-5` a `claude-sonnet-5`** (`DEFAULT_MODEL`, `src/ai/client.rs`).
+  Sonnet 5 cuesta $2/$10 por millón de tokens contra los $3/$15 de Sonnet 4.5: **33% menos por token
+  en entrada y en salida**, con un modelo más capaz. El request que manda el bot (`model`,
+  `max_tokens`, `system`, `messages`, `tools`) no usaba ninguno de los parámetros que Sonnet 5
+  eliminó — `temperature`, `top_p`, `top_k`, `budget_tokens` ni prefill del asistente — así que el
+  cambio no rompe nada.
+- **Thinking adaptativo con `effort: low`.** Los fallos que costaron plata en producción fueron de
+  razonamiento, no de falta de datos: el modelo tenía "Total de unidades en el pedido: 40" en un
+  tool-result y le habló al cliente de 20. `effort: low` mantiene corto el gasto de thinking y
+  consolida las tool-calls — lo adecuado para turnos cortos de atención por chat, donde los niveles
+  altos se pagan en tokens sin rendir.
+- **`DEFAULT_MAX_TOKENS` de 1024 a 4096.** Los tokens de thinking cuentan contra `max_tokens`; con
+  el tope viejo una respuesta larga se cortaba a la mitad. El cobro es por tokens generados, no por
+  el tope, así que subirlo no cuesta por sí solo.
+- **El consumo por turno ahora se loguea a nivel `info`** (antes `debug`). El filtro por defecto en
+  producción es `granizado_bot=info`, así que esa línea nunca se vio y el costo real por
+  conversación no era medible desde Railway. Ahora `input_tokens`, `output_tokens`,
+  `cache_creation_input_tokens` y `cache_read_input_tokens` quedan en los logs de cada llamada.
+
+
 ## [1.24.0] - 2026-09-08
 
 ### Fixed

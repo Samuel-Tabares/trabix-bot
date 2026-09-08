@@ -6,10 +6,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5";
+pub const DEFAULT_MODEL: &str = "claude-sonnet-5";
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-const DEFAULT_MAX_TOKENS: u32 = 1024;
+// Sonnet 5 corre thinking adaptativo, y esos tokens cuentan contra `max_tokens`.
+// Con el tope de 1024 que traiamos de Sonnet 4.5 una respuesta larga se cortaba
+// a la mitad. 4096 deja aire para pensar y responder; el cobro es por tokens
+// realmente generados, no por el tope, asi que subirlo no cuesta por si solo.
+const DEFAULT_MAX_TOKENS: u32 = 4096;
 // Sin timeout, una llamada colgada a Anthropic retiene el lock de esa
 // conversacion indefinidamente y el caso queda congelado para cliente y
 // asesor. 60s cubre el peor caso razonable de un turno con tools.
@@ -81,6 +85,26 @@ struct SystemBlock<'a> {
     cache_control: Option<CacheControl>,
 }
 
+/// Thinking adaptativo: el modelo decide solo cuanto razonar antes de
+/// responder. En Sonnet 5 es el unico modo "encendido" (el `budget_tokens` de
+/// los modelos viejos ya no existe). Se activa a proposito: los errores que
+/// costaron plata en produccion fueron de razonamiento, no de falta de datos —
+/// el modelo tenia "Total de unidades en el pedido: 40" delante y hablo de 20.
+#[derive(Debug, Serialize)]
+struct Thinking {
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+/// `effort: low` mantiene el gasto de thinking corto y consolida las tool-calls.
+/// Es lo adecuado para atencion al cliente por chat: turnos cortos, decisiones
+/// simples. Los niveles altos se pagan en tokens y solo rinden en tareas largas
+/// de razonamiento, que no es lo que hace este bot.
+#[derive(Debug, Serialize)]
+struct OutputConfig {
+    effort: &'static str,
+}
+
 #[derive(Debug, Serialize)]
 struct MessagesRequest<'a> {
     model: &'a str,
@@ -89,6 +113,8 @@ struct MessagesRequest<'a> {
     messages: &'a [Message],
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     tools: &'a [ToolDefinition],
+    thinking: Thinking,
+    output_config: OutputConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -154,6 +180,8 @@ impl AnthropicClient {
             system,
             messages,
             tools,
+            thinking: Thinking { kind: "adaptive" },
+            output_config: OutputConfig { effort: "low" },
         };
 
         let response = self
@@ -168,7 +196,10 @@ impl AnthropicClient {
             .json::<MessagesResponse>()
             .await?;
 
-        tracing::debug!(
+        // A nivel `info` a proposito: el filtro por defecto en produccion es
+        // `granizado_bot=info`, asi que en `debug` esta linea nunca se vio y el
+        // costo real por turno no era medible desde los logs de Railway.
+        tracing::info!(
             input_tokens = response.usage.input_tokens,
             output_tokens = response.usage.output_tokens,
             cache_creation_input_tokens = response.usage.cache_creation_input_tokens,

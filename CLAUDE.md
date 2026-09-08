@@ -16,7 +16,8 @@ referral/embajador code support. Production-only: the sole runtime is the real M
 runtime (there is no simulator — it was removed in v1.8.0).
 
 **Production runs the agent engine — always, there is no toggle.** A Claude tool-calling engine
-(`src/ai/`, model `claude-sonnet-4-5` — see `DEFAULT_MODEL` in `src/ai/client.rs`) drives the
+(`src/ai/`, model `claude-sonnet-5` con thinking adaptativo y `effort: low` — see `DEFAULT_MODEL`
+in `src/ai/client.rs`) drives the
 customer self-service states; `ANTHROPIC_API_KEY` is required to boot. Pricing/zones/referrals stay
 deterministic via tools. Guards, cost budget, failure degradation, and the relay reachability audit
 are documented in `general_info/current_runtime_reference.md` and `general_info/runbook.md`.

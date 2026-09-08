@@ -16,7 +16,7 @@ It reuses one core runtime for:
 ## Engine
 
 One engine, no toggle (see `general_info/current_runtime_reference.md`): the Claude tool-calling
-engine in `src/ai/` (`claude-sonnet-4-5`) drives the customer self-service states and requires
+engine in `src/ai/` (`claude-sonnet-5`) drives the customer self-service states and requires
 `ANTHROPIC_API_KEY` to boot. Pricing, delivery zones, and referrals stay deterministic via tools.
 
 `BOT_ENGINE` was removed in v1.10.0 and there is no rollback to the original non-LLM state machine.
