@@ -389,20 +389,6 @@ fn timer_recovery(
             state_data,
         )
     {
-        // Toma de control vencida y nadie la liberó a mano: hay que dejar
-        // pasar esto igual aunque `reminder_sent` ya esté en `true` de un
-        // episodio de ausencia anterior a la toma de control -- si no, el
-        // gate de abajo lo bloquea para siempre y `expire_conversation_
-        // abandon_with_source` (quien de verdad limpia `human_takeover_until`
-        // y rearma el reloj, ver `rearm_conversation_abandon_after_handoff`)
-        // nunca llega a correr.
-        if conversation
-            .human_takeover_until
-            .is_some_and(|until| until <= now)
-        {
-            return Some(TimerRecovery::Expired(TimerType::ConversationAbandon));
-        }
-
         let Some(started_at) = state_data.conversation_abandon_started_at else {
             return None;
         };
@@ -868,20 +854,17 @@ async fn expire_conversation_abandon_with_source(
     }
 
     // La toma de control ya vencio y nadie la libero a mano: es la primera
-    // vuelta del sweep (corre cada 60s) que la ve asi. El asesor pudo haberle
-    // escrito al cliente hasta un instante antes de que venciera la ventana
-    // (visto en vivo 2026-09-06/07, cliente Graja: ultimo mensaje del asesor
-    // a las 19:37, "?sigues por ahi?" automatico a la 01:38 -- el reloj de
-    // abandono venia congelado desde ANTES de que el asesor entrara, asi que
-    // se disparaba al toque apenas cerraba la ventana). En vez de heredar ese
-    // reloj viejo y avisarle "?sigues ahi?" a alguien que acaba de hablar con
-    // un humano, se limpia el flag y se le da un respiro fresco de
-    // `CONVERSATION_REMINDER_TIMEOUT` desde ahora. Es una transicion de una
-    // sola vez: al limpiar `human_takeover_until` esta rama no se repite en
-    // el siguiente tick.
+    // vuelta del sweep (corre cada 60s) que la ve asi. Un asesor ya atendio
+    // este caso a mano durante la toma de control (visto en vivo
+    // 2026-09-06/07, cliente Graja: ultimo mensaje del asesor a las 19:37,
+    // "?sigues por ahi?" automatico a la 01:38), asi que no hace falta que el
+    // bot pregunte si sigue ahi por ESTA ausencia -- se cancela el
+    // recordatorio en vez de dispararlo o de solo posponerlo. Es una
+    // transicion de una sola vez: al limpiar `human_takeover_until` esta rama
+    // no se repite en el siguiente tick.
     if conversation.human_takeover_until.is_some() {
         clear_human_takeover(&state.pool, &phone_number).await?;
-        rearm_conversation_abandon_after_handoff(&state, &conversation).await?;
+        cancel_conversation_abandon_after_handoff(&state, &conversation).await?;
         return Ok(());
     }
 
@@ -1110,15 +1093,18 @@ fn advisor_timeout_for_state(state: &str) -> Option<Duration> {
     advisor_timeout_kind(state).map(|_| TimerRule::AdvisorResponse.default_duration())
 }
 
-/// Le da al cliente un respiro fresco del recordatorio de "?sigues por ahi?"
-/// justo cuando un asesor deja de tener el caso -- por boton explicito
-/// (`routes::internal::advisor_release`) o porque la ventana de
-/// `set_human_takeover` vencio sola (`expire_conversation_abandon_with_source`).
-/// Sin esto el reloj de abandono, que solo corre en turnos del cliente, queda
-/// congelado desde ANTES de la toma de control y dispara el recordatorio al
-/// toque apenas el humano suelta el caso, ignorando que el cliente pudo haber
-/// estado hablando con ese humano segundos antes.
-pub(crate) async fn rearm_conversation_abandon_after_handoff(
+/// Apaga el recordatorio de "?sigues por ahi?" para el cliente que un asesor
+/// acaba de soltar -- por boton explicito (`routes::internal::advisor_release`)
+/// o porque la ventana de `set_human_takeover` vencio sola
+/// (`expire_conversation_abandon_with_source`). El asesor ya atendio al
+/// cliente a mano durante la toma de control, asi que no hace falta que el
+/// bot le pregunte si sigue ahi por esta ausencia -- ver
+/// `bot::inactivity::clear_customer_inactivity_tracking`, que hace lo mismo
+/// para el caso de "pedido ya gestionado", solo que aca el disparador es que
+/// un humano lo cerro a mano. Si el cliente vuelve a escribirle al bot mas
+/// adelante y luego se queda callado, `sync_customer_inactivity_timer` arma
+/// un recordatorio nuevo normal para ESE episodio de ausencia.
+pub(crate) async fn cancel_conversation_abandon_after_handoff(
     state: &AppState,
     conversation: &Conversation,
 ) -> Result<(), sqlx::Error> {
@@ -1135,7 +1121,7 @@ pub(crate) async fn rearm_conversation_abandon_after_handoff(
     }
 
     let mut state_data = conversation.state_data.0.clone();
-    state_data.conversation_abandon_started_at = Some(Utc::now());
+    state_data.conversation_abandon_started_at = None;
     state_data.conversation_abandon_reminder_sent = false;
     update_state(
         &state.pool,
@@ -1515,50 +1501,6 @@ mod tests {
             timer_recovery(&conversation, now);
 
         assert_eq!(recovery, None);
-    }
-
-    // Caso Graja (2026-09-06/07): un recordatorio ya disparado ANTES de que
-    // el asesor entrara no debe bloquear para siempre la recuperación del
-    // reloj de abandono una vez que la toma de control vence sin liberación
-    // explícita -- si no, `expire_conversation_abandon_with_source` (quien
-    // limpia `human_takeover_until` y rearma el reloj) nunca llega a correr.
-    #[test]
-    fn timer_recovery_reports_expired_when_takeover_lapsed_even_with_reminder_already_sent() {
-        let now = chrono::Utc::now();
-        let mut conversation = active_timer_conversation(
-            "main_menu",
-            ConversationStateData {
-                conversation_abandon_started_at: Some(now - ChronoDuration::days(4)),
-                conversation_abandon_reminder_sent: true,
-                ..Default::default()
-            },
-            now,
-        );
-        conversation.human_takeover_until = Some(now - ChronoDuration::minutes(1));
-
-        assert_eq!(
-            timer_recovery(&conversation, now),
-            Some(TimerRecovery::Expired(TimerType::ConversationAbandon))
-        );
-    }
-
-    // Mientras la ventana sigue vigente, el gate de `reminder_sent` sigue
-    // aplicando normal -- el bypass es solo para cuando ya venció.
-    #[test]
-    fn timer_recovery_still_respects_reminder_sent_while_takeover_is_active() {
-        let now = chrono::Utc::now();
-        let mut conversation = active_timer_conversation(
-            "main_menu",
-            ConversationStateData {
-                conversation_abandon_started_at: Some(now - ChronoDuration::days(4)),
-                conversation_abandon_reminder_sent: true,
-                ..Default::default()
-            },
-            now,
-        );
-        conversation.human_takeover_until = Some(now + ChronoDuration::hours(1));
-
-        assert_eq!(timer_recovery(&conversation, now), None);
     }
 
     #[test]

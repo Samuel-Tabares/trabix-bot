@@ -22,7 +22,7 @@ use serde_json::json;
 use sqlx::error::DatabaseError;
 
 use crate::{
-    bot::{state_machine::UserInput, timers::rearm_conversation_abandon_after_handoff},
+    bot::{state_machine::UserInput, timers::cancel_conversation_abandon_after_handoff},
     db::{
         models::ReferralCode,
         queries::{
@@ -331,15 +331,13 @@ pub async fn advisor_release(
         .await
         .map_err(|err| ApiError::Internal(format!("error liberando la conversación: {err}")))?;
 
-    // Ver `rearm_conversation_abandon_after_handoff`: sin esto, un
-    // recordatorio de "ausente" que ya se disparó antes de la toma de
-    // control (o que venía con el reloj congelado desde antes de que el
-    // asesor entrara) se dispara al toque contra alguien que el asesor
-    // acaba de atender, o no vuelve a dispararse nunca.
-    if let Err(err) = rearm_conversation_abandon_after_handoff(&state, &conversation).await {
+    // El asesor ya atendió a este cliente a mano durante la toma de control,
+    // así que el bot no debe preguntarle "¿sigues por ahí?" por esta ausencia
+    // -- ver `cancel_conversation_abandon_after_handoff`.
+    if let Err(err) = cancel_conversation_abandon_after_handoff(&state, &conversation).await {
         tracing::warn!(
             error = %err,
-            "failed to rearm customer inactivity reminder after advisor release"
+            "failed to cancel customer inactivity reminder after advisor release"
         );
     }
 

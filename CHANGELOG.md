@@ -17,20 +17,18 @@ All notable changes to this project will be documented in this file.
   complejos (p. ej. cotizaciones nacionales). Se agregaron las dos variantes que faltaban
   (`src/ai/client.rs`), con tests que reproducen el shape exacto del incidente.
 - **El recordatorio de "¿sigues por ahí?" se disparaba al toque apenas terminaba una toma de
-  control humana, ignorando que el cliente pudo haber estado hablando con el asesor segundos antes**
+  control humana, ignorando que el asesor ya atendió al cliente a mano durante esa toma de control**
   (visto en vivo 2026-09-06/07, cliente Graja: último mensaje del asesor 19:37, recordatorio
   automático a la 01:38). `conversation_abandon_started_at` solo se toca en un turno del cliente, así
   que queda congelado desde ANTES de que el asesor entrara; al volver el control al bot (por el botón
   "Devolver al bot" o porque `human_takeover_until` venció sola) ese reloj viejo ya estaba vencido y
-  disparaba de inmediato. `rearm_conversation_abandon_after_handoff` (`bot::timers`) ahora resetea el
-  reloj a `now()` justo cuando el control vuelve al bot -- desde `advisor_release` y desde
+  disparaba de inmediato. Como un humano ya gestionó esa ausencia, el recordatorio automático no
+  aporta nada ahí: `cancel_conversation_abandon_after_handoff` (`bot::timers`) ahora lo apaga por
+  completo justo cuando el control vuelve al bot -- desde `advisor_release` y desde
   `expire_conversation_abandon_with_source` (primer tick del sweep que ve la ventana vencida sin
-  liberación explícita) -- así el cliente solo recibe el recordatorio si de verdad queda callado 2
-  minutos después de que el humano suelta el caso. `timer_recovery` también dejó de bloquear ese
-  primer tick cuando `conversation_abandon_reminder_sent` ya venía en `true` de un episodio de
-  ausencia anterior a la toma de control (el caso real de Graja): antes ese gate le impedía a la
-  conversación llegar siquiera a `expire_conversation_abandon_with_source`, así que el rearm nunca
-  corría y el cliente se quedaba sin ningún recordatorio para siempre.
+  liberación explícita) -- en vez de dispararlo o de solo posponerlo. Si el cliente vuelve a
+  escribirle al bot más adelante y luego se queda callado, el mecanismo normal
+  (`sync_customer_inactivity_timer`) arma un recordatorio nuevo para ese episodio de ausencia.
 
 ## [1.25.1] - 2026-09-08
 
