@@ -44,6 +44,24 @@ pub enum ContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
     },
+    // Con `thinking: adaptive` (ver `Thinking` mas abajo) el modelo decide
+    // caso por caso si expone razonamiento visible; cuando lo hace, la
+    // respuesta trae uno de estos dos bloques ANTES del texto/tool_use.
+    // Sin estas variantes, `.json::<MessagesResponse>()` fallaba con
+    // "unknown variant `thinking`" cada vez que el modelo pensaba en voz
+    // alta, tumbando el turno completo a partir de v1.25.0 (incidente
+    // 2026-09-10, cliente ...8927: "error decoding response body").
+    // `signature`/`data` se re-serializan tal cual al meter el historial de
+    // vuelta en el siguiente turno -- la API los valida para continuar un
+    // razonamiento con tool use.
+    Thinking {
+        thinking: String,
+        #[serde(default)]
+        signature: String,
+    },
+    RedactedThinking {
+        data: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,5 +226,60 @@ impl AnthropicClient {
         );
 
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Reproduce el incidente 2026-09-10 (cliente ...8927): con `thinking:
+    // adaptive`, la API antepone un bloque `thinking` (o `redacted_thinking`)
+    // al `text`/`tool_use` cuando el modelo decide exponer razonamiento.
+    // Antes de estas variantes, esto tumbaba `.json::<MessagesResponse>()`
+    // con "unknown variant `thinking`" y degradaba el turno completo.
+    #[test]
+    fn deserializes_response_with_visible_thinking_block() {
+        let body = serde_json::json!({
+            "content": [
+                {"type": "thinking", "thinking": "el cliente pide 50 a Puerto Lopez", "signature": "abc123"},
+                {"type": "text", "text": "Dame un momento para confirmar el envio."}
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        });
+
+        let response: MessagesResponse = serde_json::from_value(body).expect("should deserialize");
+        assert!(matches!(response.content[0], ContentBlock::Thinking { .. }));
+        assert!(matches!(response.content[1], ContentBlock::Text { .. }));
+    }
+
+    #[test]
+    fn deserializes_response_with_redacted_thinking_block() {
+        let body = serde_json::json!({
+            "content": [
+                {"type": "redacted_thinking", "data": "opaque"},
+                {"type": "text", "text": "Listo."}
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        });
+
+        let response: MessagesResponse = serde_json::from_value(body).expect("should deserialize");
+        assert!(matches!(response.content[0], ContentBlock::RedactedThinking { .. }));
+    }
+
+    #[test]
+    fn round_trips_thinking_block_for_history_replay() {
+        let original: ContentBlock = serde_json::from_value(serde_json::json!({
+            "type": "thinking",
+            "thinking": "razonamiento",
+            "signature": "sig-1"
+        }))
+        .unwrap();
+
+        let replayed = serde_json::to_value(&original).unwrap();
+        assert_eq!(replayed["type"], "thinking");
+        assert_eq!(replayed["signature"], "sig-1");
     }
 }

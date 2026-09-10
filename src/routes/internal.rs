@@ -22,13 +22,16 @@ use serde_json::json;
 use sqlx::error::DatabaseError;
 
 use crate::{
-    bot::state_machine::UserInput,
+    bot::{
+        state_machine::UserInput,
+        timers::{customer_inactivity_state, order_already_gestioned},
+    },
     db::{
         models::ReferralCode,
         queries::{
             clear_human_takeover, create_referral_code as db_create_referral_code, get_conversation,
             record_message_event, set_human_takeover, set_referral_code_active as db_set_referral_code_active,
-            set_referral_code_boost as db_set_referral_code_boost, update_last_message,
+            set_referral_code_boost as db_set_referral_code_boost, update_last_message, update_state,
         },
     },
     logging::{mask_phone, preview_text},
@@ -176,12 +179,12 @@ pub async fn advisor_send(
     // este cliente, el mensaje del asesor espera en vez de intercalarse.
     let _case_lock = crate::lock_conversation(&state.conversation_locks, &case_phone).await;
 
-    let conversation = get_conversation(&state.pool, &case_phone)
+    let Some(conversation) = get_conversation(&state.pool, &case_phone)
         .await
-        .map_err(|err| ApiError::Internal(format!("error consultando la conversación: {err}")))?;
-    if conversation.is_none() {
+        .map_err(|err| ApiError::Internal(format!("error consultando la conversación: {err}")))?
+    else {
         return Err(ApiError::UnknownCase);
-    }
+    };
 
     let wa_message_id = state
         .transport
@@ -226,6 +229,37 @@ pub async fn advisor_send(
     let takeover_until = Utc::now() + Duration::hours(state.config.advisor_takeover_hours as i64);
     if let Err(err) = set_human_takeover(&state.pool, &case_phone, takeover_until).await {
         tracing::warn!(error = %err, "failed to set human takeover window after internal send");
+    }
+
+    // El asesor acaba de hablarle al cliente; si el pedido sigue sin
+    // gestionar, cuenta como una interacción nueva para efectos del
+    // recordatorio de "ausente" -- si no, un recordatorio ya disparado antes
+    // de la toma de control queda consumido para siempre (`conversation_
+    // abandon_reminder_sent` solo se resetea en un turno del cliente) y el
+    // sweep (`sweep_expired_timers`, cada 60s) nunca vuelve a avisarle al
+    // cliente aunque siga sin responder después de que el asesor suelte el
+    // caso. Reiniciar el arranque acá deja que el mismo sweep haga el resto
+    // una vez venza o se libere la toma de control.
+    if customer_inactivity_state(&conversation.state)
+        && !order_already_gestioned(
+            &case_phone,
+            conversation.customer_name.clone(),
+            conversation.customer_phone.clone(),
+            conversation.delivery_address.clone(),
+            &conversation.state_data.0,
+        )
+    {
+        let mut state_data = conversation.state_data.0.clone();
+        state_data.conversation_abandon_started_at = Some(Utc::now());
+        state_data.conversation_abandon_reminder_sent = false;
+        if let Err(err) =
+            update_state(&state.pool, &case_phone, &conversation.state, &state_data).await
+        {
+            tracing::warn!(
+                error = %err,
+                "failed to rearm customer inactivity reminder after internal advisor send"
+            );
+        }
     }
 
     tracing::info!(

@@ -1078,7 +1078,9 @@ fn advisor_timeout_for_state(state: &str) -> Option<Duration> {
     advisor_timeout_kind(state).map(|_| TimerRule::AdvisorResponse.default_duration())
 }
 
-fn customer_inactivity_state(state: &str) -> bool {
+// pub(crate): tambien la usa `routes::internal::advisor_send` para
+// rearmar el recordatorio de "ausente" cuando un asesor toma el caso.
+pub(crate) fn customer_inactivity_state(state: &str) -> bool {
     matches!(
         state,
         "main_menu"
@@ -1118,7 +1120,7 @@ fn customer_inactivity_state(state: &str) -> bool {
 /// el `ConversationContext` vivo, solo lo persistido — se reconstruye con
 /// `rehydrate_context_for_timer` para reusar el mismo criterio
 /// (`checkout_precondition_error`) en vez de duplicarlo.
-fn order_already_gestioned(
+pub(crate) fn order_already_gestioned(
     phone_number: &str,
     customer_name: Option<String>,
     customer_phone: Option<String>,

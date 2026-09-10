@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.25.2] - 2026-09-10
+
+### Fixed
+- **Incidente en vivo (cliente ...8927, 2026-09-10 14:19): "error decoding response body" tumbaba
+  el turno completo del agente.** `thinking: adaptive` (desde v1.25.0) hace que el modelo a veces
+  devuelva un bloque `thinking`/`redacted_thinking` antes del `text`/`tool_use`; `ContentBlock` solo
+  tenía variantes para `text`, `tool_use` y `tool_result`, así que cualquier turno donde el modelo
+  expusiera razonamiento visible fallaba al deserializar la respuesta completa de la API y
+  degradaba a mensaje fijo + aviso al asesor. No era un fallo raro de red: pasaba determinísticamente
+  cada vez que el modelo decidía pensar en voz alta, algo más probable justo en los pedidos más
+  complejos (p. ej. cotizaciones nacionales). Se agregaron las dos variantes que faltaban
+  (`src/ai/client.rs`), con tests que reproducen el shape exacto del incidente.
+- **El recordatorio de "¿sigues por ahí?" quedaba muerto para siempre tras una toma de control
+  humana si ya se había disparado una vez antes.** `conversation_abandon_reminder_sent` solo se
+  resetea en un turno del cliente (`sync_customer_inactivity_timer`); un asesor respondiéndole al
+  cliente desde `crm-app` (`POST /internal/advisor/send`) nunca lo tocaba, así que si el
+  recordatorio ya se había enviado en algún momento previo de la conversación, el cliente podía
+  quedarse callado indefinidamente después de que el asesor soltara el caso sin que el bot volviera
+  a insistir. `advisor_send` ahora reinicia `conversation_abandon_started_at`/`reminder_sent` cuando
+  el pedido sigue sin gestionar, dejando que el sweep normal (`sweep_expired_timers`, cada 60s) avise
+  al cliente apenas venza o se libere la toma de control.
+
 ## [1.25.1] - 2026-09-08
 
 ### Fixed
