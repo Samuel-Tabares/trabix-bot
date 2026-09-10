@@ -389,6 +389,20 @@ fn timer_recovery(
             state_data,
         )
     {
+        // Toma de control vencida y nadie la liberó a mano: hay que dejar
+        // pasar esto igual aunque `reminder_sent` ya esté en `true` de un
+        // episodio de ausencia anterior a la toma de control -- si no, el
+        // gate de abajo lo bloquea para siempre y `expire_conversation_
+        // abandon_with_source` (quien de verdad limpia `human_takeover_until`
+        // y rearma el reloj, ver `rearm_conversation_abandon_after_handoff`)
+        // nunca llega a correr.
+        if conversation
+            .human_takeover_until
+            .is_some_and(|until| until <= now)
+        {
+            return Some(TimerRecovery::Expired(TimerType::ConversationAbandon));
+        }
+
         let Some(started_at) = state_data.conversation_abandon_started_at else {
             return None;
         };
@@ -1501,6 +1515,50 @@ mod tests {
             timer_recovery(&conversation, now);
 
         assert_eq!(recovery, None);
+    }
+
+    // Caso Graja (2026-09-06/07): un recordatorio ya disparado ANTES de que
+    // el asesor entrara no debe bloquear para siempre la recuperación del
+    // reloj de abandono una vez que la toma de control vence sin liberación
+    // explícita -- si no, `expire_conversation_abandon_with_source` (quien
+    // limpia `human_takeover_until` y rearma el reloj) nunca llega a correr.
+    #[test]
+    fn timer_recovery_reports_expired_when_takeover_lapsed_even_with_reminder_already_sent() {
+        let now = chrono::Utc::now();
+        let mut conversation = active_timer_conversation(
+            "main_menu",
+            ConversationStateData {
+                conversation_abandon_started_at: Some(now - ChronoDuration::days(4)),
+                conversation_abandon_reminder_sent: true,
+                ..Default::default()
+            },
+            now,
+        );
+        conversation.human_takeover_until = Some(now - ChronoDuration::minutes(1));
+
+        assert_eq!(
+            timer_recovery(&conversation, now),
+            Some(TimerRecovery::Expired(TimerType::ConversationAbandon))
+        );
+    }
+
+    // Mientras la ventana sigue vigente, el gate de `reminder_sent` sigue
+    // aplicando normal -- el bypass es solo para cuando ya venció.
+    #[test]
+    fn timer_recovery_still_respects_reminder_sent_while_takeover_is_active() {
+        let now = chrono::Utc::now();
+        let mut conversation = active_timer_conversation(
+            "main_menu",
+            ConversationStateData {
+                conversation_abandon_started_at: Some(now - ChronoDuration::days(4)),
+                conversation_abandon_reminder_sent: true,
+                ..Default::default()
+            },
+            now,
+        );
+        conversation.human_takeover_until = Some(now + ChronoDuration::hours(1));
+
+        assert_eq!(timer_recovery(&conversation, now), None);
     }
 
     #[test]
