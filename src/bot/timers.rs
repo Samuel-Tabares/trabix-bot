@@ -21,10 +21,10 @@ use crate::{
         states::advisor,
     },
     db::{
-        models::ConversationStateData,
+        models::{Conversation, ConversationStateData},
         queries::{
-            get_conversation, list_active_timer_conversations, reset_conversation,
-            update_last_message, update_order_status, update_state,
+            clear_human_takeover, get_conversation, list_active_timer_conversations,
+            reset_conversation, update_last_message, update_order_status, update_state,
         },
     },
     engine::{
@@ -853,6 +853,24 @@ async fn expire_conversation_abandon_with_source(
         return Ok(());
     }
 
+    // La toma de control ya vencio y nadie la libero a mano: es la primera
+    // vuelta del sweep (corre cada 60s) que la ve asi. El asesor pudo haberle
+    // escrito al cliente hasta un instante antes de que venciera la ventana
+    // (visto en vivo 2026-09-06/07, cliente Graja: ultimo mensaje del asesor
+    // a las 19:37, "?sigues por ahi?" automatico a la 01:38 -- el reloj de
+    // abandono venia congelado desde ANTES de que el asesor entrara, asi que
+    // se disparaba al toque apenas cerraba la ventana). En vez de heredar ese
+    // reloj viejo y avisarle "?sigues ahi?" a alguien que acaba de hablar con
+    // un humano, se limpia el flag y se le da un respiro fresco de
+    // `CONVERSATION_REMINDER_TIMEOUT` desde ahora. Es una transicion de una
+    // sola vez: al limpiar `human_takeover_until` esta rama no se repite en
+    // el siguiente tick.
+    if conversation.human_takeover_until.is_some() {
+        clear_human_takeover(&state.pool, &phone_number).await?;
+        rearm_conversation_abandon_after_handoff(&state, &conversation).await?;
+        return Ok(());
+    }
+
     if !customer_inactivity_state(&conversation.state)
         || order_already_gestioned(
             &conversation.phone_number,
@@ -1078,9 +1096,43 @@ fn advisor_timeout_for_state(state: &str) -> Option<Duration> {
     advisor_timeout_kind(state).map(|_| TimerRule::AdvisorResponse.default_duration())
 }
 
-// pub(crate): tambien la usa `routes::internal::advisor_send` para
-// rearmar el recordatorio de "ausente" cuando un asesor toma el caso.
-pub(crate) fn customer_inactivity_state(state: &str) -> bool {
+/// Le da al cliente un respiro fresco del recordatorio de "?sigues por ahi?"
+/// justo cuando un asesor deja de tener el caso -- por boton explicito
+/// (`routes::internal::advisor_release`) o porque la ventana de
+/// `set_human_takeover` vencio sola (`expire_conversation_abandon_with_source`).
+/// Sin esto el reloj de abandono, que solo corre en turnos del cliente, queda
+/// congelado desde ANTES de la toma de control y dispara el recordatorio al
+/// toque apenas el humano suelta el caso, ignorando que el cliente pudo haber
+/// estado hablando con ese humano segundos antes.
+pub(crate) async fn rearm_conversation_abandon_after_handoff(
+    state: &AppState,
+    conversation: &Conversation,
+) -> Result<(), sqlx::Error> {
+    if !customer_inactivity_state(&conversation.state)
+        || order_already_gestioned(
+            &conversation.phone_number,
+            conversation.customer_name.clone(),
+            conversation.customer_phone.clone(),
+            conversation.delivery_address.clone(),
+            &conversation.state_data.0,
+        )
+    {
+        return Ok(());
+    }
+
+    let mut state_data = conversation.state_data.0.clone();
+    state_data.conversation_abandon_started_at = Some(Utc::now());
+    state_data.conversation_abandon_reminder_sent = false;
+    update_state(
+        &state.pool,
+        &conversation.phone_number,
+        &conversation.state,
+        &state_data,
+    )
+    .await
+}
+
+fn customer_inactivity_state(state: &str) -> bool {
     matches!(
         state,
         "main_menu"
@@ -1120,7 +1172,7 @@ pub(crate) fn customer_inactivity_state(state: &str) -> bool {
 /// el `ConversationContext` vivo, solo lo persistido — se reconstruye con
 /// `rehydrate_context_for_timer` para reusar el mismo criterio
 /// (`checkout_precondition_error`) en vez de duplicarlo.
-pub(crate) fn order_already_gestioned(
+fn order_already_gestioned(
     phone_number: &str,
     customer_name: Option<String>,
     customer_phone: Option<String>,

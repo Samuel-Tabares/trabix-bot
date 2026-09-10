@@ -16,15 +16,17 @@ All notable changes to this project will be documented in this file.
   cada vez que el modelo decidía pensar en voz alta, algo más probable justo en los pedidos más
   complejos (p. ej. cotizaciones nacionales). Se agregaron las dos variantes que faltaban
   (`src/ai/client.rs`), con tests que reproducen el shape exacto del incidente.
-- **El recordatorio de "¿sigues por ahí?" quedaba muerto para siempre tras una toma de control
-  humana si ya se había disparado una vez antes.** `conversation_abandon_reminder_sent` solo se
-  resetea en un turno del cliente (`sync_customer_inactivity_timer`); un asesor respondiéndole al
-  cliente desde `crm-app` (`POST /internal/advisor/send`) nunca lo tocaba, así que si el
-  recordatorio ya se había enviado en algún momento previo de la conversación, el cliente podía
-  quedarse callado indefinidamente después de que el asesor soltara el caso sin que el bot volviera
-  a insistir. `advisor_send` ahora reinicia `conversation_abandon_started_at`/`reminder_sent` cuando
-  el pedido sigue sin gestionar, dejando que el sweep normal (`sweep_expired_timers`, cada 60s) avise
-  al cliente apenas venza o se libere la toma de control.
+- **El recordatorio de "¿sigues por ahí?" se disparaba al toque apenas terminaba una toma de
+  control humana, ignorando que el cliente pudo haber estado hablando con el asesor segundos antes**
+  (visto en vivo 2026-09-06/07, cliente Graja: último mensaje del asesor 19:37, recordatorio
+  automático a la 01:38). `conversation_abandon_started_at` solo se toca en un turno del cliente, así
+  que queda congelado desde ANTES de que el asesor entrara; al volver el control al bot (por el botón
+  "Devolver al bot" o porque `human_takeover_until` venció sola) ese reloj viejo ya estaba vencido y
+  disparaba de inmediato. `rearm_conversation_abandon_after_handoff` (`bot::timers`) ahora resetea el
+  reloj a `now()` justo cuando el control vuelve al bot -- desde `advisor_release` y desde
+  `expire_conversation_abandon_with_source` (primer tick del sweep que ve la ventana vencida sin
+  liberación explícita) -- así el cliente solo recibe el recordatorio si de verdad queda callado 2
+  minutos después de que el humano suelta el caso.
 
 ## [1.25.1] - 2026-09-08
 

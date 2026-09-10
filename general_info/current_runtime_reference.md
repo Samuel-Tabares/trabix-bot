@@ -813,6 +813,19 @@ Mientras `human_takeover_until` está en el futuro:
 
 `POST /internal/advisor/release` la limpia antes de tiempo (botón "Devolver al bot" en `crm-app`).
 
+**Devolución al bot (v1.25.2).** `conversation_abandon_started_at`/`reminder_sent` solo se tocan en
+un turno del cliente, así que quedan congelados desde ANTES de que un asesor entrara. Sin más,
+apenas `human_takeover_until` deja de estar en el futuro (por `advisor_release` o porque venció
+sola) ese reloj viejo ya está vencido y dispara el "¿sigues por ahí?" al toque, aunque el cliente
+acabara de hablar con el asesor segundos antes (visto en vivo 2026-09-06/07, cliente Graja: último
+mensaje del asesor 19:37, recordatorio automático 01:38). `rearm_conversation_abandon_after_handoff`
+(`bot::timers`) resetea ese reloj a `now()` con `reminder_sent = false` en el momento exacto en que
+el control vuelve al bot — desde `advisor_release` (liberación explícita) y desde
+`expire_conversation_abandon_with_source` (primer tick del sweep que ve la ventana ya vencida sin
+liberación explícita; ahí mismo limpia `human_takeover_until` para que sea una transición de una
+sola vez). El cliente solo recibe el recordatorio si de verdad queda callado
+`CONVERSATION_REMINDER_TIMEOUT` (2 min) después de que el humano suelta el caso.
+
 ### `state_data`
 
 Campos mas importantes hoy:
