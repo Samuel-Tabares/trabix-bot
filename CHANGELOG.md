@@ -26,7 +26,11 @@ All notable changes to this project will be documented in this file.
   reloj a `now()` justo cuando el control vuelve al bot -- desde `advisor_release` y desde
   `expire_conversation_abandon_with_source` (primer tick del sweep que ve la ventana vencida sin
   liberación explícita) -- así el cliente solo recibe el recordatorio si de verdad queda callado 2
-  minutos después de que el humano suelta el caso.
+  minutos después de que el humano suelta el caso. `timer_recovery` también dejó de bloquear ese
+  primer tick cuando `conversation_abandon_reminder_sent` ya venía en `true` de un episodio de
+  ausencia anterior a la toma de control (el caso real de Graja): antes ese gate le impedía a la
+  conversación llegar siquiera a `expire_conversation_abandon_with_source`, así que el rearm nunca
+  corría y el cliente se quedaba sin ningún recordatorio para siempre.
 
 ## [1.25.1] - 2026-09-08
 
