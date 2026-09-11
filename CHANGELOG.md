@@ -119,7 +119,10 @@ All notable changes to this project will be documented in this file.
 - **Efecto lateral aceptado:** la liberación explícita sigue siendo la única vía que limpia de verdad
   `human_takeover_until`. Una ventana que vence sola deja su timestamp viejo en la fila; es inocuo,
   porque bot y `crm-app` lo comparan siempre contra `now()`.
-- `cargo check` sin warnings, 181 tests en verde.
+- La instrucción del turno de recuperación **no pasa por el truncado** de `MAX_INBOUND_CHARS`
+  (1.500): mide ~1.150 y lo primero que se perdería en un recorte es el último punto —reportar lo que
+  concluyó—, que es justo el ancla de seguridad. Hay un test que fija ese invariante.
+- `cargo check` sin warnings, 182 tests en verde.
 
 ## [1.26.0] - 2026-09-11
 

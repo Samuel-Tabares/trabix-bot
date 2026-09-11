@@ -318,6 +318,13 @@ escribe, incluido el evento `Purchase` a la CAPI de Meta— y el riesgo asumido 
 - **La ventana de 24h de WhatsApp pesa más ahora.** Con el carril del bot fuera, el asesor *tiene*
   que escribirle al cliente; si la ventana se cerró, `sendText` devuelve `window_closed` y no hay
   plantillas (Samuel las sacó del backlog el 2026-08-25). Limitación conocida, no bloqueante.
+- **Un turno de recuperación que falla no se reintenta.** `advisor_release` limpia
+  `human_takeover_until` *antes* de correr el turno, así que si el LLM está caído en ese momento el
+  barrido de handoffs vencidos ya no lo ve (su query exige `human_takeover_until` no nula y vencida).
+  El asesor sí se entera —`degrade_agent_failure` le deja el aviso en su carril— pero el pedido queda
+  sin cerrar y hay que retomarlo a mano. Arreglo natural si llega a doler: no limpiar el takeover
+  hasta que el turno devuelva `Ok`, o dejar `handoff_reason` puesto y que una reaparición del cliente
+  lo dispare. No se hizo ahora por no ampliar el alcance.
 
 ---
 

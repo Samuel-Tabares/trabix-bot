@@ -779,8 +779,15 @@ fn format_inbound_message(turn_kind: TurnKind, input: &UserInput) -> String {
         TurnKind::Customer => format!("Mensaje del CLIENTE: {}", render_inbound_body(input)),
         // El turno de recuperación ya viene redactado como instrucción del
         // sistema (`run_resume_turn`): no se disfraza de mensaje del cliente,
-        // que es justo lo que confundiría al modelo.
-        TurnKind::Resume => render_inbound_body(input),
+        // que es justo lo que confundiría al modelo, y NO se trunca. El cap de
+        // `MAX_INBOUND_CHARS` existe para acotar texto que escribe un
+        // desconocido; acá el texto lo escribimos nosotros y el último punto de
+        // la instrucción (reportar lo que concluyó) es el ancla de seguridad del
+        // handoff — perderlo por un recorte sería silencioso y caro.
+        TurnKind::Resume => match input {
+            UserInput::TextMessage(text) => text.clone(),
+            other => render_inbound_body(other),
+        },
     }
 }
 
@@ -4481,6 +4488,20 @@ mod tests {
         assert!(HandoffReason::PaymentVerification
             .resume_hint()
             .contains("confirm_payment_received"));
+    }
+
+    /// La instrucción del turno de recuperación NO se trunca. Mide ~1.150
+    /// caracteres contra un `MAX_INBOUND_CHARS` de 1.500: si alguien la amplía y
+    /// volviera a pasar por el truncado, lo primero que se perdería es el último
+    /// punto —reportar lo que concluyó—, que es el ancla de seguridad del
+    /// handoff. Y se perdería en silencio.
+    #[test]
+    fn resume_instruction_survives_the_inbound_length_cap() {
+        let long = "x".repeat(MAX_INBOUND_CHARS + 500);
+        let input = UserInput::TextMessage(long.clone());
+
+        assert_eq!(format_inbound_message(TurnKind::Resume, &input), long);
+        assert!(format_inbound_message(TurnKind::Customer, &input).len() < long.len());
     }
 
 }
