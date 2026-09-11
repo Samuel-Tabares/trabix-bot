@@ -72,10 +72,16 @@ const LLM_HISTORY_WINDOW: usize = 40;
 // texto completo igual queda en el transcript del webhook/simulador).
 const MAX_INBOUND_CHARS: usize = 1500;
 
+/// Qué originó este turno del agente. El asesor ya no tiene un carril propio
+/// hacia el bot (se eliminó en v1.27.0): o escribe el cliente, o el bot está
+/// retomando un caso que un humano atendió a mano.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Actor {
+pub enum TurnKind {
+    /// Llegó un mensaje del cliente por el webhook.
     Customer,
-    Advisor,
+    /// El asesor devolvió la conversación y el bot retoma leyendo lo que pasó
+    /// durante el handoff (`run_resume_turn`).
+    Resume,
 }
 
 const SYSTEM_PROMPT: &str = r#"Eres quien atiende WhatsApp para Trabix Granizados, una marca de \
@@ -310,7 +316,7 @@ pub async fn run_customer_turn(
         state,
         context,
         current_state,
-        Actor::Customer,
+        TurnKind::Customer,
         input,
         saved_addresses,
         customer_notes,
@@ -318,20 +324,57 @@ pub async fn run_customer_turn(
     .await
 }
 
-pub async fn run_advisor_turn(
+/// El asesor cerró el handoff y le devolvió la conversación al bot (botón
+/// "Devolver al bot", o la ventana de toma de control venció sola). El bot no
+/// recibe una respuesta estructurada —ese carril ya no existe—: **lee lo que se
+/// dijo mientras estuvo afuera** y sigue el pedido desde ahí.
+///
+/// El transcript del handoff ya está en la memoria del agente porque se fue
+/// apendando en vivo (`ai::memory::append_transcript_entry`, desde
+/// `engine::process_customer_input` y `routes::internal::advisor_send`); lo que
+/// agrega este turno es la instrucción de qué hacer con él.
+///
+/// Riesgo asumido del diseño: el modelo va a leer cifras de dinero de un chat
+/// en prosa. El ancla es el aviso de cierre —el prompt le exige reportar con
+/// `message_advisor` lo que concluyó—, que aterriza en Pendientes y deja
+/// visible de inmediato una lectura equivocada.
+pub async fn run_resume_turn(
     state: &AppState,
     context: &mut ConversationContext,
     current_state: &ConversationState,
-    input: &UserInput,
     saved_addresses: &[CustomerAddress],
     customer_notes: Option<&str>,
 ) -> Result<(ConversationState, Vec<BotAction>), Box<dyn Error + Send + Sync>> {
+    let hint = context
+        .handoff_reason
+        .map(|reason| reason.resume_hint())
+        .unwrap_or(
+            "No hay un motivo de handoff registrado: revisa en qué quedó el pedido y sigue desde ahí.",
+        );
+
+    let instruction = format!(
+        "[SISTEMA] Un asesor humano atendió este caso a mano y acaba de devolverte la \
+         conversación. Arriba están, marcados por el sistema, los mensajes que se cruzaron \
+         mientras estuviste afuera.\n\n{hint}\n\nQué tienes que hacer ahora:\n\
+         1. Lee ese intercambio y saca de ahí los datos duros que falten (costo del envío, si el \
+         pago quedó verificado, dirección, nombre, cantidades, con o sin licor).\n\
+         2. Llama las tools que correspondan para dejar el pedido al día. Si un dato no aparece \
+         de forma clara y explícita en lo que se dijo, NO lo inventes ni lo asumas.\n\
+         3. Continúa la conversación con el cliente desde donde la dejó el asesor: no repitas lo \
+         que él ya dijo, no vuelvas a saludar y no le pidas de nuevo algo que ya entregó.\n\
+         4. Cierra SIEMPRE avisándole al asesor con message_advisor (requires_action=false) qué \
+         concluiste y con qué cifras te quedaste, para que pueda corregirte si leíste mal. Por \
+         ejemplo: \"Retomé el caso: domicilio $28.000, total $271.000, falta método de pago\"."
+    );
+
+    context.handoff_reason = None;
+
     run_case_turn(
         state,
         context,
         current_state,
-        Actor::Advisor,
-        input,
+        TurnKind::Resume,
+        &UserInput::TextMessage(instruction),
         saved_addresses,
         customer_notes,
     )
@@ -342,7 +385,7 @@ async fn run_case_turn(
     state: &AppState,
     context: &mut ConversationContext,
     current_state: &ConversationState,
-    actor: Actor,
+    turn_kind: TurnKind,
     input: &UserInput,
     saved_addresses: &[CustomerAddress],
     customer_notes: Option<&str>,
@@ -355,7 +398,7 @@ async fn run_case_turn(
     release_delivered_order_binding(context);
 
     if let Some((next_state, actions)) =
-        try_handle_receipt_shortcut(context, current_state, actor, input)
+        try_handle_receipt_shortcut(context, current_state, turn_kind, input)
     {
         return Ok((next_state, actions));
     }
@@ -369,13 +412,13 @@ async fn run_case_turn(
     if budget_check != BudgetCheck::Allowed {
         tracing::warn!(
             phone = %crate::logging::mask_phone(&phone),
-            actor = ?actor,
+            turn_kind = ?turn_kind,
             first_notice = (budget_check == BudgetCheck::DeniedFirstNotice),
             "LLM daily budget exhausted, degrading to fixed message"
         );
         return Ok((
             current_state.clone(),
-            budget_denied_actions(context, actor, budget_check),
+            budget_denied_actions(context, turn_kind, budget_check),
         ));
     }
 
@@ -385,12 +428,12 @@ async fn run_case_turn(
     history.push(Message {
         role: "user".to_string(),
         content: vec![ContentBlock::Text {
-            text: format_inbound_message(actor, input),
+            text: format_inbound_message(turn_kind, input),
         }],
     });
     let window_start = llm_window_start(&history);
 
-    let dynamic_system = build_dynamic_case_state(context, actor, current_state, customer_notes);
+    let dynamic_system = build_dynamic_case_state(context, turn_kind, current_state, customer_notes);
     let tool_defs = tool_definitions();
 
     let mut actions: Vec<BotAction> = Vec::new();
@@ -469,7 +512,7 @@ async fn run_case_turn(
         for (id, name, tool_input) in tool_uses {
             tracing::info!(
                 phone = %crate::logging::mask_phone(&context.phone_number),
-                actor = ?actor,
+                turn_kind = ?turn_kind,
                 tool = %name,
                 input = %tool_input,
                 "agent tool call"
@@ -479,7 +522,7 @@ async fn run_case_turn(
                 &name,
                 &tool_input,
                 context,
-                actor,
+                turn_kind,
                 &effective_state,
                 saved_addresses,
             ) {
@@ -531,19 +574,14 @@ async fn run_case_turn(
     // nunca un envío real) en vez de `SendText { to: advisor_phone }`.
     if !direct_reply_parts.is_empty() {
         let body = direct_reply_parts.join("\n\n");
-        match actor {
-            Actor::Customer => actions.push(BotAction::SendText {
-                to: context.phone_number.clone(),
-                body,
-            }),
-            // Texto plano del modelo sin pasar por `message_advisor` (no
-            // decidió explícitamente si requiere acción) — se asume que sí,
-            // es más seguro no perderlo de `/pendientes` que descartarlo.
-            Actor::Advisor => actions.push(BotAction::NotifyAdvisor {
-                body,
-                requires_action: true,
-            }),
-        }
+        // Siempre al cliente. Antes esto se bifurcaba por actor y, en un turno
+        // del asesor, el texto plano del modelo terminaba en el carril interno:
+        // así fue como el total de $271.000 nunca le llegó al cliente Graja
+        // (2026-09-11). Para hablarle al asesor está `message_advisor`.
+        actions.push(BotAction::SendText {
+            to: context.phone_number.clone(),
+            body,
+        });
     }
 
     let final_state = terminal
@@ -586,10 +624,10 @@ async fn run_case_turn(
 fn try_handle_receipt_shortcut(
     context: &mut ConversationContext,
     current_state: &ConversationState,
-    actor: Actor,
+    turn_kind: TurnKind,
     input: &UserInput,
 ) -> Option<(ConversationState, Vec<BotAction>)> {
-    if actor != Actor::Customer {
+    if turn_kind != TurnKind::Customer {
         return None;
     }
     let UserInput::ImageMessage(media_id) = input else {
@@ -652,7 +690,7 @@ pub(crate) async fn record_greeting_turn(
         Message {
             role: "user".to_string(),
             content: vec![ContentBlock::Text {
-                text: format_inbound_message(Actor::Customer, input),
+                text: format_inbound_message(TurnKind::Customer, input),
             }],
         },
         Message {
@@ -725,19 +763,27 @@ fn confirmed_order_already_delivered(
     }
 }
 
-fn format_inbound_message(actor: Actor, input: &UserInput) -> String {
-    let who = match actor {
-        Actor::Customer => "CLIENTE",
-        Actor::Advisor => "ASESOR",
-    };
-    let body = match input {
+fn format_inbound_message(turn_kind: TurnKind, input: &UserInput) -> String {
+    match turn_kind {
+        TurnKind::Customer => format!("Mensaje del CLIENTE: {}", render_inbound_body(input)),
+        // El turno de recuperación ya viene redactado como instrucción del
+        // sistema (`run_resume_turn`): no se disfraza de mensaje del cliente,
+        // que es justo lo que confundiría al modelo.
+        TurnKind::Resume => render_inbound_body(input),
+    }
+}
+
+/// Cuerpo legible de un `UserInput`, sin el prefijo de quién habla. Lo reusa el
+/// registro de transcript durante un handoff (`ai::memory`), donde el prefijo
+/// lo pone el sistema con otro marcador.
+pub(crate) fn render_inbound_body(input: &UserInput) -> String {
+    match input {
         UserInput::TextMessage(text) => truncate_chars(text, MAX_INBOUND_CHARS),
         UserInput::ButtonPress(id) | UserInput::ListSelection(id) => {
             format!("[seleccionó: {id}]")
         }
         UserInput::ImageMessage(media_id) => format!("[envió una imagen: {media_id}]"),
-    };
-    format!("Mensaje del {who}: {body}")
+    }
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
@@ -771,11 +817,11 @@ fn llm_window_start(history: &[Message]) -> usize {
 /// entera una sola vez por día por caso.
 fn budget_denied_actions(
     context: &ConversationContext,
-    actor: Actor,
+    turn_kind: TurnKind,
     check: BudgetCheck,
 ) -> Vec<BotAction> {
     let mut actions = Vec::new();
-    if actor == Actor::Customer {
+    if turn_kind == TurnKind::Customer {
         actions.push(BotAction::SendText {
             to: context.phone_number.clone(),
             body: crate::messages::client_messages()
@@ -784,7 +830,9 @@ fn budget_denied_actions(
                 .clone(),
         });
     }
-    if check == BudgetCheck::DeniedFirstNotice || actor == Actor::Advisor {
+    // En un turno de recuperación siempre se avisa: el caso viene de un handoff
+    // y quedarse callado ahí lo deja colgado sin que nadie se entere.
+    if check == BudgetCheck::DeniedFirstNotice || turn_kind == TurnKind::Resume {
         actions.push(BotAction::NotifyAdvisor {
             body: format!(
                 "⚠️ El caso del cliente {} ({}) alcanzó el límite diario de mensajes con el \
@@ -804,7 +852,7 @@ fn budget_denied_actions(
 /// cacheable — ver `AnthropicClient::send_message`.
 fn build_dynamic_case_state(
     context: &ConversationContext,
-    actor: Actor,
+    turn_kind: TurnKind,
     current_state: &ConversationState,
     customer_notes: Option<&str>,
 ) -> String {
@@ -870,9 +918,11 @@ fn build_dynamic_case_state(
             .join(", ")
     };
 
-    let actor_label = match actor {
-        Actor::Customer => "el CLIENTE",
-        Actor::Advisor => "el ASESOR humano",
+    let actor_label = match turn_kind {
+        TurnKind::Customer => "el CLIENTE",
+        TurnKind::Resume => {
+            "NADIE — estás retomando el caso tú mismo después de un handoff humano"
+        }
     };
 
     // Horario inyectado como dato determinista en CADA turno (item 1): el LLM
@@ -944,7 +994,7 @@ fn dispatch_tool(
     name: &str,
     input: &Value,
     context: &mut ConversationContext,
-    actor: Actor,
+    turn_kind: TurnKind,
     current_state: &ConversationState,
     saved_addresses: &[CustomerAddress],
 ) -> ToolOutcome {
@@ -1045,10 +1095,15 @@ fn dispatch_tool(
         "list_saved_addresses" => list_saved_addresses(id, saved_addresses),
         "select_saved_address" => select_saved_address(id, input, context, saved_addresses),
         "set_manual_delivery_cost" => {
-            if actor != Actor::Advisor {
+            // Solo al retomar un handoff: el valor lo pone un humano, nunca el
+            // cliente. Si el cliente dice "el envío me sale en $5.000", eso no
+            // fija nada.
+            if turn_kind != TurnKind::Resume {
                 return ToolOutcome::Result(error_result(
                     id,
-                    "set_manual_delivery_cost solo se puede usar interpretando un mensaje real del asesor.",
+                    "set_manual_delivery_cost solo se puede usar al retomar un caso que un asesor \
+                     humano atendió. Si el costo del envío no se conoce, llama finalize_checkout y \
+                     el caso pasa a manos de un asesor.",
                 ));
             }
             set_manual_delivery_cost(id, input, context)
@@ -1110,36 +1165,31 @@ fn dispatch_tool(
         }
         "finalize_checkout" => finalize_checkout(id, context),
         "set_payment_method" => {
-            if actor != Actor::Customer {
-                return ToolOutcome::Result(error_result(
-                    id,
-                    "set_payment_method solo se puede usar interpretando un mensaje real del cliente.",
-                ));
-            }
-            // El asesor debe haber confirmado disponibilidad primero (estado
-            // persistido antes de este turno = select_payment_method o
-            // wait_receipt si esta cambiando de metodo). Si el cliente
-            // intenta elegir pago mientras el caso sigue en
-            // ask_delivery_cost, todavia no hay total_final confiable.
+            // El pedido tiene que estar aceptado (estado persistido antes de
+            // este turno = select_payment_method, o wait_receipt si está
+            // cambiando de método). Si se intenta elegir pago antes de eso,
+            // todavía no hay un `total_final` confiable.
             if !matches!(
                 current_state,
                 ConversationState::SelectPaymentMethod | ConversationState::WaitReceipt
             ) {
                 return ToolOutcome::Result(error_result(
                     id,
-                    "Todavía no se puede elegir método de pago: el asesor aún no ha confirmado \
-                     disponibilidad para este pedido. Avísale al cliente que estás esperando esa \
-                     confirmación.",
+                    "Todavía no se puede elegir método de pago: el pedido aún no está aceptado \
+                     (falta el costo del envío o finalize_checkout). Resuelve eso primero.",
                 ));
             }
             set_payment_method(id, input, context)
         }
         "confirm_payment_received" => {
-            if actor != Actor::Advisor {
+            // Solo al retomar un handoff: confirmar un pago exige que un humano
+            // lo haya verificado en el banco. Una imagen de comprobante, o que
+            // el cliente diga "ya pagué", no confirma nada.
+            if turn_kind != TurnKind::Resume {
                 return ToolOutcome::Result(error_result(
                     id,
-                    "confirm_payment_received solo se puede usar interpretando un mensaje real \
-                     del asesor.",
+                    "confirm_payment_received solo se puede usar al retomar un caso que un asesor \
+                     humano verificó. Un comprobante recibido NO es un pago verificado.",
                 ));
             }
             confirm_payment_received(id, context)
@@ -3638,7 +3688,7 @@ mod tests {
             "skip_referral_code",
             &json!({}),
             &mut context,
-            Actor::Customer,
+            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -3929,7 +3979,7 @@ mod tests {
             "modify_confirmed_order",
             &json!({}),
             &mut context,
-            Actor::Customer,
+            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -3959,7 +4009,7 @@ mod tests {
             "start_new_order",
             &json!({}),
             &mut context,
-            Actor::Customer,
+            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -4071,7 +4121,7 @@ mod tests {
             "remember_about_customer",
             &json!({ "note": "Prefiere que le hablen de tú, siempre pide sin licor para eventos familiares." }),
             &mut context,
-            Actor::Customer,
+            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -4103,7 +4153,7 @@ mod tests {
             "remember_about_customer",
             &json!({ "note": "   " }),
             &mut context,
-            Actor::Customer,
+            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -4126,7 +4176,7 @@ mod tests {
             "remember_about_customer",
             &json!({ "note": long_note }),
             &mut context,
-            Actor::Customer,
+            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -4144,7 +4194,7 @@ mod tests {
         let context = test_context();
         let with_notes = build_dynamic_case_state(
             &context,
-            Actor::Customer,
+            TurnKind::Customer,
             &ConversationState::MainMenu,
             Some("Le gusta que le hablen informal."),
         );
@@ -4152,7 +4202,7 @@ mod tests {
 
         let without_notes = build_dynamic_case_state(
             &context,
-            Actor::Customer,
+            TurnKind::Customer,
             &ConversationState::MainMenu,
             None,
         );
@@ -4226,7 +4276,7 @@ mod tests {
         let result = try_handle_receipt_shortcut(
             &mut context,
             &ConversationState::MainMenu,
-            Actor::Customer,
+            TurnKind::Customer,
             &UserInput::ImageMessage("media_123".to_string()),
         );
 
@@ -4310,7 +4360,7 @@ mod tests {
         let result = try_handle_receipt_shortcut(
             &mut context,
             &ConversationState::MainMenu,
-            Actor::Customer,
+            TurnKind::Customer,
             &UserInput::ImageMessage("media_123".to_string()),
         );
 

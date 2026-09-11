@@ -22,7 +22,6 @@ use serde_json::json;
 use sqlx::error::DatabaseError;
 
 use crate::{
-    bot::state_machine::UserInput,
     db::{
         models::ReferralCode,
         queries::{
@@ -217,12 +216,25 @@ pub async fn advisor_send(
         tracing::warn!(error = %err, "failed to bump last_message_at after internal send");
     }
 
+    // Lo que el asesor le escribe al cliente entra a la memoria del agente sin
+    // gastar una llamada al LLM. Es la mitad que faltaba del transcript del
+    // handoff: aquí es donde se dice el valor del envío o que el pago sí llegó,
+    // y es lo que el turno de recuperación va a leer cuando le devuelvan la
+    // conversación (ver `ai::memory::append_transcript_entry`).
+    if let Err(err) = crate::ai::memory::append_transcript_entry(
+        &state.pool,
+        &case_phone,
+        &crate::ai::memory::advisor_transcript_line(&body),
+    )
+    .await
+    {
+        tracing::warn!(error = %err, "failed to record advisor message in agent memory");
+    }
+
     // Fase 2: un humano escribiendo texto libre desde la consola es la señal
     // de toma de control, sin botón ni estado manual — ver
     // docs/internal_advisor_send.md. Ventana deslizante: se reemplaza en cada
-    // envío, no se acumula. Deliberadamente NO se hace lo mismo en
-    // `advisor_reply`: ese endpoint existe para que el bot SIGA el checkout
-    // automático después de que el asesor destraba una pregunta puntual.
+    // envío, no se acumula.
     let takeover_until = Utc::now() + Duration::hours(state.config.advisor_takeover_hours as i64);
     if let Err(err) = set_human_takeover(&state.pool, &case_phone, takeover_until).await {
         tracing::warn!(error = %err, "failed to set human takeover window after internal send");
@@ -240,74 +252,17 @@ pub async fn advisor_send(
     Ok(Json(AdvisorSendResponse { wa_message_id }))
 }
 
-/// Respuesta del asesor **hacia el bot**, no hacia el cliente.
-///
-/// La diferencia con `/internal/advisor/send` es la que decide si un pedido
-/// avanza o se queda colgado:
-///
-/// - `send` manda texto crudo al cliente y **se salta el agente**. Sirve para
-///   hablarle al cliente, no para contestarle al bot.
-/// - `reply` (esto) inyecta el mensaje en el turno de agente del asesor, igual
-///   que si hubiera contestado por WhatsApp. Es lo único que dispara
-///   `set_manual_delivery_cost` (¿cuánto vale el domicilio a este municipio?),
-///   el único paso bloqueante que le queda al flujo de pedido.
-///
-/// El caso viene explícito en `case_phone` — la consola ya sabe en qué
-/// conversación está parada, así que no hace falta el mecanismo de botones que
-/// usa el canal de WhatsApp para adivinar a qué cliente le está respondiendo.
-pub async fn advisor_reply(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    payload: Result<Json<AdvisorSendRequest>, JsonRejection>,
-) -> Result<Json<AdvisorReplyResponse>, ApiError> {
-    authorize(&headers, state.config.internal_api_token.as_deref())?;
-
-    let Json(payload) = payload
-        .map_err(|err| ApiError::InvalidRequest(format!("cuerpo JSON inválido: {err}")))?;
-
-    let case_phone = validate_phone(&payload.case_phone)?;
-    let body = validate_body(&payload.body)?;
-
-    // Se valida ANTES de tomar el turno: el motor asume que el caso existe, y
-    // así la consola recibe un 404 limpio en vez de un error interno.
-    let conversation = get_conversation(&state.pool, &case_phone)
-        .await
-        .map_err(|err| ApiError::Internal(format!("error consultando la conversación: {err}")))?;
-    if conversation.is_none() {
-        return Err(ApiError::UnknownCase);
-    }
-
-    // El turno toma el lock de la conversación por dentro; acá no se toma para
-    // no bloquearse contra sí mismo.
-    crate::engine::process_advisor_turn_for_case(
-        &state,
-        &case_phone,
-        UserInput::TextMessage(body.clone()),
-    )
-    .await
-    .map_err(|err| {
-        tracing::error!(
-            case_phone = %mask_phone(&case_phone),
-            error = %err,
-            "internal advisor reply failed"
-        );
-        ApiError::Internal(format!("el turno del asesor falló: {err}"))
-    })?;
-
-    tracing::info!(
-        case_phone = %mask_phone(&case_phone),
-        sent_by = %payload.sent_by.as_deref().unwrap_or("<desconocido>"),
-        preview = %preview_text(&body),
-        "advisor reply processed from crm-app"
-    );
-
-    Ok(Json(AdvisorReplyResponse { ok: true }))
-}
-
 /// Devuelve la conversación al bot antes de que venza la ventana de
-/// `set_human_takeover` (Fase 2). No manda nada a Meta ni escribe
-/// `message_events` — solo limpia `conversations.human_takeover_until`. Lo
-/// usa el botón "Devolver al bot" de `crm-app`.
+/// `set_human_takeover`. Lo usa el botón "Devolver al bot" de `crm-app`.
+///
+/// Desde v1.27.0 no solo limpia `human_takeover_until`: **dispara el turno de
+/// recuperación**. El bot lee lo que se dijo durante el handoff —el transcript
+/// se fue apendando en vivo a `agent_case_messages`— y sigue el pedido desde
+/// ahí: fija el costo del envío que cotizó el asesor, confirma el pago que
+/// verificó, cierra el checkout. Sin esto, un pedido que pasó por un handoff no
+/// llegaría nunca a `confirmed` y se perdería toda la contabilidad que cuelga
+/// de `confirm_order_bookkeeping` (direcciones guardadas, `/lifecycle`,
+/// analytics de referidos y el evento `Purchase` a la CAPI de Meta).
 pub async fn advisor_release(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -336,6 +291,18 @@ pub async fn advisor_release(
         sent_by = %payload.sent_by.as_deref().unwrap_or("<desconocido>"),
         "conversation released back to bot from crm-app"
     );
+
+    // El turno toma el lock de la conversación por dentro; acá no se toma para
+    // no bloquearse contra sí mismo. Un fallo del agente NO hace fallar la
+    // liberación: la toma de control ya quedó levantada, que es lo que pidió el
+    // asesor, y `degrade_agent_failure` deja el aviso en el carril del asesor.
+    if let Err(err) = crate::engine::process_resume_for_case(&state, &case_phone).await {
+        tracing::error!(
+            case_phone = %mask_phone(&case_phone),
+            error = %err,
+            "resume turn failed after advisor release"
+        );
+    }
 
     Ok(Json(AdvisorReplyResponse { ok: true }))
 }

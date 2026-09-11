@@ -27,7 +27,6 @@ pub fn public_router() -> Router<AppState> {
 pub fn internal_router() -> Router<AppState> {
     Router::new()
         .route("/internal/advisor/send", post(internal::advisor_send))
-        .route("/internal/advisor/reply", post(internal::advisor_reply))
         .route("/internal/advisor/release", post(internal::advisor_release))
         .route("/internal/media/:media_id", get(internal::media))
         .route(

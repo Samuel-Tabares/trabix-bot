@@ -473,6 +473,26 @@ pub async fn list_active_timer_conversations(
     .await
 }
 
+/// Casos en los que el bot se entregó a un humano (`state_data.handoff_reason`)
+/// y la ventana de toma de control ya venció sin que nadie pulsara "Devolver al
+/// bot". El barrido de 60s los retoma solo, para que un handoff olvidado no deje
+/// el pedido colgado para siempre — ver `bot::timers::sweep_expired_handoffs`.
+pub async fn list_expired_handoffs(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT phone_number
+        FROM conversations
+        WHERE human_takeover_until IS NOT NULL
+          AND human_takeover_until <= NOW()
+          AND state_data->>'handoff_reason' IS NOT NULL
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(|(phone,)| phone).collect())
+}
+
 pub async fn reset_conversation(pool: &PgPool, phone_number: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"

@@ -21,7 +21,8 @@ use crate::{
     db::{
         models::{ConversationStateData, HandoffReason},
         queries::{
-            get_conversation, list_active_timer_conversations,
+            clear_human_takeover, get_conversation, list_active_timer_conversations,
+            list_expired_handoffs,
             reset_conversation, update_last_message, update_order_status, update_state,
         },
     },
@@ -292,6 +293,36 @@ pub async fn sweep_expired_timers(state: AppState) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// Retoma los handoffs que nadie devolvió. La ventana de toma de control vence
+/// sola a las `ADVISOR_TAKEOVER_HOURS` (6 por defecto); si el asesor atendió el
+/// caso y se olvidó de pulsar "Devolver al bot", sin esto el pedido se quedaría
+/// sin cotizar o sin confirmar para siempre — y con él toda la contabilidad que
+/// cuelga de `confirm_order_bookkeeping`.
+///
+/// Solo toca los casos con `state_data.handoff_reason` puesto: una toma de
+/// control que un humano inició por su cuenta (escribirle al cliente sin que el
+/// bot lo pidiera) no tiene nada que retomar.
+pub async fn sweep_expired_handoffs(state: AppState) -> Result<(), sqlx::Error> {
+    for phone_number in list_expired_handoffs(&state.pool).await? {
+        tracing::info!(
+            phone = %mask_phone(&phone_number),
+            source = "sweep",
+            "handoff window expired without an explicit release; resuming the case"
+        );
+
+        if let Err(err) = clear_human_takeover(&state.pool, &phone_number).await {
+            tracing::error!(error = %err, "failed to clear the expired takeover window");
+            continue;
+        }
+
+        if let Err(err) = crate::engine::process_resume_for_case(&state, &phone_number).await {
+            tracing::error!(error = %err, "failed to resume the case after an expired handoff");
+        }
+    }
+
+    Ok(())
+}
+
 pub fn spawn_timer_sweeper(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = interval(TIMER_SWEEP_INTERVAL);
@@ -302,6 +333,10 @@ pub fn spawn_timer_sweeper(state: AppState) -> tokio::task::JoinHandle<()> {
 
             if let Err(err) = sweep_expired_timers(state.clone()).await {
                 tracing::error!(error = %err, "failed to sweep expired timers");
+            }
+
+            if let Err(err) = sweep_expired_handoffs(state.clone()).await {
+                tracing::error!(error = %err, "failed to sweep expired handoffs");
             }
         }
     })

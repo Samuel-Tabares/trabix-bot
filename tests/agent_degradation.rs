@@ -20,7 +20,7 @@ use granizado_bot::{
     bot::timers::new_timer_map,
     config::Config,
     db::queries::get_conversation,
-    engine::{process_advisor_turn_for_case, process_customer_input},
+    engine::{process_customer_input, process_resume_for_case},
     messages::{client_messages, set_client_messages, ClientMessages},
     whatsapp::client::WhatsAppClient,
     AppState,
@@ -117,14 +117,14 @@ async fn agent_failure_does_not_propagate_or_change_state() {
 
 /// Regresión: `degrade_agent_failure` solía notificar al cliente SOLO cuando
 /// el turno que falló era del cliente. Si el turno que fallaba era el del
-/// asesor (`replyAsAdvisor` desde `crm-app`, p. ej. destrabando un caso
-/// `needs_human`), el cliente se quedaba sin ningún mensaje nuevo — el caso
-/// de Santiago (573136356011) en producción el 2026-08-03. Este test cubre
-/// justo ese camino: un turno de asesor que falla también debe dejar el
-/// mensaje fijo de `llm_failure_customer` en la fila del cliente.
+/// recuperación (el asesor devuelve la conversación desde `crm-app` tras un
+/// handoff), el cliente se quedaba sin ningún mensaje nuevo — el caso de
+/// Santiago (573136356011) en producción el 2026-08-03. Este test cubre justo
+/// ese camino: un turno de recuperación que falla también debe dejar el mensaje
+/// fijo de `llm_failure_customer` en la fila del cliente.
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL and a reachable PostgreSQL instance"]
-async fn advisor_turn_failure_still_notifies_the_customer() {
+async fn resume_turn_failure_still_notifies_the_customer() {
     let state = setup_state().await;
     let phone = unique_phone();
 
@@ -154,16 +154,12 @@ async fn advisor_turn_failure_still_notifies_the_customer() {
     .await
     .expect("degradation path should not propagate the agent error");
 
-    // El asesor intenta destrabar el caso desde crm-app (`replyAsAdvisor`):
-    // también pasa por el motor de agente, también falla con las mismas
-    // credenciales de prueba, y turn_actor == "advisor" esta vez.
-    process_advisor_turn_for_case(
-        &state,
-        &phone,
-        UserInput::TextMessage("tranqui, ya te ayudo".to_string()),
-    )
-    .await
-    .expect("advisor degradation path should not propagate the agent error");
+    // El asesor devuelve la conversación al bot desde crm-app: el turno de
+    // recuperación también pasa por el motor de agente, también falla con las
+    // mismas credenciales de prueba, y turn_actor == "resume" esta vez.
+    process_resume_for_case(&state, &phone)
+        .await
+        .expect("resume degradation path should not propagate the agent error");
 
     let fallback_body = client_messages().agent.llm_failure_customer.clone();
     let client_fallback_count: i64 = sqlx::query_scalar(
@@ -185,6 +181,6 @@ async fn advisor_turn_failure_still_notifies_the_customer() {
     assert_eq!(
         client_fallback_count, 2,
         "the customer must get the generic fallback for BOTH the customer-turn \
-         failure and the advisor-turn failure — not just the first one"
+         failure and the resume-turn failure — not just the first one"
     );
 }

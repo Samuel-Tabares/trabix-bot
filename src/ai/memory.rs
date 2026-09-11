@@ -6,7 +6,7 @@
 
 use sqlx::{types::Json, PgPool};
 
-use crate::ai::client::Message;
+use crate::ai::client::{ContentBlock, Message};
 
 pub async fn load_messages(pool: &PgPool, phone_number: &str) -> Result<Vec<Message>, sqlx::Error> {
     let row: Option<(Json<Vec<Message>>,)> = sqlx::query_as(
@@ -50,4 +50,44 @@ pub async fn clear_messages(pool: &PgPool, phone_number: &str) -> Result<(), sql
         .await?;
 
     Ok(())
+}
+
+/// Apenda una linea de transcript a la memoria del agente SIN llamar al LLM.
+///
+/// Existe por el handoff humano: mientras `human_takeover_until` esta en el
+/// futuro el bot no corre turnos (`engine::process_customer_input` sale
+/// temprano), asi que ni lo que dice el cliente ni lo que le escribe el asesor
+/// entraban a `agent_case_messages`. Al devolverle la conversacion, el bot se
+/// encontraba un hueco justo donde se resolvio lo importante -- el valor del
+/// envio, la verificacion del pago.
+///
+/// Se guarda como un mensaje `user`, que es el unico rol que el turno de
+/// recuperacion puede intercalar sin romper los pares `tool_use`/`tool_result`
+/// del historial (ver `agent::llm_window_start`). El marcador de quien hablo lo
+/// escribe el sistema, nunca el cliente: es lo que sostiene la regla
+/// anti-suplantacion del prompt.
+pub async fn append_transcript_entry(
+    pool: &PgPool,
+    phone_number: &str,
+    text: &str,
+) -> Result<(), sqlx::Error> {
+    let mut messages = load_messages(pool, phone_number).await?;
+    messages.push(Message {
+        role: "user".to_string(),
+        content: vec![ContentBlock::Text {
+            text: text.to_string(),
+        }],
+    });
+    save_messages(pool, phone_number, &messages).await
+}
+
+/// Marcador de un mensaje que el ASESOR le escribio al cliente durante un
+/// handoff. Lo pone el sistema en `routes::internal::advisor_send`.
+pub fn advisor_transcript_line(body: &str) -> String {
+    format!("[Durante el handoff, el ASESOR le escribio al cliente]: {body}")
+}
+
+/// Marcador de un mensaje que el CLIENTE mando mientras el bot estaba pausado.
+pub fn client_during_handoff_line(body: &str) -> String {
+    format!("[Durante el handoff, el CLIENTE escribio]: {body}")
 }

@@ -10,7 +10,7 @@ use crate::{
     bot::{
         pricing::calcular_pedido,
         state_machine::{
-            transition, transition_advisor, BotAction, ConversationContext, ConversationState,
+            transition, BotAction, ConversationContext, ConversationState,
             ImageAsset, TimerType, UserInput,
         },
         states::data_collect,
@@ -63,6 +63,21 @@ pub async fn process_customer_input(
                 until = %until,
                 "conversación pausada por toma de control humana; se omite turno de agente"
             );
+            // Lo que el cliente diga durante la pausa igual entra a la memoria
+            // del agente, sin gastar una llamada al LLM: si no, al devolverle la
+            // conversación el bot se encuentra un hueco justo donde se resolvió
+            // lo importante (ver `ai::memory::append_transcript_entry`).
+            if let Err(err) = crate::ai::memory::append_transcript_entry(
+                &state.pool,
+                &phone,
+                &crate::ai::memory::client_during_handoff_line(
+                    &crate::ai::agent::render_inbound_body(&input),
+                ),
+            )
+            .await
+            {
+                tracing::warn!(error = %err, "failed to record client message during handoff");
+            }
             update_last_message(&state.pool, &phone).await?;
             return Ok(());
         }
@@ -210,7 +225,6 @@ const CHANNEL_CLIENT: &str = "client";
 const CHANNEL_ADVISOR: &str = "advisor";
 const ACTOR_CLIENT: &str = "client";
 const ACTOR_BOT: &str = "bot";
-const ACTOR_ADVISOR: &str = "advisor";
 
 fn outbound_recipient(action: &BotAction) -> Option<&str> {
     match action {
@@ -365,95 +379,75 @@ async fn log_outbound_text(state: &AppState, case_phone: &str, to: &str, body: &
     }
 }
 
-/// El turno del asesor sobre un caso concreto. Único caller: `crm-app`
-/// (`POST /internal/advisor/reply`, ver `routes/internal.rs::advisor_reply`),
-/// que ya sabe en qué conversación está parada y manda el `case_phone`
-/// explícito — el asesor no tiene canal de WhatsApp propio (ver
-/// `docs/CLEANUP_deterministic_engine.md` §3).
+/// El asesor cerró el handoff y le devuelve la conversación al bot, o la ventana
+/// de toma de control venció sola. El bot retoma el caso leyendo lo que se dijo
+/// mientras estuvo afuera (`ai::agent::run_resume_turn`) y sigue el pedido desde
+/// ahí: fija el costo del envío, confirma el pago, cierra el checkout.
 ///
-/// En los dos casos el mensaje entra al **motor de agente**, no directo al
-/// cliente. Eso importa: `set_manual_delivery_cost` (el costo de domicilio de
-/// un municipio fuera de lista) es el único paso bloqueante del flujo de
-/// pedido que sigue en pie, y solo existe si el agente interpreta la
-/// respuesta del asesor. Mandarle texto crudo al cliente
-/// (`POST /internal/advisor/send`) se salta el agente y deja el pedido
-/// colgado esperando una respuesta que nunca llega.
-pub async fn process_advisor_turn_for_case(
+/// Reemplaza a `process_advisor_turn_for_case` (v1.27.0). El carril en el que el
+/// asesor le contestaba al bot ya no existe: el asesor solo le habla al cliente.
+pub async fn process_resume_for_case(
     state: &AppState,
     target_phone: &str,
-    input: UserInput,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let state = state.clone();
-    let advisor_phone = state.config.advisor_phone.clone();
     let target_phone = target_phone.to_string();
 
     let _case_lock = crate::lock_conversation(&state.conversation_locks, &target_phone).await;
 
-    log_inbound_event(&state, &target_phone, CHANNEL_ADVISOR, ACTOR_ADVISOR, &input).await;
-
-    // `crm-app` (el único caller) ya valida que el caso existe antes de
-    // llamar acá (ver `routes/internal.rs::advisor_reply`), así que esto solo
-    // cubre una carrera improbable (el caso se resetea entre esa validación y
-    // este turno) — no hay a quién notificar por WhatsApp, ya no existe ese
-    // canal.
     let Some(client_conversation) = get_conversation(&state.pool, &target_phone).await? else {
         tracing::warn!(
             target_phone = %mask_phone(&target_phone),
-            "advisor target conversation no longer exists"
+            "conversation to resume no longer exists"
         );
-        clear_advisor_session(&state, &advisor_phone).await?;
         return Ok(());
     };
 
     let (current_state, mut context) =
         rehydrate_client_conversation(&state, &client_conversation).await?;
-    let (new_state, actions) = if should_use_agent(&current_state) {
-        let saved_addresses = list_customer_addresses(&state.pool, &target_phone)
-            .await
-            .unwrap_or_default();
-        let customer_notes = get_customer_notes(&state.pool, &target_phone)
-            .await
-            .unwrap_or_default();
-        match crate::ai::agent::run_advisor_turn(
-            &state,
-            &mut context,
-            &current_state,
-            &input,
-            &saved_addresses,
-            customer_notes.as_deref(),
-        )
+
+    let saved_addresses = list_customer_addresses(&state.pool, &target_phone)
         .await
-        {
-            Ok(result) => result,
-            Err(err) => {
-                return degrade_agent_failure(
-                    &state,
-                    &target_phone,
-                    &context,
-                    &current_state,
-                    &input,
-                    "advisor",
-                    err,
-                )
-                .await;
-            }
+        .unwrap_or_default();
+    let customer_notes = get_customer_notes(&state.pool, &target_phone)
+        .await
+        .unwrap_or_default();
+
+    let (new_state, actions) = match crate::ai::agent::run_resume_turn(
+        &state,
+        &mut context,
+        &current_state,
+        &saved_addresses,
+        customer_notes.as_deref(),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            // El caso viene de un handoff: si el agente falla acá, el pedido
+            // queda a medias y nadie se entera. `degrade_agent_failure` deja el
+            // estado intacto y avisa por el carril del asesor.
+            return degrade_agent_failure(
+                &state,
+                &target_phone,
+                &context,
+                &current_state,
+                &UserInput::TextMessage("[retomando el caso tras un handoff]".to_string()),
+                "resume",
+                err,
+            )
+            .await;
         }
-    } else {
-        transition_advisor(&current_state, &input, &mut context)?
     };
-    let transition_resets_conversation = actions
-        .iter()
-        .any(|action| matches!(action, BotAction::ResetConversation { .. }));
+
     tracing::info!(
-        actor = "advisor",
-        source = "crm-app",
+        source = "resume",
         target_phone = %mask_phone(&target_phone),
         from_state = %current_state.as_storage_key(),
         to_state = %new_state.as_storage_key(),
         action_count = actions.len(),
         action_kinds = %summarize_action_kinds(&actions),
-        reset_requested = transition_resets_conversation,
-        "processed advisor transition"
+        "resumed the case after a human handoff"
     );
 
     update_customer_data(
@@ -470,8 +464,8 @@ pub async fn process_advisor_turn_for_case(
         client_conversation.id,
         &mut context,
         &actions,
-        Some(target_phone.as_str()),
-        Some(&new_state),
+        None,
+        None,
     )
     .await?;
 
