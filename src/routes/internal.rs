@@ -22,7 +22,7 @@ use serde_json::json;
 use sqlx::error::DatabaseError;
 
 use crate::{
-    bot::{state_machine::UserInput, timers::cancel_conversation_abandon_after_handoff},
+    bot::state_machine::UserInput,
     db::{
         models::ReferralCode,
         queries::{
@@ -320,7 +320,7 @@ pub async fn advisor_release(
 
     let case_phone = validate_phone(&payload.case_phone)?;
 
-    let Some(conversation) = get_conversation(&state.pool, &case_phone)
+    let Some(_conversation) = get_conversation(&state.pool, &case_phone)
         .await
         .map_err(|err| ApiError::Internal(format!("error consultando la conversación: {err}")))?
     else {
@@ -330,16 +330,6 @@ pub async fn advisor_release(
     clear_human_takeover(&state.pool, &case_phone)
         .await
         .map_err(|err| ApiError::Internal(format!("error liberando la conversación: {err}")))?;
-
-    // El asesor ya atendió a este cliente a mano durante la toma de control,
-    // así que el bot no debe preguntarle "¿sigues por ahí?" por esta ausencia
-    // -- ver `cancel_conversation_abandon_after_handoff`.
-    if let Err(err) = cancel_conversation_abandon_after_handoff(&state, &conversation).await {
-        tracing::warn!(
-            error = %err,
-            "failed to cancel customer inactivity reminder after advisor release"
-        );
-    }
 
     tracing::info!(
         case_phone = %mask_phone(&case_phone),

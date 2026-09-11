@@ -203,7 +203,6 @@ contact_timeout_body = "El asesor no está disponible en este momento 😔 Puede
 contact_timeout_leave_message_button = "Dejar mensaje"
 contact_timeout_menu_button = "Menú"
 relay_timeout_text = "La conversación con el asesor se cerró por inactividad ⏳"
-agent_inactivity_nudge_text = "¿Sigues por ahí? 😊 Cuando quieras seguimos con tu pedido, escríbeme y continuamos."
 
 [agent]
 welcome = """¡Hola! 👋 bienvenid@ a Trabix Granizados 🍧

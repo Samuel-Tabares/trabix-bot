@@ -206,8 +206,6 @@ graph TD
         Timers --> ReceiptExpire["expire_receipt_timer\nCliente: no llego comprobante\nBotones Cambiar pago / Cancelar"]
         Timers --> AdvisorExpire["expire_advisor_timer\nPedido inmediato: auto-No puedo a los 5m\nContacto asesor: Dejar mensaje / Menu\nAdvisor-detail waits: hard reset 30m\nScheduled ask_delivery_cost: 23h"]
         Timers --> RelayExpire["expire_relay_timer\nCliente: conversacion cerrada por inactividad"]
-        Timers --> IdleReminder["conversation_abandon 2m\nReenvia el prompt actual una sola vez"]
-        Timers --> IdleReset["conversation_abandon 35m\nNotifica reinicio y resetea a MainMenu"]
         Timers --> Restore["restore_pending_timers al boot\nrehidrata solo timers aun activos\ncatch-up silencioso para expirados\nsin mensajes salientes por reinicio"]
     end
 

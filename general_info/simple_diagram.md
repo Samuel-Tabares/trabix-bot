@@ -136,12 +136,6 @@ graph TD
     RELAY_END --> READY
     READY --> B
 
-    B -. inactividad cliente .-> IDLE["⏱️ Inactividad genérica<br/>─────────────────<br/>Recordatorio: 2 min<br/>Reset: 35 min -> Main Menu"]
-    REVISION -. inactividad cliente .-> IDLE
-    CONF_CONTACTO -. inactividad cliente .-> IDLE
-    PAGO -. inactividad cliente .-> IDLE
-    COMPRO -. inactividad cliente .-> IDLE
-    IDLE -->|35 min| READY
     %% ============================================
     %% ESTILOS
     %% ============================================
@@ -192,4 +186,3 @@ graph TD
     style RELAY_END fill:#4caf50,stroke:#66bb6a,color:#fff
     style READY fill:#667eea,stroke:#7b9bff,color:#fff
     style MENU fill:#00bcd4,stroke:#26c6da,color:#fff
-    style IDLE fill:#ff9800,stroke:#ffb74d,color:#fff

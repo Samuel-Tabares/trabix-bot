@@ -716,43 +716,24 @@ Timers de runtime (consolidados en FASE 5):
   `ask_delivery_cost`): `5 minutos` unificados
 - relay: `30 minutos` (solo aplica al flujo determinista legado; el modo
   agente no usa relay)
-- inactividad generica del cliente:
-  - recordatorio a los `2 minutos`, una sola vez
-  - no hay reinicio automatico por inactividad; el bot queda esperando input
+- inactividad generica del cliente: **eliminada (v1.26.0, 2026-09-11)**
 
-### Inactividad Generica Del Cliente
+### Inactividad Generica Del Cliente — ELIMINADA
 
-La inactividad generica aplica solo a estados de entrada del cliente, por ejemplo:
+El recordatorio de "?sigues por ahi?" a los 2 minutos ya no existe. Se borro
+entero: `TimerType::ConversationAbandon`, `src/bot/inactivity.rs`, los campos
+`conversation_abandon_*` del `state_data` y el texto
+`agent_inactivity_nudge_text`. Si el cliente se queda callado, el bot
+simplemente espera; no le escribe nada por su cuenta.
 
-- `main_menu`
-- `view_menu`
-- `when_delivery`
-- `select_date`
-- `collect_name`
-- `select_type`
-- `review_checkout`
-- `select_payment_method`
-- `confirm_address`
-- `select_customer_data_field`
-- `edit_customer_name`
-- `edit_customer_phone`
-- `edit_customer_address`
-- `contact_advisor_name`
-- `leave_message`
+Motivo: el timer se re-armaba en CADA turno del cliente, asi que en una
+conversacion normal (el cliente tarda 2-3 min en anotar sabores) disparaba una
+y otra vez. En el caso Graja del 2026-09-11 salio 7 veces en 20 minutos,
+incluso mientras el cliente estaba escribiendo y durante una toma de control
+del asesor.
 
-No aplica a estados ya gobernados por timers propios, como:
-
-- `wait_receipt`
-- `wait_advisor_response`
-- `wait_advisor_contact`
-- `relay_mode`
-
-Comportamiento actual:
-
-- se arma solo por una interaccion real del cliente
-- a los `2 minutos` reenvia el prompt actual una sola vez
-- despues del recordatorio no hay reset: la conversacion queda esperando al
-  cliente indefinidamente y no se dispara nada mas hasta que escriba de nuevo
+Los unicos timers que quedan son los que si bloquean el pedido: comprobante,
+espera de asesor, relay y reapertura de horario.
 
 ### Reinicio Del Servicio
 
@@ -808,27 +789,17 @@ Mientras `human_takeover_until` está en el futuro:
 
 - `engine::process_customer_input` no llama al agente para ese cliente (el mensaje entrante sigue
   quedando en `message_events`, solo que el bot no lo procesa ni le agenda timers nuevos).
-- Los 4 `expire_*_with_source` de `bot::timers` (`advisor`, `relay`, `conversation_abandon`,
-  `business_hours`) y la reconciliación de timers vencidos al boot se vuelven no-op.
+- Los `expire_*_with_source` de `bot::timers` (`advisor`, `relay`, `business_hours`) y la
+  reconciliación de timers vencidos al boot se vuelven no-op.
 
 `POST /internal/advisor/release` la limpia antes de tiempo (botón "Devolver al bot" en `crm-app`).
 
-**Devolución al bot (v1.25.2).** `conversation_abandon_started_at`/`reminder_sent` solo se tocan en
-un turno del cliente, así que quedan congelados desde ANTES de que un asesor entrara. Sin más,
-apenas `human_takeover_until` deja de estar en el futuro (por `advisor_release` o porque venció
-sola) ese reloj viejo ya está vencido y dispara el "¿sigues por ahí?" al toque, aunque el asesor
-acabara de atender al cliente a mano segundos antes (visto en vivo 2026-09-06/07, cliente Graja:
-último mensaje del asesor 19:37, recordatorio automático 01:38). Como un humano ya gestionó al
-cliente durante la toma de control, el recordatorio automático no aporta nada para ESA ausencia:
-`cancel_conversation_abandon_after_handoff` (`bot::timers`) apaga el recordatorio (limpia
-`conversation_abandon_started_at`/`reminder_sent`, igual que
-`bot::inactivity::clear_customer_inactivity_tracking`) en el momento exacto en que el control vuelve
-al bot — desde `advisor_release` (liberación explícita) y desde
-`expire_conversation_abandon_with_source` (primer tick del sweep que ve la ventana ya vencida sin
-liberación explícita; ahí mismo limpia `human_takeover_until` para que sea una transición de una
-sola vez). Si el cliente vuelve a escribirle al bot más adelante y luego se queda callado,
-`sync_customer_inactivity_timer` arma un recordatorio nuevo normal para ese episodio de ausencia —
-esto solo apaga el que quedaba pendiente de ANTES de la toma de control.
+**Devolución al bot (v1.26.0).** Ya no hay nada que apagar al devolver el caso: el recordatorio de
+"¿sigues por ahí?" se eliminó por completo, con él el `cancel_conversation_abandon_after_handoff`
+que corría desde `advisor_release`, y con él también la limpieza oportunista de
+`human_takeover_until` que hacía el sweep. Una ventana de toma de control que vence sola deja su
+timestamp viejo en la fila; no importa, porque todo lector (bot y `crm-app`) la compara contra
+`now()`. `POST /internal/advisor/release` sigue siendo la única vía que la limpia de verdad.
 
 ### `state_data`
 
@@ -860,8 +831,6 @@ Campos mas importantes hoy:
 - `receipt_timer_expired`
 - `pending_has_liquor`
 - `pending_flavor`
-- `conversation_abandon_started_at`
-- `conversation_abandon_reminder_sent`
 
 ### Tabla `order_items`
 

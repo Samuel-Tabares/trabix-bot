@@ -8,7 +8,6 @@ use serde_json::json;
 
 use crate::{
     bot::{
-        inactivity::sync_customer_inactivity_timer,
         pricing::calcular_pedido,
         state_machine::{
             transition, transition_advisor, BotAction, ConversationContext, ConversationState,
@@ -107,7 +106,7 @@ pub async fn process_customer_input(
         return Ok(());
     }
 
-    let (new_state, mut actions) = if should_use_agent(&current_state) {
+    let (new_state, actions) = if should_use_agent(&current_state) {
         let saved_addresses = list_customer_addresses(&state.pool, &phone).await.unwrap_or_default();
         let customer_notes = get_customer_notes(&state.pool, &phone).await.unwrap_or_default();
         match crate::ai::agent::run_customer_turn(
@@ -140,15 +139,6 @@ pub async fn process_customer_input(
     let transition_resets_conversation = actions
         .iter()
         .any(|action| matches!(action, BotAction::ResetConversation { .. }));
-    let order_just_confirmed = actions.iter().any(
-        |action| matches!(action, BotAction::UpsertDraftOrder { status } if status == "confirmed"),
-    );
-    actions.extend(sync_customer_inactivity_timer(
-        &new_state,
-        &mut context,
-        transition_resets_conversation,
-        order_just_confirmed,
-    ));
     tracing::info!(
         actor = "customer",
         phone = %mask_phone(&phone),
@@ -417,7 +407,7 @@ pub async fn process_advisor_turn_for_case(
 
     let (current_state, mut context) =
         rehydrate_client_conversation(&state, &client_conversation).await?;
-    let (new_state, mut actions) = if should_use_agent(&current_state) {
+    let (new_state, actions) = if should_use_agent(&current_state) {
         let saved_addresses = list_customer_addresses(&state.pool, &target_phone)
             .await
             .unwrap_or_default();
@@ -454,15 +444,6 @@ pub async fn process_advisor_turn_for_case(
     let transition_resets_conversation = actions
         .iter()
         .any(|action| matches!(action, BotAction::ResetConversation { .. }));
-    let order_just_confirmed = actions.iter().any(
-        |action| matches!(action, BotAction::UpsertDraftOrder { status } if status == "confirmed"),
-    );
-    actions.extend(sync_customer_inactivity_timer(
-        &new_state,
-        &mut context,
-        transition_resets_conversation,
-        order_just_confirmed,
-    ));
     tracing::info!(
         actor = "advisor",
         source = "crm-app",
@@ -837,18 +818,6 @@ pub async fn execute_actions(
                             TimerType::RelayInactivity => {
                                 if let Err(err) = expire_relay_timer(app_state, phone).await {
                                     tracing::error!(error = %err, "failed to expire relay timer");
-                                }
-                            }
-                            TimerType::ConversationAbandon => {
-                                if let Err(err) = crate::bot::timers::expire_conversation_abandon(
-                                    app_state, phone,
-                                )
-                                .await
-                                {
-                                    tracing::error!(
-                                        error = %err,
-                                        "failed to expire conversation inactivity timer"
-                                    );
                                 }
                             }
                             TimerType::BusinessHoursReopen => {

@@ -14,16 +14,14 @@ use tokio::time::{interval, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ai::agent::checkout_precondition_error,
     bot::{
-        inactivity::CONVERSATION_REMINDER_TIMEOUT,
         state_machine::{BotAction, ConversationContext, ConversationState, TimerType},
         states::advisor,
     },
     db::{
-        models::{Conversation, ConversationStateData},
+        models::ConversationStateData,
         queries::{
-            clear_human_takeover, get_conversation, list_active_timer_conversations,
+            get_conversation, list_active_timer_conversations,
             reset_conversation, update_last_message, update_order_status, update_state,
         },
     },
@@ -48,7 +46,6 @@ static NEXT_TIMER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 pub enum TimerRule {
     AdvisorResponse,
     ReceiptUpload,
-    ConversationReminder,
 }
 
 impl TimerRule {
@@ -56,7 +53,6 @@ impl TimerRule {
         match self {
             Self::AdvisorResponse => ADVISOR_RESPONSE_TIMEOUT,
             Self::ReceiptUpload => RECEIPT_TIMEOUT,
-            Self::ConversationReminder => CONVERSATION_REMINDER_TIMEOUT,
         }
     }
 }
@@ -98,7 +94,6 @@ pub fn effective_duration_for_start_timer(
 fn timer_rule_for_start_timer(timer_type: &TimerType) -> Option<TimerRule> {
     match timer_type {
         TimerType::ReceiptUpload => Some(TimerRule::ReceiptUpload),
-        TimerType::ConversationAbandon => Some(TimerRule::ConversationReminder),
         TimerType::AdvisorResponse => Some(TimerRule::AdvisorResponse),
         TimerType::RelayInactivity => None,
         // No se arma vía StartTimer: se resuelve puramente por el sweep de
@@ -205,7 +200,6 @@ enum BootExpirationAction {
         clear_advisor_session: bool,
         mark_manual_followup: bool,
     },
-    MarkInactivityReminderSilently,
     None,
 }
 
@@ -263,17 +257,6 @@ async fn reconcile_boot_expired_timer(
             if clear_advisor_session {
                 clear_bound_advisor_session(&state, &state.config.advisor_phone).await?;
             }
-        }
-        BootExpirationAction::MarkInactivityReminderSilently => {
-            let mut state_data = conversation.state_data.0.clone();
-            state_data.conversation_abandon_reminder_sent = true;
-            update_state(
-                &state.pool,
-                &conversation.phone_number,
-                &conversation.state,
-                &state_data,
-            )
-            .await?;
         }
         BootExpirationAction::None => {}
     }
@@ -380,26 +363,6 @@ fn timer_recovery(
 ) -> Option<TimerRecovery> {
     let state_data = &conversation.state_data.0;
 
-    if customer_inactivity_state(conversation.state.as_str())
-        && !order_already_gestioned(
-            &conversation.phone_number,
-            conversation.customer_name.clone(),
-            conversation.customer_phone.clone(),
-            conversation.delivery_address.clone(),
-            state_data,
-        )
-    {
-        let Some(started_at) = state_data.conversation_abandon_started_at else {
-            return None;
-        };
-        if state_data.conversation_abandon_reminder_sent {
-            return None;
-        }
-        let timeout = TimerRule::ConversationReminder.default_duration();
-
-        return timer_recovery_for(TimerType::ConversationAbandon, timeout, started_at, now);
-    }
-
     if let Some(timeout) = advisor_timeout_for_state(conversation.state.as_str()) {
         if state_data.advisor_timer_expired {
             return None;
@@ -502,30 +465,6 @@ fn boot_expiration_action(
                 BootExpirationAction::None
             }
         }
-        TimerType::ConversationAbandon => {
-            if !customer_inactivity_state(conversation.state.as_str())
-                || order_already_gestioned(
-                    &conversation.phone_number,
-                    conversation.customer_name.clone(),
-                    conversation.customer_phone.clone(),
-                    conversation.delivery_address.clone(),
-                    state_data,
-                )
-            {
-                return BootExpirationAction::None;
-            }
-
-            if state_data.conversation_abandon_started_at.is_none()
-                || state_data.conversation_abandon_reminder_sent
-            {
-                return BootExpirationAction::None;
-            }
-
-            // La ventana del recordatorio venció mientras el bot estaba
-            // apagado: se marca en silencio (en boot no se envían mensajes)
-            // y no hay reset por inactividad.
-            BootExpirationAction::MarkInactivityReminderSilently
-        }
         // No-op a propósito: en boot no se envían mensajes reales (ver los
         // otros brazos), y acá SÍ hace falta mandar mensajes de verdad
         // (avisarle al cliente que su pedido quedó confirmado). Se deja para
@@ -556,9 +495,6 @@ async fn expire_timer_now(
         }
         TimerType::RelayInactivity => {
             expire_relay_timer_with_source(state, phone_number, source).await
-        }
-        TimerType::ConversationAbandon => {
-            expire_conversation_abandon_with_source(state, phone_number, source).await
         }
         TimerType::BusinessHoursReopen => {
             expire_business_hours_timer_with_source(state, phone_number, source).await
@@ -833,87 +769,6 @@ async fn expire_relay_timer_with_source(
     Ok(())
 }
 
-pub async fn expire_conversation_abandon(
-    state: AppState,
-    phone_number: String,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    expire_conversation_abandon_with_source(state, phone_number, TimerSource::Runtime).await
-}
-
-async fn expire_conversation_abandon_with_source(
-    state: AppState,
-    phone_number: String,
-    source: TimerSource,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let Some(conversation) = get_conversation(&state.pool, &phone_number).await? else {
-        return Ok(());
-    };
-
-    if human_takeover_active(conversation.human_takeover_until) {
-        return Ok(());
-    }
-
-    // La toma de control ya vencio y nadie la libero a mano: es la primera
-    // vuelta del sweep (corre cada 60s) que la ve asi. Un asesor ya atendio
-    // este caso a mano durante la toma de control (visto en vivo
-    // 2026-09-06/07, cliente Graja: ultimo mensaje del asesor a las 19:37,
-    // "?sigues por ahi?" automatico a la 01:38), asi que no hace falta que el
-    // bot pregunte si sigue ahi por ESTA ausencia -- se cancela el
-    // recordatorio en vez de dispararlo o de solo posponerlo. Es una
-    // transicion de una sola vez: al limpiar `human_takeover_until` esta rama
-    // no se repite en el siguiente tick.
-    if conversation.human_takeover_until.is_some() {
-        clear_human_takeover(&state.pool, &phone_number).await?;
-        cancel_conversation_abandon_after_handoff(&state, &conversation).await?;
-        return Ok(());
-    }
-
-    if !customer_inactivity_state(&conversation.state)
-        || order_already_gestioned(
-            &conversation.phone_number,
-            conversation.customer_name.clone(),
-            conversation.customer_phone.clone(),
-            conversation.delivery_address.clone(),
-            &conversation.state_data.0,
-        )
-    {
-        return Ok(());
-    }
-
-    let mut state_data = conversation.state_data.0;
-    let Some(started_at) = state_data.conversation_abandon_started_at else {
-        return Ok(());
-    };
-
-    // Recordatorio una sola vez; después el bot sigue esperando input sin
-    // resetear la conversación (FASE 5: no existe reset por inactividad).
-    if !state_data.conversation_abandon_reminder_sent {
-        // Texto suave y neutro: la conversación la retoma el LLM, que no debe
-        // recibir botones/listas reinyectados (ver docs/canary-fixes-2026-07-19.md item 3).
-        let actions = vec![BotAction::SendText {
-            to: phone_number.clone(),
-            body: client_messages()
-                .timers_customer
-                .agent_inactivity_nudge_text
-                .clone(),
-        }];
-        tracing::info!(
-            phone = %mask_phone(&phone_number),
-            timer_type = %TimerType::ConversationAbandon.as_str(),
-            state = %conversation.state,
-            source = %source.as_str(),
-            "sending inactivity reminder"
-        );
-        dispatch_timer_actions(&state, &phone_number, &actions).await?;
-
-        state_data.conversation_abandon_started_at = Some(started_at);
-        state_data.conversation_abandon_reminder_sent = true;
-        update_state(&state.pool, &phone_number, &conversation.state, &state_data).await?;
-    }
-
-    Ok(())
-}
-
 /// No se arma vía `BotAction::StartTimer` (`BusinessHoursReopen` no tiene
 /// duración fija, ver `timer_rule_for_start_timer`), pero se expone igual con
 /// el mismo shape que los demás `expire_*` para que `engine.rs` pueda cubrir
@@ -1032,33 +887,6 @@ fn timer_recovery_states() -> Vec<&'static str> {
         "wait_advisor_hour_decision",
         "wait_advisor_confirm_hour",
         "relay_mode",
-        "main_menu",
-        "view_menu",
-        "view_schedule",
-        "when_delivery",
-        "out_of_hours",
-        "select_date",
-        "select_time",
-        "confirm_schedule",
-        "collect_name",
-        "collect_phone",
-        "collect_address",
-        "select_type",
-        "select_flavor",
-        "select_quantity",
-        "add_more",
-        "confirm_address",
-        "select_customer_data_field",
-        "edit_customer_name",
-        "edit_customer_phone",
-        "edit_customer_address",
-        "review_checkout",
-        "select_payment_method",
-        "offer_hour_to_client",
-        "wait_client_hour",
-        "contact_advisor_name",
-        "contact_advisor_phone",
-        "leave_message",
     ]
 }
 
@@ -1091,106 +919,6 @@ fn advisor_timeout_kind(state: &str) -> Option<AdvisorTimeoutKind> {
 
 fn advisor_timeout_for_state(state: &str) -> Option<Duration> {
     advisor_timeout_kind(state).map(|_| TimerRule::AdvisorResponse.default_duration())
-}
-
-/// Apaga el recordatorio de "?sigues por ahi?" para el cliente que un asesor
-/// acaba de soltar -- por boton explicito (`routes::internal::advisor_release`)
-/// o porque la ventana de `set_human_takeover` vencio sola
-/// (`expire_conversation_abandon_with_source`). El asesor ya atendio al
-/// cliente a mano durante la toma de control, asi que no hace falta que el
-/// bot le pregunte si sigue ahi por esta ausencia -- ver
-/// `bot::inactivity::clear_customer_inactivity_tracking`, que hace lo mismo
-/// para el caso de "pedido ya gestionado", solo que aca el disparador es que
-/// un humano lo cerro a mano. Si el cliente vuelve a escribirle al bot mas
-/// adelante y luego se queda callado, `sync_customer_inactivity_timer` arma
-/// un recordatorio nuevo normal para ESE episodio de ausencia.
-pub(crate) async fn cancel_conversation_abandon_after_handoff(
-    state: &AppState,
-    conversation: &Conversation,
-) -> Result<(), sqlx::Error> {
-    if !customer_inactivity_state(&conversation.state)
-        || order_already_gestioned(
-            &conversation.phone_number,
-            conversation.customer_name.clone(),
-            conversation.customer_phone.clone(),
-            conversation.delivery_address.clone(),
-            &conversation.state_data.0,
-        )
-    {
-        return Ok(());
-    }
-
-    let mut state_data = conversation.state_data.0.clone();
-    state_data.conversation_abandon_started_at = None;
-    state_data.conversation_abandon_reminder_sent = false;
-    update_state(
-        &state.pool,
-        &conversation.phone_number,
-        &conversation.state,
-        &state_data,
-    )
-    .await
-}
-
-fn customer_inactivity_state(state: &str) -> bool {
-    matches!(
-        state,
-        "main_menu"
-            | "view_menu"
-            | "view_schedule"
-            | "when_delivery"
-            | "out_of_hours"
-            | "select_date"
-            | "select_time"
-            | "confirm_schedule"
-            | "collect_name"
-            | "collect_phone"
-            | "collect_address"
-            | "select_type"
-            | "select_flavor"
-            | "select_quantity"
-            | "add_more"
-            | "confirm_address"
-            | "select_customer_data_field"
-            | "edit_customer_name"
-            | "edit_customer_phone"
-            | "edit_customer_address"
-            | "review_checkout"
-            | "select_payment_method"
-            | "offer_hour_to_client"
-            | "wait_client_hour"
-            | "contact_advisor_name"
-            | "contact_advisor_phone"
-            | "leave_message"
-    )
-}
-
-/// Espejo de `bot::inactivity::sync_customer_inactivity_timer`'s
-/// `order_already_gestioned`: una vez el pedido está confirmado o ya se sabe
-/// qué va a pedir, a dónde y con qué se paga, el recordatorio de "¿sigues por
-/// ahí?" ya no aporta nada. Este path (recuperación al boot / sweep) no tiene
-/// el `ConversationContext` vivo, solo lo persistido — se reconstruye con
-/// `rehydrate_context_for_timer` para reusar el mismo criterio
-/// (`checkout_precondition_error`) en vez de duplicarlo.
-fn order_already_gestioned(
-    phone_number: &str,
-    customer_name: Option<String>,
-    customer_phone: Option<String>,
-    delivery_address: Option<String>,
-    state_data: &ConversationStateData,
-) -> bool {
-    if state_data.order_confirmed {
-        return true;
-    }
-    let context = rehydrate_context_for_timer(
-        phone_number.to_string(),
-        String::new(),
-        customer_name,
-        customer_phone,
-        delivery_address,
-        state_data,
-    );
-    checkout_precondition_error(&context).is_none()
 }
 
 pub fn rehydrate_context_for_timer(
@@ -1317,61 +1045,6 @@ mod tests {
     }
 
     #[test]
-    fn timer_recovery_marks_customer_inactivity_reminder_as_due() {
-        let now = chrono::Utc::now();
-        let conversation = active_timer_conversation(
-            "main_menu",
-            ConversationStateData {
-                conversation_abandon_started_at: Some(now - ChronoDuration::minutes(3)),
-                ..Default::default()
-            },
-            now,
-        );
-
-        let recovery =
-            timer_recovery(&conversation, now);
-
-        assert_eq!(
-            recovery,
-            Some(TimerRecovery::Expired(TimerType::ConversationAbandon))
-        );
-    }
-
-    #[test]
-    fn timer_recovery_ignores_customer_inactivity_once_order_is_gestioned() {
-        let now = chrono::Utc::now();
-        let conversation = active_timer_conversation(
-            "review_checkout",
-            ConversationStateData {
-                items: vec![crate::db::models::OrderItemData {
-                    flavor: "Mora".to_string(),
-                    has_liquor: true,
-                    quantity: 2,
-                }],
-                delivery_type: Some("immediate".to_string()),
-                conversation_abandon_started_at: Some(now - ChronoDuration::minutes(3)),
-                ..Default::default()
-            },
-            now,
-        );
-
-        let recovery = timer_recovery(&conversation, now);
-
-        assert!(recovery.is_none());
-    }
-
-    #[test]
-    fn timer_recovery_does_not_arm_customer_inactivity_without_timestamp() {
-        let now = chrono::Utc::now();
-        let conversation =
-            active_timer_conversation("main_menu", ConversationStateData::default(), now);
-
-        let recovery = timer_recovery(&conversation, now + ChronoDuration::minutes(40));
-
-        assert!(recovery.is_none());
-    }
-
-    #[test]
     fn timer_recovery_ignores_reset_main_menu_even_with_stale_last_message() {
         let now = chrono::Utc::now();
         let conversation = active_timer_conversation(
@@ -1485,25 +1158,6 @@ mod tests {
     }
 
     #[test]
-    fn timer_recovery_stops_after_reminder_sent() {
-        let now = chrono::Utc::now();
-        let conversation = active_timer_conversation(
-            "collect_name",
-            ConversationStateData {
-                conversation_abandon_started_at: Some(now - ChronoDuration::minutes(10)),
-                conversation_abandon_reminder_sent: true,
-                ..Default::default()
-            },
-            now,
-        );
-
-        let recovery =
-            timer_recovery(&conversation, now);
-
-        assert_eq!(recovery, None);
-    }
-
-    #[test]
     fn boot_expiration_marks_receipt_timeout_without_sending() {
         let now = chrono::Utc::now();
         let conversation =
@@ -1569,42 +1223,6 @@ mod tests {
                 mark_manual_followup: false,
             }
         );
-    }
-
-    #[test]
-    fn boot_expiration_ignores_customer_after_reminder_sent() {
-        let now = chrono::Utc::now();
-        let conversation = active_timer_conversation(
-            "collect_phone",
-            ConversationStateData {
-                conversation_abandon_started_at: Some(now - ChronoDuration::minutes(40)),
-                conversation_abandon_reminder_sent: true,
-                ..Default::default()
-            },
-            now,
-        );
-
-        let action = boot_expiration_action(&conversation, TimerType::ConversationAbandon);
-
-        assert_eq!(action, BootExpirationAction::None);
-    }
-
-    #[test]
-    fn boot_expiration_marks_pending_reminder_silently() {
-        let now = chrono::Utc::now();
-        let conversation = active_timer_conversation(
-            "collect_phone",
-            ConversationStateData {
-                conversation_abandon_started_at: Some(now - ChronoDuration::minutes(10)),
-                conversation_abandon_reminder_sent: false,
-                ..Default::default()
-            },
-            now,
-        );
-
-        let action = boot_expiration_action(&conversation, TimerType::ConversationAbandon);
-
-        assert_eq!(action, BootExpirationAction::MarkInactivityReminderSilently);
     }
 
     // Depende de la hora real de Bogotá (sin seam de reloj, mismo patrón que

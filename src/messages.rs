@@ -224,7 +224,6 @@ pub struct TimerCustomerMessages {
     pub contact_timeout_leave_message_button: String,
     pub contact_timeout_menu_button: String,
     pub relay_timeout_text: String,
-    pub agent_inactivity_nudge_text: String,
 }
 
 impl ClientMessages {

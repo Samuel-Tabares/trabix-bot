@@ -288,7 +288,6 @@ pub enum TimerType {
     AdvisorResponse,
     ReceiptUpload,
     RelayInactivity,
-    ConversationAbandon,
     BusinessHoursReopen,
 }
 
@@ -298,7 +297,6 @@ impl TimerType {
             Self::AdvisorResponse => "advisor_response",
             Self::ReceiptUpload => "receipt_upload",
             Self::RelayInactivity => "relay_inactivity",
-            Self::ConversationAbandon => "conversation_abandon",
             Self::BusinessHoursReopen => "business_hours_reopen",
         }
     }
@@ -477,8 +475,6 @@ pub struct ConversationContext {
     pub receipt_timer_expired: bool,
     pub pending_has_liquor: Option<bool>,
     pub pending_flavor: Option<String>,
-    pub conversation_abandon_started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub conversation_abandon_reminder_sent: bool,
     pub order_confirmed: bool,
     pub order_confirmed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub confirmed_order_snapshot: Option<crate::db::models::ConfirmedOrderSnapshot>,
@@ -533,8 +529,6 @@ impl ConversationContext {
             receipt_timer_expired: state_data.receipt_timer_expired,
             pending_has_liquor: state_data.pending_has_liquor,
             pending_flavor: state_data.pending_flavor.clone(),
-            conversation_abandon_started_at: state_data.conversation_abandon_started_at,
-            conversation_abandon_reminder_sent: state_data.conversation_abandon_reminder_sent,
             order_confirmed: state_data.order_confirmed,
             order_confirmed_at: state_data.order_confirmed_at,
             confirmed_order_snapshot: state_data.confirmed_order_snapshot.clone(),
@@ -578,8 +572,6 @@ impl ConversationContext {
             receipt_timer_expired: self.receipt_timer_expired,
             pending_has_liquor: self.pending_has_liquor,
             pending_flavor: self.pending_flavor.clone(),
-            conversation_abandon_started_at: self.conversation_abandon_started_at,
-            conversation_abandon_reminder_sent: self.conversation_abandon_reminder_sent,
             order_confirmed: self.order_confirmed,
             order_confirmed_at: self.order_confirmed_at,
             confirmed_order_snapshot: self.confirmed_order_snapshot.clone(),

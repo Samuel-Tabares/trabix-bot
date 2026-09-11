@@ -206,22 +206,30 @@ un cambio de diseño más grande, fuera de alcance de una limpieza mecánica).
 
 ---
 
-### 4. Timer "¿sigues por ahí?" ya no molesta tras gestionar el pedido — HECHO, falta QA end-to-end (2026-08-31, v1.23.18)
+### 4. Timer "¿sigues por ahí?" — ELIMINADO POR COMPLETO (2026-09-11, v1.26.0)
 
-`sync_customer_inactivity_timer` (`src/bot/inactivity.rs`) y el path de recuperación al boot/sweep
-(`order_already_gestioned`, `src/bot/timers.rs`) dejan de armar el recordatorio de 2 min una vez
-`checkout_precondition_error` da `None` (ítems, datos del cliente y entrega ya conocidos) — antes
-solo se suprimía en la transición puntual justo después de confirmar. 8 tests unitarios nuevos en
-verde; **el path de recuperación al boot/sweep no se probó contra un pedido real** (no hay forma de
-hacerlo desde `crm-app`, que nunca escribe en estas tablas). Plan de QA compartido con `crm-app`
-(sembrar un pedido de prueba, verificar Pendientes/ventas ahí, y de paso este timer) en
-`../crm-app/docs/qa_pendientes_ventas_2026-08-31.md`, sección 8.
+Ya no existe. Se borró `TimerType::ConversationAbandon`, `src/bot/inactivity.rs`, los campos
+`conversation_abandon_started_at`/`conversation_abandon_reminder_sent` del `state_data`, el texto
+`agent_inactivity_nudge_text` y `cancel_conversation_abandon_after_handoff`. Si el cliente se queda
+callado, el bot espera y no le escribe nada.
 
-Nota aparte: **este archivo está desactualizado en varios sitios** (dice "embajadores no está
-corriendo" y `config/referrals.toml` como fuente de códigos — ambos cambiaron con la Fase 6 de
-`crm-app`, código de referido ahora vive en la tabla compartida `referral_codes`). No se corrigió
-en esta pasada por no ser el foco de la sesión; hace falta una revisión completa de este ROADMAP
-contra el estado real del programa de embajadores.
+Por qué, después de tres rondas de parches (v1.23.18, v1.25.1, v1.25.2): el recordatorio se
+**re-armaba en cada turno del cliente**, así que "una sola vez" era una sola vez *por episodio de
+silencio*, no por conversación. En una conversación normal el cliente tarda 2-3 minutos en anotar
+sabores o consultar algo, y cada pausa disparaba el mensaje. Caso Graja (2026-09-11): salió 7 veces
+en 20 minutos, interrumpiendo al cliente mientras escribía y también durante una toma de control
+del asesor. El problema no era el gate, era la premisa.
+
+Efecto lateral aceptado: el sweep ya no limpia oportunistamente un `human_takeover_until` vencido
+(esa limpieza vivía dentro del expiry del recordatorio). El timestamp viejo queda en la fila, lo
+cual es inocuo — bot y `crm-app` lo comparan siempre contra `now()`. La liberación explícita
+(`POST /internal/advisor/release`, botón "Devolver al bot") sigue limpiándolo.
+
+Nota aparte que sigue abierta: **este archivo está desactualizado en varios sitios** (dice
+"embajadores no está corriendo" y `config/referrals.toml` como fuente de códigos — ambos cambiaron
+con la Fase 6 de `crm-app`, el código de referido ahora vive en la tabla compartida
+`referral_codes`). Hace falta una revisión completa de este ROADMAP contra el estado real del
+programa de embajadores.
 
 ---
 

@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-09-11
+
+### Removed
+- **Se eliminó por completo el recordatorio de inactividad de 2 minutos ("¿Sigues por ahí? 😊
+  Cuando quieras seguimos con tu pedido...").** Con él se fueron `TimerType::ConversationAbandon`,
+  todo `src/bot/inactivity.rs`, `TimerRule::ConversationReminder`,
+  `expire_conversation_abandon*`, `cancel_conversation_abandon_after_handoff`,
+  `BootExpirationAction::MarkInactivityReminderSilently`, los campos
+  `conversation_abandon_started_at`/`conversation_abandon_reminder_sent` del `state_data`, y el
+  texto `agent_inactivity_nudge_text` de `config/messages.toml`. Los 24 estados de entrada del
+  cliente (`main_menu`, `collect_name`, `review_checkout`, ...) salieron de
+  `timer_recovery_states()`: el sweep de 60s ya no los consulta, solo mira los estados que de
+  verdad tienen un timer que bloquea el pedido (comprobante, espera de asesor, relay, reapertura
+  de horario).
+
+  El motivo, después de tres rondas de parches sobre este mismo timer (v1.23.18, v1.25.1,
+  v1.25.2): el recordatorio se **re-armaba en cada turno del cliente**, así que "una sola vez" era
+  una sola vez *por episodio de silencio*, no por conversación. En una conversación real el
+  cliente se toma 2-3 minutos para anotar sabores o mirar el menú, y cada una de esas pausas
+  disparaba el mensaje. Caso Graja (2026-09-11): salió 7 veces en 20 minutos — a las 14:02, 14:04,
+  14:09, 14:11, 14:15, 14:17 y 14:23 — interrumpiendo al cliente mientras escribía su lista de
+  sabores ("sii, solo q estoy anotando la cantidad de los sabores") y otra vez durante una toma de
+  control del asesor. El gate de "una sola vez" funcionaba como estaba escrito; la premisa era la
+  equivocada.
+
+  Efecto lateral aceptado: la limpieza oportunista de un `human_takeover_until` ya vencido vivía
+  dentro del expiry de este recordatorio y desapareció con él. Una ventana de toma de control que
+  vence sola deja su timestamp viejo en la fila de `conversations`; es inocuo, porque tanto el bot
+  (`engine::process_customer_input`) como `crm-app` la comparan siempre contra `now()`.
+  `POST /internal/advisor/release` (botón "Devolver al bot") sigue siendo la vía que la limpia de
+  verdad.
+
+  Los `state_data` viejos que todavía traen las dos claves `conversation_abandon_*` en Postgres se
+  deserializan sin problema: `ConversationStateData` lleva `#[serde(default)]` y no
+  `deny_unknown_fields`, así que las claves sobrantes simplemente se ignoran. No hay migración.
+
 ## [1.25.2] - 2026-09-10
 
 ### Fixed

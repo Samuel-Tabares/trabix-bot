@@ -37,8 +37,6 @@ pub struct ConversationStateData {
     pub receipt_timer_expired: bool,
     pub pending_has_liquor: Option<bool>,
     pub pending_flavor: Option<String>,
-    pub conversation_abandon_started_at: Option<DateTime<Utc>>,
-    pub conversation_abandon_reminder_sent: bool,
     /// True una vez que el pedido `current_order_id` quedó CONFIRMADO. Bloquea
     /// crear una orden duplicada: para tocarlo de nuevo hay que reabrirlo con
     /// `modify_confirmed_order`, y para un pedido aparte hay que limpiar con
@@ -118,8 +116,6 @@ impl Default for ConversationStateData {
             receipt_timer_expired: false,
             pending_has_liquor: None,
             pending_flavor: None,
-            conversation_abandon_started_at: None,
-            conversation_abandon_reminder_sent: false,
             order_confirmed: false,
             order_confirmed_at: None,
             confirmed_order_snapshot: None,
