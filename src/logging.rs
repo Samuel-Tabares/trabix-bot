@@ -56,10 +56,7 @@ pub fn action_kind(action: &BotAction) -> &'static str {
         BotAction::UpdateCurrentOrderDeliveryCost { .. } => "update_current_order_delivery_cost",
         BotAction::CancelCurrentOrder { .. } => "cancel_current_order",
         BotAction::SaveOrder { .. } => "save_order",
-        BotAction::BindAdvisorSession { .. } => "bind_advisor_session",
-        BotAction::ClearAdvisorSession { .. } => "clear_advisor_session",
         BotAction::ResetConversation { .. } => "reset_conversation",
-        BotAction::RelayMessage { .. } => "relay_message",
         BotAction::UpdateCustomerAndAnalytics { .. } => "update_customer_and_analytics",
         BotAction::UpsertCustomerAddress { .. } => "upsert_customer_address",
         BotAction::TouchCustomerAddress { .. } => "touch_customer_address",
@@ -207,36 +204,10 @@ pub fn log_bot_action(action: &BotAction) {
         BotAction::SaveOrder { .. } => {
             tracing::debug!(action = "save_order", "dispatching bot action");
         }
-        BotAction::BindAdvisorSession {
-            advisor_phone,
-            target_phone,
-        } => {
-            tracing::info!(
-                action = "bind_advisor_session",
-                advisor_phone = %mask_phone(advisor_phone),
-                target_phone = %mask_phone(target_phone),
-                "dispatching bot action"
-            );
-        }
-        BotAction::ClearAdvisorSession { advisor_phone } => {
-            tracing::info!(
-                action = "clear_advisor_session",
-                advisor_phone = %mask_phone(advisor_phone),
-                "dispatching bot action"
-            );
-        }
         BotAction::ResetConversation { phone } => {
             tracing::info!(
                 action = "reset_conversation",
                 phone = %mask_phone(phone),
-                "dispatching bot action"
-            );
-        }
-        BotAction::RelayMessage { to, body, .. } => {
-            tracing::info!(
-                recipient = %mask_phone(to),
-                action = "relay_message",
-                preview = %preview_text(body),
                 "dispatching bot action"
             );
         }
@@ -337,12 +308,12 @@ mod tests {
                 buttons: vec![],
             },
             BotAction::StartTimer {
-                timer_type: TimerType::AdvisorResponse,
+                timer_type: TimerType::ReceiptUpload,
                 phone: "1".to_string(),
                 duration: std::time::Duration::from_secs(1),
             },
             BotAction::CancelTimer {
-                timer_type: TimerType::AdvisorResponse,
+                timer_type: TimerType::ReceiptUpload,
                 phone: "1".to_string(),
             },
             BotAction::ResetConversation {

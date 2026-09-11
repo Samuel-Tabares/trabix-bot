@@ -15,8 +15,8 @@ use crate::{
         },
         states::data_collect,
         timers::{
-            cancel_timer, effective_duration_for_start_timer, expire_advisor_timer,
-            expire_receipt_timer, expire_relay_timer, start_timer,
+            cancel_timer, effective_duration_for_start_timer, expire_receipt_timer,
+            start_timer,
         },
     },
     ai::memory::clear_messages,
@@ -191,16 +191,7 @@ pub async fn process_customer_input(
     )
     .await?;
 
-    let session_phone = context.phone_number.clone();
-    let execution = execute_actions(
-        &state,
-        conversation.id,
-        &mut context,
-        &actions,
-        Some(session_phone.as_str()),
-        Some(&new_state),
-    )
-    .await?;
+    let execution = execute_actions(&state, conversation.id, &mut context, &actions).await?;
 
     if !execution.reset_requested {
         update_state(
@@ -459,15 +450,8 @@ pub async fn process_resume_for_case(
     )
     .await?;
 
-    let execution = execute_actions(
-        &state,
-        client_conversation.id,
-        &mut context,
-        &actions,
-        None,
-        None,
-    )
-    .await?;
+    let execution =
+        execute_actions(&state, client_conversation.id, &mut context, &actions).await?;
 
     if !execution.reset_requested {
         update_state(
@@ -701,8 +685,6 @@ pub async fn execute_actions(
     conversation_id: i32,
     context: &mut ConversationContext,
     actions: &[BotAction],
-    session_phone: Option<&str>,
-    thread_recording_state: Option<&ConversationState>,
 ) -> Result<ExecutionOutcome, Box<dyn Error + Send + Sync>> {
     let mut reset_requested = false;
     let case_phone = context.phone_number.clone();
@@ -712,32 +694,16 @@ pub async fn execute_actions(
         log_outbound_event(state, &case_phone, action).await;
         match action {
             BotAction::SendText { to, body } => {
-                let message_id = send_text(state, &case_phone, to, body).await?;
-                record_advisor_reply_thread_if_needed(
-                    state,
-                    to,
-                    session_phone,
-                    thread_recording_state,
-                    message_id,
-                )
-                .await?;
+                send_text(state, &case_phone, to, body).await?;
             }
             BotAction::SendButtons { to, body, buttons } => {
-                let message_id = send_via_transport(
+                send_via_transport(
                     state,
                     &case_phone,
                     to,
                     "buttons",
                     Some(body.clone()),
                     json!({ "buttons": buttons }),
-                )
-                .await?;
-                record_advisor_reply_thread_if_needed(
-                    state,
-                    to,
-                    session_phone,
-                    thread_recording_state,
-                    message_id,
                 )
                 .await?;
             }
@@ -747,7 +713,7 @@ pub async fn execute_actions(
                 button_text,
                 sections,
             } => {
-                let message_id = send_via_transport(
+                send_via_transport(
                     state,
                     &case_phone,
                     to,
@@ -759,41 +725,16 @@ pub async fn execute_actions(
                     }),
                 )
                 .await?;
-                record_advisor_reply_thread_if_needed(
-                    state,
-                    to,
-                    session_phone,
-                    thread_recording_state,
-                    message_id,
-                )
-                .await?;
             }
             BotAction::SendImage {
                 to,
                 media_id,
                 caption,
             } => {
-                let message_id = send_image(state, &case_phone, to, media_id, caption.clone()).await?;
-                record_advisor_reply_thread_if_needed(
-                    state,
-                    to,
-                    session_phone,
-                    thread_recording_state,
-                    message_id,
-                )
-                .await?;
+                send_image(state, &case_phone, to, media_id, caption.clone()).await?;
             }
             BotAction::SendAssetImage { to, asset, caption } => {
-                let message_id =
-                    send_asset_image(state, &case_phone, to, asset.clone(), caption.clone()).await?;
-                record_advisor_reply_thread_if_needed(
-                    state,
-                    to,
-                    session_phone,
-                    thread_recording_state,
-                    message_id,
-                )
-                .await?;
+                send_asset_image(state, &case_phone, to, asset.clone(), caption.clone()).await?;
             }
             BotAction::SendTransferInstructions { to } => {
                 let configured = client_messages().checkout.transfer_payment_text.trim();
@@ -806,15 +747,7 @@ pub async fn execute_actions(
                 } else {
                     configured
                 };
-                let message_id = send_text(state, &case_phone, to, body).await?;
-                record_advisor_reply_thread_if_needed(
-                    state,
-                    to,
-                    session_phone,
-                    thread_recording_state,
-                    message_id,
-                )
-                .await?;
+                send_text(state, &case_phone, to, body).await?;
             }
             BotAction::NotifyAdvisor {
                 body,
@@ -844,7 +777,6 @@ pub async fn execute_actions(
             }
             BotAction::ResetConversation { phone } => {
                 reset_conversation(&state.pool, phone).await?;
-                clear_advisor_threads_for_target(state, phone).await?;
                 reset_requested = true;
             }
             BotAction::NoOp => {}
@@ -867,16 +799,6 @@ pub async fn execute_actions(
                             TimerType::ReceiptUpload => {
                                 if let Err(err) = expire_receipt_timer(app_state, phone).await {
                                     tracing::error!(error = %err, "failed to expire receipt timer");
-                                }
-                            }
-                            TimerType::AdvisorResponse => {
-                                if let Err(err) = expire_advisor_timer(app_state, phone).await {
-                                    tracing::error!(error = %err, "failed to expire advisor timer");
-                                }
-                            }
-                            TimerType::RelayInactivity => {
-                                if let Err(err) = expire_relay_timer(app_state, phone).await {
-                                    tracing::error!(error = %err, "failed to expire relay timer");
                                 }
                             }
                             TimerType::BusinessHoursReopen => {
@@ -938,26 +860,6 @@ pub async fn execute_actions(
             }
             BotAction::SaveOrder { .. } => {
                 tracing::debug!("save_order action not implemented");
-            }
-            BotAction::BindAdvisorSession {
-                advisor_phone,
-                target_phone,
-            } => {
-                bind_advisor_session(state, advisor_phone, Some(target_phone.clone())).await?;
-            }
-            BotAction::ClearAdvisorSession { advisor_phone } => {
-                bind_advisor_session(state, advisor_phone, None).await?;
-            }
-            BotAction::RelayMessage { to, body, .. } => {
-                let message_id = send_text(state, &case_phone, to, body).await?;
-                record_advisor_reply_thread_if_needed(
-                    state,
-                    to,
-                    session_phone,
-                    thread_recording_state,
-                    message_id,
-                )
-                .await?;
             }
             BotAction::UpdateCustomerAndAnalytics {
                 phone_number_meta,
@@ -1107,6 +1009,24 @@ fn is_agent_owned_state(state: &ConversationState) -> bool {
             | ConversationState::WaitBusinessHours
             | ConversationState::SelectPaymentMethod
             | ConversationState::WaitReceipt
+            // Estados del FSM legado de asesor/relay. Ningún productor vivo los
+            // escribe desde hace rato, pero en Postgres todavía puede quedar una
+            // fila vieja con uno de ellos (hay una de 2026-03 en producción). Se
+            // declaran agent-owned para que esa fila la atienda el agente —
+            // `transition()` tiene `unreachable!()` para estos desde v1.27.0, así
+            // que mandarla por ahí sería un panic.
+            | ConversationState::WaitAdvisorResponse
+            | ConversationState::WaitAdvisorMayor
+            | ConversationState::WaitAdvisorContact
+            | ConversationState::NegotiateHour
+            | ConversationState::OfferHourToClient { .. }
+            | ConversationState::WaitClientHour
+            | ConversationState::WaitAdvisorHourDecision { .. }
+            | ConversationState::WaitAdvisorConfirmHour
+            | ConversationState::RelayMode
+            | ConversationState::ContactAdvisorName
+            | ConversationState::ContactAdvisorPhone
+            | ConversationState::LeaveMessage
     )
 }
 
@@ -1215,119 +1135,6 @@ fn seed_customer_data(
     }
 
     seeded
-}
-
-fn should_record_advisor_thread(state: Option<&ConversationState>) -> bool {
-    matches!(
-        state,
-        Some(
-            ConversationState::WaitAdvisorResponse
-                | ConversationState::AskDeliveryCost
-                | ConversationState::NegotiateHour
-                | ConversationState::WaitAdvisorHourDecision { .. }
-                | ConversationState::WaitAdvisorConfirmHour
-                | ConversationState::WaitAdvisorMayor
-                | ConversationState::WaitAdvisorContact
-        )
-    )
-}
-
-async fn record_advisor_reply_thread_if_needed(
-    state: &AppState,
-    to: &str,
-    target_phone: Option<&str>,
-    thread_recording_state: Option<&ConversationState>,
-    message_id: Option<String>,
-) -> Result<(), sqlx::Error> {
-    if to != state.config.advisor_phone || !should_record_advisor_thread(thread_recording_state) {
-        return Ok(());
-    }
-
-    let (Some(target_phone), Some(message_id)) = (target_phone, message_id) else {
-        return Ok(());
-    };
-
-    let conversation = load_or_create_conversation(state, &state.config.advisor_phone).await?;
-    let mut state_data = conversation.state_data.0;
-    state_data
-        .advisor_reply_threads
-        .insert(message_id.clone(), target_phone.to_string());
-    update_state(
-        &state.pool,
-        &state.config.advisor_phone,
-        &conversation.state,
-        &state_data,
-    )
-    .await?;
-    tracing::debug!(
-        advisor_phone = %mask_phone(&state.config.advisor_phone),
-        target_phone = %mask_phone(target_phone),
-        message_id = %message_id,
-        "recorded advisor reply thread"
-    );
-    Ok(())
-}
-
-pub async fn clear_advisor_threads_for_target(
-    state: &AppState,
-    target_phone: &str,
-) -> Result<(), sqlx::Error> {
-    if let Some(conversation) = get_conversation(&state.pool, &state.config.advisor_phone).await? {
-        let mut state_data = conversation.state_data.0;
-        let original_len = state_data.advisor_reply_threads.len();
-        state_data
-            .advisor_reply_threads
-            .retain(|_, phone| phone != target_phone);
-        if state_data.advisor_reply_threads.len() != original_len {
-            update_state(
-                &state.pool,
-                &state.config.advisor_phone,
-                &conversation.state,
-                &state_data,
-            )
-            .await?;
-        }
-    }
-
-    Ok(())
-}
-
-async fn bind_advisor_session(
-    state: &AppState,
-    advisor_phone: &str,
-    target_phone: Option<String>,
-) -> Result<(), sqlx::Error> {
-    let conversation = load_or_create_conversation(state, advisor_phone).await?;
-    let mut state_data = conversation.state_data.0;
-    state_data.advisor_target_phone = target_phone;
-    update_state(&state.pool, advisor_phone, &conversation.state, &state_data).await?;
-    tracing::info!(
-        advisor_phone = %mask_phone(advisor_phone),
-        target_phone = %state_data
-            .advisor_target_phone
-            .as_deref()
-            .map(mask_phone)
-            .unwrap_or_else(|| "<none>".to_string()),
-        "updated advisor session binding"
-    );
-    Ok(())
-}
-
-pub async fn clear_advisor_session(
-    state: &AppState,
-    advisor_phone: &str,
-) -> Result<(), sqlx::Error> {
-    if let Some(conversation) = get_conversation(&state.pool, advisor_phone).await? {
-        let mut state_data = conversation.state_data.0;
-        state_data.advisor_target_phone = None;
-        update_state(&state.pool, advisor_phone, &conversation.state, &state_data).await?;
-        tracing::info!(
-            advisor_phone = %mask_phone(advisor_phone),
-            "cleared advisor session binding"
-        );
-    }
-
-    Ok(())
 }
 
 async fn send_via_transport(

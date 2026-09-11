@@ -4,7 +4,7 @@ use crate::{
     whatsapp::types::{Button, ButtonReplyPayload},
 };
 
-use super::{advisor, checkout, data_collect, order};
+use super::{checkout, data_collect, order};
 
 pub const REVIEW_SCOPE_CHECKOUT: &str = "checkout_review";
 pub const REVIEW_SCOPE_ADVISOR: &str = "advisor_contact";
@@ -51,28 +51,6 @@ pub fn start_checkout_review(
     context: &mut ConversationContext,
 ) -> (ConversationState, Vec<BotAction>) {
     context.customer_review_scope = Some(REVIEW_SCOPE_CHECKOUT.to_string());
-    enter_review_state(context)
-}
-
-pub fn next_contact_advisor_state(
-    context: &mut ConversationContext,
-) -> (ConversationState, Vec<BotAction>) {
-    context.customer_review_scope = Some(REVIEW_SCOPE_ADVISOR.to_string());
-
-    if context.customer_name.is_none() {
-        return (
-            ConversationState::ContactAdvisorName,
-            advisor::contact_advisor_name_actions(&context.phone_number),
-        );
-    }
-
-    if context.customer_phone.is_none() {
-        return (
-            ConversationState::ContactAdvisorPhone,
-            advisor::contact_advisor_phone_actions(&context.phone_number),
-        );
-    }
-
     enter_review_state(context)
 }
 
@@ -180,7 +158,7 @@ fn reply_button(id: &str, title: &str) -> Button {
 mod tests {
     use crate::bot::state_machine::{ConversationContext, ConversationState};
 
-    use super::{next_contact_advisor_state, next_order_data_state, REVIEW_SCOPE_ADVISOR};
+    use super::next_order_data_state;
 
     fn context() -> ConversationContext {
         ConversationContext {
@@ -203,13 +181,6 @@ mod tests {
             total_final: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
-            advisor_target_phone: None,
-            advisor_timer_started_at: None,
-            advisor_timer_expired: false,
-            relay_timer_started_at: None,
-            relay_kind: None,
-            advisor_proposed_hour: None,
-            client_counter_hour: None,
             schedule_resume_target: None,
             current_order_id: None,
             editing_address: false,
@@ -238,20 +209,6 @@ mod tests {
 
         assert_eq!(state, ConversationState::SelectType);
         assert_eq!(context.customer_review_scope, None);
-    }
-
-    #[test]
-    fn advisor_contact_flow_skips_to_review_when_all_fields_exist() {
-        let mut context = context();
-        context.delivery_address = None;
-
-        let (state, _) = next_contact_advisor_state(&mut context);
-
-        assert_eq!(state, ConversationState::ConfirmCustomerData);
-        assert_eq!(
-            context.customer_review_scope.as_deref(),
-            Some(REVIEW_SCOPE_ADVISOR)
-        );
     }
 
 }

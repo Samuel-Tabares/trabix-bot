@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
-
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -59,14 +57,6 @@ pub struct ConversationStateData {
     pub total_final: Option<i32>,
     pub receipt_media_id: Option<String>,
     pub receipt_timer_started_at: Option<DateTime<Utc>>,
-    pub advisor_target_phone: Option<String>,
-    pub advisor_reply_threads: BTreeMap<String, String>,
-    pub advisor_timer_started_at: Option<DateTime<Utc>>,
-    pub advisor_timer_expired: bool,
-    pub relay_timer_started_at: Option<DateTime<Utc>>,
-    pub relay_kind: Option<String>,
-    pub advisor_proposed_hour: Option<String>,
-    pub client_counter_hour: Option<String>,
     pub schedule_resume_target: Option<String>,
     pub current_order_id: Option<i32>,
     pub editing_address: bool,
@@ -140,14 +130,6 @@ impl Default for ConversationStateData {
             total_final: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
-            advisor_target_phone: None,
-            advisor_reply_threads: BTreeMap::new(),
-            advisor_timer_started_at: None,
-            advisor_timer_expired: false,
-            relay_timer_started_at: None,
-            relay_kind: None,
-            advisor_proposed_hour: None,
-            client_counter_hour: None,
             schedule_resume_target: None,
             current_order_id: None,
             editing_address: false,
@@ -309,11 +291,10 @@ mod tests {
         .expect("legacy state data should deserialize");
 
         assert!(!state_data.referral_has_boost);
-        assert!(state_data.advisor_reply_threads.is_empty());
         assert_eq!(state_data.referral_code.as_deref(), Some("rider332"));
-        assert_eq!(
-            state_data.advisor_target_phone.as_deref(),
-            Some("573001234567")
-        );
+        // `advisor_target_phone` se eliminó en v1.27.0 junto con el carril
+        // asesor->bot: una clave sobrante en el JSON viejo se ignora sin
+        // romper la deserialización (`#[serde(default)]`, sin
+        // `deny_unknown_fields`).
     }
 }

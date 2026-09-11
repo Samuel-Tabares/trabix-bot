@@ -72,7 +72,6 @@ pub struct ClientMessages {
     pub order: OrderMessages,
     pub checkout: CheckoutMessages,
     pub advisor_customer: AdvisorCustomerMessages,
-    pub relay_customer: RelayCustomerMessages,
     pub timers_customer: TimerCustomerMessages,
     pub agent: AgentMessages,
 }
@@ -169,65 +168,19 @@ pub struct CheckoutMessages {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AdvisorCustomerMessages {
-    pub contact_name_prompt: String,
-    pub contact_phone_prompt: String,
-    pub contact_name_retry_non_text: String,
-    pub contact_phone_retry_non_text: String,
     pub confirm_contact_template: String,
     pub confirm_contact_continue_button: String,
     pub confirm_contact_change_button: String,
     pub change_contact_field_body: String,
     pub change_name_button: String,
     pub change_phone_button: String,
-    pub wait_contact_initial_text: String,
-    pub wait_contact_repeat_text: String,
-    pub wait_contact_leave_message_prompt: String,
-    pub leave_message_non_text: String,
-    pub leave_message_length_error: String,
-    pub leave_message_success: String,
-    pub wait_delivery_cost_text: String,
-    pub wait_negotiate_hour_text: String,
-    pub wait_advisor_hour_decision_text: String,
-    pub wait_advisor_confirm_text: String,
-    pub wait_general_text: String,
-    pub availability_wait_text: String,
-    pub wholesale_wait_text: String,
-    pub wholesale_order_sent_text: String,
-    pub proposed_hour_question_template: String,
-    pub proposed_hour_buttons_body: String,
-    pub accept_button: String,
-    pub reject_button: String,
-    pub proposed_hour_repeat_template: String,
-    pub client_hour_prompt: String,
-    pub client_hour_retry_non_text: String,
-    pub hour_length_error: String,
     pub confirmed_order_template: String,
     pub scheduled_payment_ready_template: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct RelayCustomerMessages {
-    pub direct_contact_connected_text: String,
-    pub wholesale_connected_text: String,
-    pub relay_text_only: String,
-    pub relay_closed_by_timeout: String,
-    pub relay_closed_manual: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 pub struct TimerCustomerMessages {
     pub receipt_timeout_text: String,
-    pub advisor_timeout_text: String,
-    pub advisor_timeout_wholesale_text: String,
-    pub advisor_stuck_timeout_text: String,
-    pub advisor_timeout_buttons_body: String,
-    pub advisor_timeout_schedule_button: String,
-    pub advisor_timeout_retry_button: String,
-    pub advisor_timeout_menu_button: String,
-    pub contact_timeout_body: String,
-    pub contact_timeout_leave_message_button: String,
-    pub contact_timeout_menu_button: String,
-    pub relay_timeout_text: String,
 }
 
 impl ClientMessages {
@@ -295,16 +248,6 @@ impl ClientMessages {
             &self.advisor_customer.confirm_contact_template,
             &["customer_name", "customer_phone"],
             "advisor_customer.confirm_contact_template",
-        )?;
-        validate_template(
-            &self.advisor_customer.proposed_hour_question_template,
-            &["hour"],
-            "advisor_customer.proposed_hour_question_template",
-        )?;
-        validate_template(
-            &self.advisor_customer.proposed_hour_repeat_template,
-            &["hour"],
-            "advisor_customer.proposed_hour_repeat_template",
         )?;
         validate_template(
             &self.advisor_customer.confirmed_order_template,

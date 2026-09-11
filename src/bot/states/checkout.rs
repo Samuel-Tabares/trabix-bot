@@ -13,7 +13,7 @@ use crate::{
     whatsapp::types::{Button, ButtonReplyPayload},
 };
 
-use super::{advisor, menu};
+use super::menu;
 
 const REVIEW_CONTINUE: &str = "continue_review_checkout";
 const REVIEW_CHANGE: &str = "change_review_checkout";
@@ -209,13 +209,6 @@ pub fn order_confirmation_analytics_action(context: &ConversationContext) -> Opt
         ambassador_commission_cop: Some(commission_delta),
         referral_times_used_inc: times_used_inc,
     })
-}
-
-pub fn handle_wait_advisor_response(
-    input: &UserInput,
-    context: &mut ConversationContext,
-) -> TransitionResult {
-    advisor::handle_client_waiting_state(&ConversationState::WaitAdvisorResponse, input, context)
 }
 
 pub fn handle_order_complete(context: &mut ConversationContext) -> TransitionResult {
@@ -622,13 +615,6 @@ mod tests {
             total_final: Some(17000),
             receipt_media_id: None,
             receipt_timer_started_at: None,
-            advisor_target_phone: None,
-            advisor_timer_started_at: None,
-            advisor_timer_expired: false,
-            relay_timer_started_at: None,
-            relay_kind: None,
-            advisor_proposed_hour: None,
-            client_counter_hour: None,
             schedule_resume_target: None,
             current_order_id: Some(7),
             editing_address: false,

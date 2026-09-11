@@ -128,10 +128,6 @@ transfer_payment_text = """💳 Puedes realizar tu pago por cualquiera de estas 
 Cuando termines, envíame la foto del comprobante por este chat 📸"""
 
 [advisor_customer]
-contact_name_prompt = "Para ponerte en contacto con un asesor, ¿me compartes tu nombre? 😊"
-contact_phone_prompt = "¿Cuál es tu teléfono de contacto? 📱"
-contact_name_retry_non_text = "Escríbeme tu nombre para continuar 😊"
-contact_phone_retry_non_text = "Escríbeme un teléfono válido para continuar 📱"
 confirm_contact_template = """📋 Antes de contactar al asesor, confirma tus datos:
 
 Nombre: {customer_name}
@@ -143,28 +139,6 @@ confirm_contact_change_button = "Cambiar"
 change_contact_field_body = "¿Qué dato deseas actualizar?"
 change_name_button = "Nombre"
 change_phone_button = "Teléfono"
-wait_contact_initial_text = "Estoy contactando a un asesor 🤝 Te avisaré por este chat apenas responda."
-wait_contact_repeat_text = "Sigo intentando contactar al asesor 🤝 En cuanto responda, continuamos por aquí."
-wait_contact_leave_message_prompt = "Si quieres, déjame el mensaje que deseas enviar al asesor ✍️"
-leave_message_non_text = "Por ahora solo puedo reenviar mensajes de texto al asesor ✍️"
-leave_message_length_error = "El mensaje debe tener entre 2 y 500 caracteres."
-leave_message_success = "✅ Tu mensaje fue enviado al asesor. Te responderán por ese medio cuando estén disponibles."
-wait_delivery_cost_text = "Estamos revisando con el asesor el valor final de tu pedido 💬"
-wait_negotiate_hour_text = "El asesor está revisando una hora disponible para tu pedido ⏰"
-wait_advisor_hour_decision_text = "Tu propuesta de hora ya fue enviada al asesor ✅ Estamos esperando su respuesta."
-wait_advisor_confirm_text = "Estamos esperando la confirmación final del asesor 🤝"
-wait_general_text = "El asesor está atendiendo tu caso en este momento 🙌"
-availability_wait_text = "Estamos confirmando disponibilidad con el asesor. Apenas tengamos respuesta te avisamos por aquí ✨"
-wholesale_wait_text = "Tu pedido al por mayor ya fue enviado al asesor. Estamos esperando que tome el caso 📦"
-wholesale_order_sent_text = "Tu pedido al por mayor fue enviado al asesor ✅ Estamos esperando que tome el caso."
-proposed_hour_question_template = "El asesor propone entregar {hour} ⏰ ¿Esa hora te funciona?"
-proposed_hour_buttons_body = "Selecciona cómo quieres continuar 👇"
-accept_button = "Aceptar"
-reject_button = "Otra hora"
-proposed_hour_repeat_template = "El asesor propone entregar {hour} ⏰"
-client_hour_prompt = "Escríbeme la hora que te sirve y se la envío al asesor ✍️"
-client_hour_retry_non_text = "Escribe la hora que te sirve para continuar ⏰"
-hour_length_error = "La hora debe tener entre 1 y 40 caracteres."
 confirmed_order_template = """✅ Pedido confirmado
 
 Subtotal: {subtotal}
@@ -183,26 +157,8 @@ Subtotal: {subtotal}
 Domicilio: {delivery_cost}
 Total final: {total_final}"""
 
-[relay_customer]
-direct_contact_connected_text = "✅ El asesor ya está disponible. Puedes escribir por este chat y yo reenviaré tus mensajes."
-wholesale_connected_text = "✅ Tu pedido al por mayor ya quedó conectado con el asesor."
-relay_text_only = "Por ahora, en esta conversación solo puedo reenviar mensajes de texto ✍️"
-relay_closed_by_timeout = "La conversación con el asesor se cerró por inactividad ⏳"
-relay_closed_manual = "La conversación con el asesor fue finalizada."
-
 [timers_customer]
 receipt_timeout_text = "No recibimos el comprobante dentro de los 10 minutos ⏳ Puedes cambiar la forma de pago o cancelar el pedido."
-advisor_timeout_text = "El asesor no respondió a tiempo ⏳ Puedes reintentar, programar o volver al menú."
-advisor_timeout_wholesale_text = "El asesor todavía no toma el caso ⏳ Puedes reintentar, programar o volver al menú."
-advisor_stuck_timeout_text = "Tu pedido quedó guardado ✅ pero no pude confirmar el detalle con el asesor a tiempo. Un asesor te va a escribir para terminar de coordinarlo. Si prefieres, también puedes escribirme para dejarlo programado o hacer algún ajuste."
-advisor_timeout_buttons_body = "Selecciona cómo quieres continuar 👇"
-advisor_timeout_schedule_button = "Programar"
-advisor_timeout_retry_button = "Reintentar"
-advisor_timeout_menu_button = "Menú"
-contact_timeout_body = "El asesor no está disponible en este momento 😔 Puedes dejar un mensaje o volver al menú."
-contact_timeout_leave_message_button = "Dejar mensaje"
-contact_timeout_menu_button = "Menú"
-relay_timeout_text = "La conversación con el asesor se cerró por inactividad ⏳"
 
 [agent]
 welcome = """¡Hola! 👋 bienvenid@ a Trabix Granizados 🍧

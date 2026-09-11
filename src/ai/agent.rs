@@ -952,7 +952,7 @@ fn build_dynamic_case_state(
         Cliente conocido: nombre={:?}, teléfono={:?}, dirección={:?}\n\
         Pedido actual: {items_summary}\nTipo de entrega: {:?} (fecha={:?}, hora={:?})\n\
         Costo de domicilio ya definido: {:?}\nMétodo de pago: {:?}\nComprobante recibido: {}\n\
-        Timer de espera del asesor vencido: {}{notes_line}{flow_hint}\n---",
+{notes_line}{flow_hint}\n---",
         context.customer_name,
         context.customer_phone,
         context.delivery_address,
@@ -962,7 +962,6 @@ fn build_dynamic_case_state(
         context.delivery_cost,
         context.payment_method,
         context.receipt_media_id.is_some(),
-        context.advisor_timer_expired,
     )
 }
 
@@ -2242,10 +2241,6 @@ pub(crate) fn auto_accept_order_actions(
             total_final,
             status: "draft_payment".to_string(),
         },
-        BotAction::CancelTimer {
-            timer_type: TimerType::AdvisorResponse,
-            phone: context.phone_number.clone(),
-        },
         BotAction::NotifyAdvisor {
             body: format!(
                 "✅ Pedido auto-aceptado (no requiere confirmar disponibilidad):\n\n{}",
@@ -2340,10 +2335,6 @@ fn reaccept_modified_order(
             delivery_cost,
             total_final,
             status: "draft_payment".to_string(),
-        },
-        BotAction::CancelTimer {
-            timer_type: TimerType::AdvisorResponse,
-            phone: context.phone_number.clone(),
         },
     ];
 
@@ -3215,13 +3206,6 @@ mod tests {
             total_final: None,
             receipt_media_id: None,
             receipt_timer_started_at: None,
-            advisor_target_phone: None,
-            advisor_timer_started_at: None,
-            advisor_timer_expired: false,
-            relay_timer_started_at: None,
-            relay_kind: None,
-            advisor_proposed_hour: None,
-            client_counter_hour: None,
             schedule_resume_target: None,
             current_order_id: None,
             editing_address: false,

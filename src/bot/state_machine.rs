@@ -7,7 +7,7 @@ use crate::{
     whatsapp::types::{Button, IncomingMessage, ListSection},
 };
 
-use super::states::{advisor, checkout, menu, relay};
+use super::states::{checkout, menu};
 
 pub type TransitionResult = Result<(ConversationState, Vec<BotAction>), StateMachineError>;
 
@@ -172,17 +172,11 @@ impl ConversationState {
             "wait_business_hours" => Ok(Self::WaitBusinessHours),
             "negotiate_hour" => Ok(Self::NegotiateHour),
             "offer_hour_to_client" => Ok(Self::OfferHourToClient {
-                proposed_hour: context
-                    .advisor_proposed_hour
-                    .clone()
-                    .unwrap_or_else(|| "pendiente".to_string()),
+                proposed_hour: "pendiente".to_string(),
             }),
             "wait_client_hour" => Ok(Self::WaitClientHour),
             "wait_advisor_hour_decision" => Ok(Self::WaitAdvisorHourDecision {
-                client_hour: context
-                    .client_counter_hour
-                    .clone()
-                    .unwrap_or_else(|| "pendiente".to_string()),
+                client_hour: "pendiente".to_string(),
             }),
             "wait_advisor_confirm_hour" => Ok(Self::WaitAdvisorConfirmHour),
             "wait_advisor_mayor" => Ok(Self::WaitAdvisorMayor),
@@ -285,18 +279,14 @@ pub struct ExtractedInput {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum TimerType {
-    AdvisorResponse,
     ReceiptUpload,
-    RelayInactivity,
     BusinessHoursReopen,
 }
 
 impl TimerType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::AdvisorResponse => "advisor_response",
             Self::ReceiptUpload => "receipt_upload",
-            Self::RelayInactivity => "relay_inactivity",
             Self::BusinessHoursReopen => "business_hours_reopen",
         }
     }
@@ -395,20 +385,8 @@ pub enum BotAction {
     SaveOrder {
         order: crate::db::models::Order,
     },
-    BindAdvisorSession {
-        advisor_phone: String,
-        target_phone: String,
-    },
-    ClearAdvisorSession {
-        advisor_phone: String,
-    },
     ResetConversation {
         phone: String,
-    },
-    RelayMessage {
-        from: String,
-        to: String,
-        body: String,
     },
     UpdateCustomerAndAnalytics {
         phone_number_meta: String,
@@ -478,13 +456,6 @@ pub struct ConversationContext {
     pub total_final: Option<i32>,
     pub receipt_media_id: Option<String>,
     pub receipt_timer_started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub advisor_target_phone: Option<String>,
-    pub advisor_timer_started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub advisor_timer_expired: bool,
-    pub relay_timer_started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub relay_kind: Option<String>,
-    pub advisor_proposed_hour: Option<String>,
-    pub client_counter_hour: Option<String>,
     pub schedule_resume_target: Option<String>,
     pub current_order_id: Option<i32>,
     pub editing_address: bool,
@@ -533,13 +504,6 @@ impl ConversationContext {
             total_final: state_data.total_final,
             receipt_media_id: state_data.receipt_media_id.clone(),
             receipt_timer_started_at: state_data.receipt_timer_started_at,
-            advisor_target_phone: state_data.advisor_target_phone.clone(),
-            advisor_timer_started_at: state_data.advisor_timer_started_at,
-            advisor_timer_expired: state_data.advisor_timer_expired,
-            relay_timer_started_at: state_data.relay_timer_started_at,
-            relay_kind: state_data.relay_kind.clone(),
-            advisor_proposed_hour: state_data.advisor_proposed_hour.clone(),
-            client_counter_hour: state_data.client_counter_hour.clone(),
             schedule_resume_target: state_data.schedule_resume_target.clone(),
             current_order_id: state_data.current_order_id,
             editing_address: state_data.editing_address,
@@ -576,14 +540,6 @@ impl ConversationContext {
             total_final: self.total_final,
             receipt_media_id: self.receipt_media_id.clone(),
             receipt_timer_started_at: self.receipt_timer_started_at,
-            advisor_target_phone: self.advisor_target_phone.clone(),
-            advisor_reply_threads: Default::default(),
-            advisor_timer_started_at: self.advisor_timer_started_at,
-            advisor_timer_expired: self.advisor_timer_expired,
-            relay_timer_started_at: self.relay_timer_started_at,
-            relay_kind: self.relay_kind.clone(),
-            advisor_proposed_hour: self.advisor_proposed_hour.clone(),
-            client_counter_hour: self.client_counter_hour.clone(),
             schedule_resume_target: self.schedule_resume_target.clone(),
             current_order_id: self.current_order_id,
             editing_address: self.editing_address,
@@ -745,64 +701,32 @@ pub fn transition(
         ConversationState::WaitReceipt => unreachable!(
             "WaitReceipt es agent-owned (engine::is_agent_owned_state) — transition() nunca se llama con este estado"
         ),
-        ConversationState::WaitAdvisorResponse => {
-            checkout::handle_wait_advisor_response(input, context)
-        }
-        ConversationState::ContactAdvisorName => {
-            advisor::handle_contact_advisor_name(input, context)
-        }
-        ConversationState::ContactAdvisorPhone => {
-            advisor::handle_contact_advisor_phone(input, context)
-        }
-        ConversationState::WaitAdvisorContact => {
-            advisor::handle_wait_advisor_contact(input, context)
-        }
-        ConversationState::LeaveMessage => advisor::handle_leave_message(input, context),
-        ConversationState::OfferHourToClient { .. }
+        // FSM legado de asesor/relay: retirado en v1.27.0 junto con el carril
+        // asesor->bot. Ningún productor vivo escribe estos estados; si aparece
+        // una fila vieja en Postgres la atiende el agente
+        // (`engine::is_agent_owned_state` los incluye por eso), así que acá no
+        // se llega.
+        ConversationState::WaitAdvisorResponse
+        | ConversationState::ContactAdvisorName
+        | ConversationState::ContactAdvisorPhone
+        | ConversationState::WaitAdvisorContact
+        | ConversationState::LeaveMessage
+        | ConversationState::OfferHourToClient { .. }
         | ConversationState::WaitClientHour
         | ConversationState::AskDeliveryCost
         | ConversationState::WaitBusinessHours
         | ConversationState::NegotiateHour
         | ConversationState::WaitAdvisorHourDecision { .. }
         | ConversationState::WaitAdvisorConfirmHour
-        | ConversationState::WaitAdvisorMayor => {
-            advisor::handle_client_waiting_state(state, input, context)
-        }
-        ConversationState::RelayMode => relay::handle_relay_mode(input, context),
+        | ConversationState::WaitAdvisorMayor
+        | ConversationState::RelayMode => unreachable!(
+            "estado del FSM legado de asesor/relay (retirado en v1.27.0) — lo atiende el agente, \
+             transition() nunca se llama con estos estados"
+        ),
         ConversationState::OrderComplete => checkout::handle_order_complete(context),
         // Legacy: nada escribe este estado hoy (ver comentario en el enum).
         // Degradar a MainMenu es mejor que un estado invalido si aparece.
         ConversationState::AgentChat => menu::handle_main_menu(input, context),
-    }
-}
-
-pub fn transition_advisor(
-    state: &ConversationState,
-    input: &UserInput,
-    context: &mut ConversationContext,
-) -> TransitionResult {
-    match state {
-        ConversationState::WaitAdvisorResponse => {
-            advisor::handle_advisor_wait_advisor_response(input, context)
-        }
-        ConversationState::AskDeliveryCost => {
-            advisor::handle_advisor_ask_delivery_cost(input, context)
-        }
-        ConversationState::NegotiateHour => advisor::handle_advisor_negotiate_hour(input, context),
-        ConversationState::WaitAdvisorHourDecision { .. } => {
-            advisor::handle_advisor_hour_decision(input, context)
-        }
-        ConversationState::WaitAdvisorConfirmHour => {
-            advisor::handle_advisor_confirm_hour(input, context)
-        }
-        ConversationState::WaitAdvisorMayor => {
-            advisor::handle_advisor_wait_advisor_mayor(input, context)
-        }
-        ConversationState::WaitAdvisorContact => {
-            advisor::handle_advisor_wait_advisor_contact(input, context)
-        }
-        ConversationState::RelayMode => relay::handle_relay_mode_advisor(input, context),
-        _ => advisor::handle_advisor_unexpected_state(state, context),
     }
 }
 
