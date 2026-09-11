@@ -1,5 +1,39 @@
 # Referencia Operativa Actual
 
+> ## ⚠️ Cambio de raiz en v1.27.0 — leer esto antes que el resto
+>
+> **El carril asesor→bot ya no existe.** Se elimino `POST /internal/advisor/reply`, `Actor::Advisor`,
+> `run_advisor_turn`, `process_advisor_turn_for_case`, el timer `AdvisorResponse`, el timer de relay
+> y **todo** el FSM determinista de asesor/relay (`src/bot/states/advisor.rs` y `relay.rs`, 2.274
+> lineas). Buena parte de lo que este documento describe mas abajo sobre "el asesor contesta", "el
+> bot le pregunta disponibilidad", negociacion de hora y relay **ya no corre**; quedo como historia.
+>
+> El modelo vigente son tres piezas:
+>
+> 1. **Handoff determinista** (`BotAction::HandOffToHuman`). Hay exactamente dos cosas que el bot no
+>    puede resolver: cotizar el envio a un destino sin tarifa (municipio fuera de lista o envio
+>    nacional) y verificar que una transferencia llego al banco. En los dos casos el bot deja la nota
+>    en el carril del asesor con `requires_action=true`, se marca `human_takeover_until` a si mismo,
+>    le manda al cliente un texto fijo de `config/messages.toml`, y se sale. Nada de esto queda a
+>    criterio del modelo.
+> 2. **Memoria continua.** Mientras el bot esta pausado, lo que dice el cliente y lo que le escribe
+>    el asesor se apendan a `agent_case_messages` sin llamar al LLM
+>    (`ai::memory::append_transcript_entry`), con marcadores que pone el sistema.
+> 3. **Turno de recuperacion** (`ai::agent::run_resume_turn`). Al devolver la conversacion
+>    (`POST /internal/advisor/release`) o cuando la ventana de 6h vence sola
+>    (`bot::timers::sweep_expired_handoffs`), el bot lee ese transcript y sigue el pedido desde ahi:
+>    `set_manual_delivery_cost`, `confirm_payment_received`, `finalize_checkout`. Cierra reportandole
+>    al asesor que concluyo, porque lee cifras de dinero de un chat en prosa y una lectura mala tiene
+>    que verse de inmediato en Pendientes.
+>
+> Por que: en un turno de asesor el texto plano del modelo iba al asesor, no al cliente. El
+> 2026-09-11, con el cliente Graja, el "total $271.000" se quedo en el carril interno y el cliente
+> nunca lo vio. Detalle completo en `docs/internal_advisor_send.md`.
+>
+> Guards de dinero: `set_manual_delivery_cost` y `confirm_payment_received` SOLO corren en un turno
+> de recuperacion. El cliente no fija su propio domicilio ni confirma su propio pago.
+
+
 ## Resumen
 
 Este documento reemplaza los antiguos documentos de `general_info/phase_planning/`.
@@ -711,11 +745,10 @@ Comportamiento actual:
 Timers de runtime (consolidados en FASE 5):
 
 - comprobante: `10 minutos`
-- espera de asesor (todos los estados de espera de asesor, incluidos
-  `wait_advisor_response`, `wait_advisor_contact` y los waits detallados como
-  `ask_delivery_cost`): `5 minutos` unificados
-- relay: `30 minutos` (solo aplica al flujo determinista legado; el modo
-  agente no usa relay)
+- espera de asesor: **eliminada (v1.27.0)**. No existe: el asesor ya no le
+  contesta al bot, asi que no hay nada que esperar. Un caso entregado a un
+  humano se queda en Pendientes hasta que alguien lo atienda, sin limite.
+- relay: **eliminado (v1.27.0)** junto con el FSM determinista de asesor/relay.
 - inactividad generica del cliente: **eliminada (v1.26.0, 2026-09-11)**
 
 ### Inactividad Generica Del Cliente — ELIMINADA

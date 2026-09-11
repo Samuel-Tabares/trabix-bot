@@ -25,7 +25,21 @@ are documented in `general_info/current_runtime_reference.md` and `general_info/
 `BOT_ENGINE` was removed in v1.10.0 — the code no longer reads it. What remains of the original
 non-LLM state machine is **legacy and unreachable in production**; do not build new behavior on it.
 The removal plan (dead FSM files and what must be kept) is in
-`docs/CLEANUP_deterministic_engine.md`.
+`docs/CLEANUP_deterministic_engine.md`. Its advisor/relay half is already gone (v1.27.0:
+`states/advisor.rs`, `states/relay.rs`, `transition_advisor` — 2,274 lines); the customer-state half
+still compiles but every live state is agent-owned, so `transition()` is unreachable too.
+
+**The advisor never talks to the bot (v1.27.0).** There is no lane for it: `POST
+/internal/advisor/reply` is gone, and so are `Actor::Advisor`, `run_advisor_turn` and the
+`AdvisorResponse` timer. The advisor only writes to the **customer**. When the bot hits something it
+cannot resolve — quoting delivery to a destination with no tariff, or verifying a transfer reached
+the bank — it performs a deterministic handoff (`BotAction::HandOffToHuman`: advisor note +
+`human_takeover_until` + a fixed text to the customer) and steps out. When the conversation comes
+back (`POST /internal/advisor/release`, or the 6h window lapsing into
+`timers::sweep_expired_handoffs`), `ai::agent::run_resume_turn` **reads the transcript of what was
+said during the handoff** and carries the order forward, then reports what it concluded on the
+advisor lane. Money tools (`set_manual_delivery_cost`, `confirm_payment_received`) only run in a
+resume turn. Full contract in `docs/internal_advisor_send.md`.
 
 Prompt caching **is implemented** (v1.9.0): the static `SYSTEM_PROMPT` carries a
 `cache_control: ephemeral` breakpoint, which also caches the tool schemas; the dynamic "ESTADO
@@ -47,8 +61,9 @@ ACTUAL DEL CASO" block is sent uncached after it. `AnthropicClient::send_message
 ## Code layout
 
 - `src/routes/` — webhook verification (`verify.rs`), inbound webhook (`webhook.rs`), public
-  legal pages for Meta review (`legal.rs`), and the internal outbound endpoint for `crm-app`
-  (`internal.rs`, `POST /internal/advisor/send` — shared-secret header, disabled unless
+  legal pages for Meta review (`legal.rs`), and the internal endpoints for `crm-app` (`internal.rs`:
+  `POST /internal/advisor/send` to write to the customer, `POST /internal/advisor/release` to hand
+  the case back to the bot and fire the resume turn — shared-secret header, disabled unless
   `INTERNAL_API_TOKEN` is set; contract in `docs/internal_advisor_send.md`).
 - `src/engine.rs` — shared inbound-processing/outbound-action path used by webhook and timers.
 - `src/whatsapp/` — Meta Cloud API client (also the `AppState.transport`), button/list builders,
@@ -91,8 +106,8 @@ ACTUAL DEL CASO" block is sent uncached after it. `AnthropicClient::send_message
   subscribed to it (`GET /{WABA_ID}/subscribed_apps`) or inbound traffic never reaches Railway even
   if webhook test events work.
 - PostgreSQL sessions run on `America/Bogota` (UTC-5) so `NOW()` and stored timestamps stay aligned.
-- Keep `ADVISOR_PHONE` different from `WHATSAPP_TEST_RECIPIENT` during live testing, or tester
-  messages get routed as advisor messages.
+- `ADVISOR_PHONE` is now only used to classify lanes in `engine::channel_for_recipient` — the bot
+  never sends WhatsApp to it and never reads inbound messages from it as advisor input.
 
 ## Migration safety
 

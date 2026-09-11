@@ -82,35 +82,34 @@ directo a UI.
    impide usar el endpoint para mandarle WhatsApp a un número arbitrario.
 3. Envía por `WhatsAppClient::send_text` — el mismo transport que usa todo lo demás.
 4. Escribe la traza en `message_events` con `channel='client'`, `actor='advisor'`,
-   `payload = {"source":"crm-app","sent_by":...}`. Ese `payload.source` es cómo se distingue un
-   mensaje mandado desde la consola de uno relevado por el flujo viejo de `advisor.rs`.
-5. Toca `conversations.last_message_at`.
+   `payload = {"source":"crm-app","sent_by":...}`.
+5. **Apenda el mensaje a la memoria del agente** (`agent_case_messages`) como una línea de
+   transcript marcada por el sistema, sin llamar al LLM — ver
+   `ai::memory::append_transcript_entry`. Es la mitad que faltaba del transcript del handoff: aquí
+   es donde se dice el valor del envío o que el pago sí llegó, y es lo que el turno de recuperación
+   lee cuando le devuelven la conversación. Sin esto el bot volvía con un hueco justo donde se
+   resolvió lo importante.
+6. Toca `conversations.last_message_at`.
 
 La traza y el `last_message_at` son **best-effort**: si fallan, el endpoint igual responde `200`
 porque el mensaje ya salió. Devolver error ahí haría que la consola reintente y el cliente reciba
 el mensaje dos veces.
 
-## Toma de control humana con auto-devolución (Fase 2, v1.15.0)
+## Toma de control humana con auto-devolución
 
-Cada llamada a `advisor_send` (y **solo** a esta, ver por qué abajo) marca
-`conversations.human_takeover_until = now + ADVISOR_TAKEOVER_HOURS` (env nueva, default `6`,
-ventana deslizante — cada envío nuevo la reemplaza, no la acumula). Mientras esa columna sigue en el
-futuro:
+Cada llamada a `advisor_send` marca `conversations.human_takeover_until = now +
+ADVISOR_TAKEOVER_HOURS` (default `6`, ventana deslizante — cada envío nuevo la reemplaza, no la
+acumula). El bot también se la pone a sí mismo cuando hace un handoff
+(`BotAction::HandOffToHuman`). Mientras esa columna sigue en el futuro:
 
 - `engine::process_customer_input` **no llama al agente** para ese cliente. El mensaje entrante
-  sigue quedando en `message_events` (sigue visible en `crm-app`), pero el bot no le contesta nada.
-- Los 4 timers que le mandan algo al cliente (`expire_advisor_timer`, `expire_relay_timer`,
-  `expire_conversation_abandon`, `expire_business_hours_timer`) se vuelven no-op mientras dure la
-  pausa, igual que la reconciliación de timers vencidos al boot.
+  sigue quedando en `message_events` (sigue visible en `crm-app`) y además se apenda a la memoria
+  del agente, pero el bot no le contesta nada.
+- Los timers que le mandan algo al cliente (`expire_receipt_timer`,
+  `expire_business_hours_timer`) se vuelven no-op mientras dure la pausa, igual que la
+  reconciliación de timers vencidos al boot.
 
-**Por qué `advisor_reply` NO dispara esto:** ese endpoint existe para que el asesor destrabe una
-pregunta puntual del agente (`confirm_advisor_availability`, `set_manual_delivery_cost`) y el bot
-**siga** el checkout automático después. Si también pausara, el bot no podría confirmar el pedido ni
-responder al "gracias" del cliente hasta que venza la ventana — rompería el propósito mismo del
-endpoint. `sendText` sí es un humano escribiéndole libremente al cliente, por fuera del guion del
-bot — eso sí es tomar el caso.
-
-### `POST /internal/advisor/release`
+### `POST /internal/advisor/release` — y el turno de recuperación
 
 Devuelve la conversación al bot antes de que venza la ventana, sin esperar las 6h. Mismo header
 `X-Internal-Token`.
@@ -119,8 +118,29 @@ Devuelve la conversación al bot antes de que venza la ventana, sin esperar las 
 { "case_phone": "573001234567", "sent_by": "user_id del CRM" }
 ```
 
-No manda nada a Meta ni escribe `message_events` — solo limpia `human_takeover_until`. Responde
-`{"ok": true}`, mismos códigos de error que `/reply` (`unauthorized`, `unknown_case`,
+**Desde v1.27.0 esto hace dos cosas, no una:**
+
+1. Limpia `human_takeover_until`.
+2. **Dispara el turno de recuperación** (`engine::process_resume_for_case` →
+   `ai::agent::run_resume_turn`). El bot lee el transcript del handoff —que se fue apendando en
+   vivo por los dos lados— y sigue el pedido desde ahí: fija con `set_manual_delivery_cost` el
+   costo que cotizó el asesor, confirma con `confirm_payment_received` el pago que verificó, cierra
+   el checkout, y le reporta al asesor por `message_advisor` qué concluyó.
+
+Ese reporte de cierre es el ancla contra el riesgo del diseño: el modelo lee cifras de dinero de un
+chat en prosa, así que si leyó mal aparece de inmediato en Pendientes.
+
+Un fallo del agente **no** hace fallar la liberación: la toma de control ya quedó levantada, que es
+lo que pidió el asesor, y `degrade_agent_failure` deja el aviso en el carril del asesor. Por eso
+`crm-app` llama este endpoint con el timeout largo de turno de agente (60s), no con el de un POST a
+Meta.
+
+Si nadie pulsa "Devolver al bot", la ventana vence sola a las 6h y el barrido de 60s
+(`bot::timers::sweep_expired_handoffs`) corre el mismo turno de recuperación — pero solo para los
+casos con `state_data.handoff_reason` puesto, o sea los que el bot entregó. Una toma de control que
+un humano inició por su cuenta no tiene nada que retomar.
+
+Responde `{"ok": true}`, mismos códigos de error que `/send` (`unauthorized`, `unknown_case`,
 `invalid_request`, `internal_error`).
 
 ```bash
@@ -133,8 +153,9 @@ curl -i -X POST https://<bot>/internal/advisor/release \
 ## Lo que este endpoint NO hace (todavía)
 
 - **No manda plantillas, ni imágenes, ni botones.** Solo texto libre dentro de la ventana de 24h.
-- **No toca `advisor.rs` ni `relay.rs`.** El flujo viejo (bot → WhatsApp del asesor) sigue intacto
-  y en producción; este endpoint es un camino nuevo en paralelo.
+  Con el carril del bot fuera, esto se vuelve más áspero: el asesor *tiene* que escribirle al
+  cliente, así que una ventana de 24h cerrada bloquea el handoff. Samuel sacó las plantillas del
+  backlog el 2026-08-25; queda como limitación conocida.
 
 ## Prueba manual
 
@@ -150,53 +171,34 @@ con `actor='advisor'`, `channel='client'` y `payload->>'source' = 'crm-app'`.
 
 ---
 
-# `POST /internal/advisor/reply` (v1.12.0)
+# El carril asesor→bot: eliminado (v1.27.0)
 
-El **otro** endpoint, y la distinción importa más de lo que parece.
+Existía un segundo endpoint, `POST /internal/advisor/reply`, que metía el texto del asesor en un
+turno de agente para que contestara preguntas bloqueantes del bot ("¿cuánto vale el domicilio a
+este municipio?"). **Ya no existe**, y con él se fueron `Actor::Advisor`, `run_advisor_turn`,
+`process_advisor_turn_for_case`, el timer `AdvisorResponse` y todo el FSM determinista de
+asesor/relay.
 
-| | `/internal/advisor/send` | `/internal/advisor/reply` |
-|---|---|---|
-| A quién le habla | al **cliente** | al **bot** |
-| Pasa por el agente | no, texto crudo | **sí**, turno de agente |
-| Para qué sirve | escribirle al cliente | contestarle una pregunta al bot |
+El motivo fue un incidente que se repitió dos veces. En un turno de asesor, el texto plano del
+modelo iba al asesor, no al cliente: el 2026-09-11, con el cliente Graja, el asesor contestó `28000`
+y el "total $271.000, falta la dirección" se quedó atrapado en el carril interno. El cliente nunca lo
+vio y la venta se cerró a mano. El primer parche (2026-08-12) solo cubrió la rama en la que ya
+existe un pedido finalizado.
 
-El bot le hace preguntas al asesor que son **pasos bloqueantes del flujo de pedido**:
-
-- *"¿puedes entregar ya?"* → el agente espera para llamar `confirm_advisor_availability`.
-- *"¿cuánto vale el domicilio a este municipio?"* → espera para llamar `set_manual_delivery_cost`.
-
-Esas respuestas tienen que entrar **por el agente**. Si el asesor contesta con `send`, el cliente
-recibe un texto suelto pero el pedido queda colgado esperando una respuesta que nunca llega. Por eso
-existe `reply`.
-
-## Request
-
-```jsonc
-{
-  "case_phone": "573001234567",  // el caso; la consola ya sabe dónde está parada
-  "body": "sí, puedo entregar en 40 minutos",
-  "sent_by": "user_id del CRM"   // solo traza
-}
-```
-
-Mismo header `X-Internal-Token`, mismos códigos de error (`unauthorized`, `unknown_case`,
-`invalid_request`, `internal_error`). Diferencias:
-
-- **No devuelve `wa_message_id`.** Un turno de agente puede generar cero, uno o varios mensajes al
-  cliente — no hay un único id. Devuelve `{"ok": true}`.
-- **No devuelve `window_closed`.** Lo que se manda no va directo a Meta; los mensajes al cliente los
-  produce el agente y su envío se traza aparte.
+**El modelo nuevo:** el asesor solo le habla al cliente. El bot, cuando se topa con algo que no
+puede resolver, hace un handoff determinista y se sale; cuando le devuelven la conversación, lee lo
+que se dijo y sigue. Detalle en la sección de `/release` arriba.
 
 ## El asesor no tiene canal directo de WhatsApp
 
-El bot nunca le manda WhatsApp al asesor: cualquier pregunta/aviso sobre un caso (`message_advisor`,
-auto-aceptación, confirmación de pago, etc.) se escribe directo en `message_events` con
-`channel='advisor'` (`BotAction::NotifyAdvisor`, ver `src/engine.rs`/`src/ai/agent.rs`) sin pasar por
-Meta. La consola levanta esas filas de ahí (el caso queda marcado `needs_human`) y el asesor contesta
-con este endpoint. `ADVISOR_WHATSAPP_ENABLED` ya no existe — el corte es permanente, no un flag. Lo
-que queda de `ADVISOR_PHONE` en el código es residuo del FSM determinístico heredado
-(`src/bot/states/advisor.rs`/`relay.rs`), no del motor de agente — ver
-`docs/CLEANUP_deterministic_engine.md` §3.
+El bot nunca le manda WhatsApp al asesor: cualquier nota sobre un caso (`message_advisor`, un
+handoff, una auto-aceptación) se escribe directo en `message_events` con `channel='advisor'`
+(`BotAction::NotifyAdvisor`, ver `src/engine.rs`/`src/ai/agent.rs`) sin pasar por Meta. La consola
+levanta esas filas de ahí y el caso queda marcado `needs_human`. `message_advisor` es una nota de
+**una sola vía**: nadie le responde al bot por ahí.
+
+Lo que queda de `ADVISOR_PHONE` en el código es residuo de la clasificación de carriles
+(`engine::channel_for_recipient`), no un canal real.
 
 ## `GET /internal/media/:media_id` — proxy de adjuntos (v1.23.0)
 

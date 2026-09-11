@@ -3,8 +3,9 @@
 > Léeme al iniciar sesión, junto con `CLAUDE.md`. Este archivo dice **qué sigue y en qué orden**;
 > `CLAUDE.md` dice **cómo está construido**. Actualizar este archivo cuando algo se complete.
 >
-> Última revisión: 2026-09-08 (ver punto 5). Los puntos 1–3 siguen fechados 2026-08-12 y tienen
-> datos desactualizados sobre embajadores — ver la nota al final del punto 4.
+> Última revisión: 2026-09-11 (ver punto 6, el cambio de raíz de v1.27.0). Los puntos 1–3 siguen
+> fechados 2026-08-12 y tienen datos desactualizados sobre embajadores — ver la nota al final del
+> punto 4.
 
 ## Contexto de negocio mínimo (para no tener que salir del repo)
 
@@ -193,9 +194,19 @@ quedó sin uso y `ToolOutcome::ResultWithActions` en `src/ai/agent.rs` (variante
 preexistente y sin relación con esta limpieza). **`cargo check` corre ahora sin ningún warning**, y
 `cargo test` sigue en 200/0/5.
 
+**La mitad de asesor/relay ya se borró (2026-09-11, v1.27.0).** Al eliminar el carril asesor→bot
+(punto 6) cayó con él todo ese subgrafo: `src/bot/states/advisor.rs` (2.003 líneas),
+`src/bot/states/relay.rs` (271), `transition_advisor` entero, y los brazos de asesor/relay de
+`transition()` (ahora `unreachable!()`). La conversación de producción que mantenía vivo el subgrafo
+(`573219864356`, en `wait_advisor_response` desde 2026-03-23) quedó blindada de otra forma: esos
+estados se declararon agent-owned en `engine::is_agent_owned_state`, así que si ese cliente vuelve a
+escribir lo atiende el agente.
+
 `transition()` en sí sigue sin poder borrarse completo (sección 5 de
 `docs/CLEANUP_deterministic_engine.md` explica por qué: separar `ConversationState` en dos enums es
-un cambio de diseño más grande, fuera de alcance de una limpieza mecánica).
+un cambio de diseño más grande, fuera de alcance de una limpieza mecánica). Dato nuevo que lo hace
+más fácil si alguien lo retoma: hoy **todos** los estados vivos son agent-owned, así que `transition()`
+ya es inalcanzable entero, no solo en sus brazos de asesor.
 
 ---
 
@@ -275,6 +286,38 @@ FIFO consumido), `customers` de Kall corregido a 40 u / $208.000, y su conversac
   cambio de modelo dejó el caching sin efecto y hay que revisar el breakpoint.
 - **El pedido 36 quedó representando la compra del 09-05, no la del 08-30.** Los sabores del primer
   pedido solo existen en `message_events`. No se restauró.
+
+---
+
+### 6. Carril asesor→bot eliminado; el bot retoma leyendo el handoff — CERRADO (2026-09-11, v1.27.0)
+
+**Decisión de Samuel (2026-09-11): el asesor nunca más le habla al bot.** Le habla al cliente, y
+cuando devuelve la conversación el bot lee lo que se dijo y sigue el pedido desde ahí.
+
+El disparador fue un incidente que se repitió dos veces por el mismo motivo: en un turno de asesor el
+texto plano del modelo va al asesor, no al cliente. El 2026-09-11, cliente Graja, pedido de 50
+unidades a Puerto López — el asesor contestó `28000` y el *"total $271.000, falta la dirección"* se
+quedó atrapado en el carril interno. El cliente nunca lo vio y Samuel cerró la venta a mano.
+
+Las tres piezas del modelo nuevo (handoff determinista, memoria continua, turno de recuperación), el
+razonamiento de por qué el bot tiene que volver —si no volviera se perderían nueve cosas que solo él
+escribe, incluido el evento `Purchase` a la CAPI de Meta— y el riesgo asumido están en
+`CHANGELOG.md` v1.27.0 y en `docs/internal_advisor_send.md`.
+
+**Lo que queda abierto de esto:**
+
+- **Falta el E2E contra producción.** No hay staging; el plan es el mismo método del QA del
+  2026-08-31: un pedido de 20+ unidades a una ciudad fuera de Quindío desde el teléfono de Samuel →
+  verificar push, silencio del bot y aviso al cliente; cotizar desde `crm-app`; "Devolver al bot" →
+  verificar que retoma, fija el domicilio correcto, pide método de pago, y que el reporte de cierre
+  trae las cifras buenas. Después confirmar en Postgres que el pedido llegó a `confirmed`, que se
+  pobló `customer_addresses`, que `agent_case_messages` quedó limpio, y que salió el `Purchase` en
+  los logs de Railway.
+- **Medir cuánto cuesta el turno de recuperación.** Es una llamada al LLM extra por handoff, con el
+  transcript del handoff dentro de la ventana de 40 mensajes. Todavía no se midió.
+- **La ventana de 24h de WhatsApp pesa más ahora.** Con el carril del bot fuera, el asesor *tiene*
+  que escribirle al cliente; si la ventana se cerró, `sendText` devuelve `window_closed` y no hay
+  plantillas (Samuel las sacó del backlog el 2026-08-25). Limitación conocida, no bloqueante.
 
 ---
 

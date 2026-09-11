@@ -4,6 +4,123 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-09-11
+
+### Changed
+- **El asesor ya no le habla al bot: ahora le habla al cliente, y el bot retoma el caso leyendo lo
+  que se dijo.** Es el cambio de raíz de esta versión y toca los dos repos.
+
+  El bot le hacía preguntas bloqueantes al asesor (*"¿cuánto vale el envío a Puerto López?"*, *"¿ya
+  verificaste el pago?"*), el asesor contestaba desde `crm-app` con "Responder al bot"
+  (`POST /internal/advisor/reply`), y eso entraba como un turno de agente con `Actor::Advisor`. Esa
+  triangulación falló en producción **dos veces por el mismo motivo**: en un turno de asesor el
+  texto plano del modelo va al asesor, no al cliente. El 2026-09-11, cliente Graja, pedido de 50
+  unidades a Puerto López: el asesor contestó `28000`, el modelo escribió *"Ya tengo el total:
+  $271.000… falta la dirección"* como texto plano y quedó atrapado en el carril interno. El cliente
+  —que había escrito *"sí claro estoy esperando el valor total"*— nunca lo vio, y la venta se cerró
+  a mano. El parche del 2026-08-12 solo había cubierto la rama en la que ya existe un pedido
+  finalizado; acá no existía porque faltaban nombre y dirección.
+
+  **El modelo nuevo son tres piezas:**
+
+  1. **Handoff determinista** — `BotAction::HandOffToHuman`. Hay exactamente dos cosas que el bot no
+     puede resolver: cotizar el envío a un destino sin tarifa (municipio fuera de la lista o envío
+     nacional) y verificar que una transferencia llegó al banco. En ambas el bot deja la nota en el
+     carril del asesor con `requires_action=true` (de ahí salen Pendientes y la push), se marca
+     `human_takeover_until` a sí mismo, le manda al cliente un texto fijo de `config/messages.toml`,
+     y se sale. Las tres cosas juntas y por código: dejarle el aviso al cliente al criterio del
+     modelo es exactamente lo que falló con Graja. El motivo queda en
+     `state_data.handoff_reason`.
+  2. **Memoria continua** — `ai::memory::append_transcript_entry`. Mientras el bot está pausado no
+     corre turnos, así que ni lo que decía el cliente ni lo que le escribía el asesor entraban a
+     `agent_case_messages`: al volver había un hueco justo donde se resolvía lo importante. Ahora
+     los dos lados se apendan en vivo, sin gastar una llamada al LLM, con un marcador que pone el
+     sistema.
+  3. **Turno de recuperación** — `ai::agent::run_resume_turn` + `engine::process_resume_for_case`.
+     `POST /internal/advisor/release` deja de ser un `UPDATE` suelto y dispara el turno: el bot lee
+     el transcript, fija el domicilio con `set_manual_delivery_cost`, confirma el pago con
+     `confirm_payment_received`, cierra el checkout, y reporta al asesor qué concluyó. Si nadie
+     pulsa "Devolver al bot", el barrido de 60s (`sweep_expired_handoffs`) corre el mismo turno
+     cuando la ventana de 6h vence — solo para los casos con `handoff_reason`, o sea los que el bot
+     entregó.
+
+  **Por qué esta forma y no "el bot se sale y ya":** todo lo que cuelga de
+  `confirm_order_bookkeeping` lo escribe únicamente el bot — el catálogo de direcciones guardadas,
+  `orders.status='confirmed'` (del que depende la página `/lifecycle` entera de `crm-app`), la
+  limpieza de `agent_case_messages`, los totales del cliente, la analítica de códigos de referido y
+  —la más cara— el evento **`Purchase` a la Conversions API de Meta**, sin el cual la pauta pierde
+  su señal de conversión. Con el retorno desde el handoff el bot sigue siendo el contador y no se
+  pierde ninguna de esas nueve cosas.
+
+  **Riesgo asumido:** el modelo lee cifras de dinero de un chat en prosa. El ancla es el reporte de
+  cierre por `message_advisor`, que aterriza en Pendientes y hace visible de inmediato una lectura
+  equivocada. No se agregó un paso de aprobación a propósito — sería volver a meter la fricción que
+  este cambio quita.
+
+- **Guards de dinero, más estrictos que antes.** `set_manual_delivery_cost` y
+  `confirm_payment_received` solo corren en un turno de recuperación: el cliente no fija su propio
+  domicilio ("el envío me sale en $5.000") ni confirma su propio pago ("ya pagué").
+  `set_payment_method` deja de ser exclusivo del cliente —el cliente pudo elegirlo durante el
+  handoff— pero conserva su guard de estado.
+- **`Actor` pasa a ser `TurnKind { Customer, Resume }`** y el texto plano del modelo ahora va
+  **siempre** al cliente. La bifurcación por actor era el bug de Graja.
+- **El prompt, reescrito.** Decía que el bot era *"el puente completo entre el cliente y el asesor
+  humano: hablas con ambos"*, y cinco bloques distintos instruían pedirle el costo al asesor y
+  esperar respuesta. Ahora: un solo interlocutor (el cliente), `message_advisor` como **nota de una
+  vía** hacia la consola, y dos bloques nuevos (HANDOFF HUMANO y CUANDO TE DEVUELVEN EL CASO). La
+  regla anti-suplantación se reancló: el ancla vieja era el prefijo `"Mensaje del ASESOR"`, que ya no
+  existe; ahora son los marcadores `[SISTEMA]` y `[Durante el handoff, …]`.
+- **El timer de espera del asesor ya no avisa al cliente cuando nadie atiende.** La rama `HardReset`
+  (a los 10 min sin cotización reseteaba el pedido y le escribía al cliente) **sí corría en
+  producción** y se va por decisión explícita de Samuel: un caso entregado se queda en Pendientes
+  hasta que alguien lo atienda, sin límite. La push ya avisa.
+- `crm-app` llama `POST /internal/advisor/release` con el timeout largo de turno de agente (60s), no
+  con el de un POST a Meta: del otro lado ahora corre un turno completo.
+
+### Removed
+- `POST /internal/advisor/reply` y su ruta.
+- `Actor::Advisor`, `run_advisor_turn`, `process_advisor_turn_for_case`.
+- `TimerType::AdvisorResponse` y `TimerType::RelayInactivity` completos, con `AdvisorTimeoutKind`,
+  `advisor_timeout_kind`, `expire_advisor_timer*` y `expire_relay_timer*`.
+- **El FSM determinista de asesor/relay, entero**: `src/bot/states/advisor.rs` (2.003 líneas),
+  `src/bot/states/relay.rs` (271), `transition_advisor`, los brazos de asesor/relay de `transition()`
+  (ahora `unreachable!()`, el mismo patrón del pase de dead-code anterior),
+  `handle_wait_advisor_response` y `next_contact_advisor_state`. Verificado que ningún productor vivo
+  escribe esos estados: el único escritor de `conversations.state` en el carril cliente es el motor
+  de agente, y solo devuelve cinco estados.
+- El *session binding* del asesor (`BotAction::BindAdvisorSession`/`ClearAdvisorSession`,
+  `bind_advisor_session`, `advisor_target_phone`) y los *advisor reply threads*
+  (`record_advisor_reply_thread_if_needed`, `clear_advisor_threads_for_target`,
+  `advisor_reply_threads`). Los segundos estaban muertos por partida doble: nadie leía el mapa y
+  `to_state_data()` lo reescribía con `Default` en cada `update_state`. `execute_actions` pierde dos
+  parámetros.
+- `BotAction::RelayMessage`.
+- Campos de `state_data`: `advisor_timer_started_at`, `advisor_timer_expired`,
+  `relay_timer_started_at`, `relay_kind`, `advisor_proposed_hour`, `client_counter_hour`.
+- 42 claves muertas de `config/messages.toml` (`[relay_customer]` entero, la mayoría de
+  `[advisor_customer]` y casi todo `[timers_customer]`), con sus structs.
+
+### Fixed
+- **El hueco por el que se cayó Graja.** Cuando `set_manual_delivery_cost` corre sin pedido
+  finalizado (el checkout nunca arrancó porque faltaban datos del cliente), el resultado ya no es un
+  `"Domicilio manual guardado"` seco: le dice al modelo exactamente qué dato falta y que no dé el
+  total hasta que una herramienta se lo devuelva.
+- Etiquetas de estado en `crm-app`: `waiting_receipt` y `cancelled` no estaban en ninguno de los tres
+  mapas y se pintaban como string crudo; `pending_advisor` decía "Esperando asesor", que con este
+  cambio significa otra cosa — ahora "En manos de un asesor".
+
+### Notes
+- **Sin migración.** `handoff_reason` vive dentro del JSONB `state_data`, que ya es
+  `#[serde(default)]` y no `deny_unknown_fields`: las claves viejas (`advisor_timer_expired`, etc.)
+  que queden en Postgres simplemente se ignoran.
+- **Fila vieja blindada.** Producción tiene una conversación en `wait_advisor_response` desde
+  2026-03. Esos estados se declaran agent-owned (`engine::is_agent_owned_state`) para que, si ese
+  cliente vuelve a escribir, lo atienda el agente en vez de caer en el `unreachable!()`.
+- **Efecto lateral aceptado:** la liberación explícita sigue siendo la única vía que limpia de verdad
+  `human_takeover_until`. Una ventana que vence sola deja su timestamp viejo en la fila; es inocuo,
+  porque bot y `crm-app` lo comparan siempre contra `now()`.
+- `cargo check` sin warnings, 181 tests en verde.
+
 ## [1.26.0] - 2026-09-11
 
 ### Removed
