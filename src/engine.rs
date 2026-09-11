@@ -634,12 +634,70 @@ pub async fn send_timer_actions(
             BotAction::SendAssetImage { to, asset, caption } => {
                 send_asset_image(state, case_phone, to, asset.clone(), caption.clone()).await?;
             }
+            BotAction::HandOffToHuman {
+                reason,
+                advisor_note,
+            } => {
+                perform_handoff(state, case_phone, *reason, advisor_note).await?;
+            }
             BotAction::NoOp => {}
             _ => {
                 tracing::warn!("skipping unsupported timer action during resend");
             }
         }
     }
+
+    Ok(())
+}
+
+/// Le entrega el caso a un humano: nota al asesor (de ahí salen Pendientes y la
+/// push de `crm-app`), pausa del bot sobre ese cliente, y aviso fijo al cliente.
+/// Las tres cosas juntas y determinísticamente — nunca a criterio del modelo,
+/// que fue exactamente el modo de falla del caso Graja (2026-09-11).
+///
+/// El bot vuelve con el turno de recuperación (`ai::agent::run_resume_turn`),
+/// disparado por `POST /internal/advisor/release` o por el barrido que ve la
+/// ventana vencida.
+pub async fn perform_handoff(
+    state: &AppState,
+    case_phone: &str,
+    reason: crate::db::models::HandoffReason,
+    advisor_note: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if let Err(err) = crate::db::queries::record_message_event(
+        &state.pool,
+        case_phone,
+        CHANNEL_ADVISOR,
+        ACTOR_BOT,
+        "text",
+        Some(advisor_note),
+        Some(json!({ "requires_action": true, "handoff_reason": reason.as_str() })),
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = %err, "failed to record handoff notification");
+    }
+
+    let until = Utc::now() + chrono::Duration::hours(state.config.advisor_takeover_hours as i64);
+    crate::db::queries::set_human_takeover(&state.pool, case_phone, until).await?;
+
+    let body = match reason {
+        crate::db::models::HandoffReason::DeliveryQuote => {
+            &client_messages().agent.handoff_delivery_quote_customer
+        }
+        crate::db::models::HandoffReason::PaymentVerification => {
+            &client_messages().agent.handoff_payment_verification_customer
+        }
+    };
+    send_text(state, case_phone, case_phone, body).await?;
+
+    tracing::info!(
+        phone = %mask_phone(case_phone),
+        reason = %reason.as_str(),
+        until = %until,
+        "handed the case off to a human"
+    );
 
     Ok(())
 }
@@ -782,6 +840,13 @@ pub async fn execute_actions(
                 {
                     tracing::warn!(error = %err, "failed to record advisor notification");
                 }
+            }
+            BotAction::HandOffToHuman {
+                reason,
+                advisor_note,
+            } => {
+                perform_handoff(state, &case_phone, *reason, advisor_note).await?;
+                context.handoff_reason = Some(*reason);
             }
             BotAction::ResetConversation { phone } => {
                 reset_conversation(&state.pool, phone).await?;

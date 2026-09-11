@@ -353,6 +353,22 @@ pub enum BotAction {
         /// "requiere tu acción" — ver docs/internal_advisor_send.md.
         requires_action: bool,
     },
+    /// Le entrega el caso a un humano y saca al bot de la conversación, en una
+    /// sola acción determinista (nunca a criterio del modelo): deja la nota en
+    /// el carril del asesor con `requires_action=true` (de ahí salen Pendientes
+    /// y la push de `crm-app`), marca `conversations.human_takeover_until` para
+    /// que el bot deje de responderle a ese cliente, y le manda al cliente el
+    /// texto fijo que corresponde al motivo.
+    ///
+    /// El bot vuelve cuando el asesor pulsa "Devolver al bot"
+    /// (`POST /internal/advisor/release`) o cuando la ventana vence sola; ahí
+    /// corre el turno de recuperación, que lee lo que se dijo durante el
+    /// handoff y sigue el pedido desde ese punto.
+    HandOffToHuman {
+        reason: crate::db::models::HandoffReason,
+        /// Resumen del caso para la nota del asesor.
+        advisor_note: String,
+    },
     StartTimer {
         timer_type: TimerType,
         phone: String,
@@ -485,6 +501,7 @@ pub struct ConversationContext {
     pub pending_zone_kind: Option<String>,
     pub pending_zone_value: Option<String>,
     pub pending_zone_label: Option<String>,
+    pub handoff_reason: Option<crate::db::models::HandoffReason>,
 }
 
 impl ConversationContext {
@@ -539,6 +556,7 @@ impl ConversationContext {
             pending_zone_kind: state_data.pending_zone_kind.clone(),
             pending_zone_value: state_data.pending_zone_value.clone(),
             pending_zone_label: state_data.pending_zone_label.clone(),
+            handoff_reason: state_data.handoff_reason,
         }
     }
 
@@ -582,6 +600,7 @@ impl ConversationContext {
             pending_zone_kind: self.pending_zone_kind.clone(),
             pending_zone_value: self.pending_zone_value.clone(),
             pending_zone_label: self.pending_zone_label.clone(),
+            handoff_reason: self.handoff_reason,
         }
     }
 

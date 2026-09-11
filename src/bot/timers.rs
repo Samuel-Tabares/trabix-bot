@@ -19,7 +19,7 @@ use crate::{
         states::advisor,
     },
     db::{
-        models::ConversationStateData,
+        models::{ConversationStateData, HandoffReason},
         queries::{
             get_conversation, list_active_timer_conversations,
             reset_conversation, update_last_message, update_order_status, update_state,
@@ -837,30 +837,26 @@ async fn expire_business_hours_timer_with_source(
         });
         (ConversationState::SelectPaymentMethod, accept_actions)
     } else {
-        context.advisor_timer_started_at = Some(Utc::now());
-        context.advisor_timer_expired = false;
-        let ask_cost_actions = vec![
-            BotAction::StartTimer {
-                timer_type: TimerType::AdvisorResponse,
-                phone: phone_number.clone(),
-                duration: ADVISOR_RESPONSE_TIMEOUT,
-            },
+        // Abrimos, pero el domicilio sigue sin cotizar (municipio fuera de la
+        // lista o envío nacional). El bot no puede resolverlo y ya no existe el
+        // carril para preguntárselo al asesor: se entrega el caso a un humano.
+        context.handoff_reason = Some(HandoffReason::DeliveryQuote);
+        let handoff_actions = vec![
             BotAction::SendText {
-                to: state.config.advisor_phone.clone(),
-                body: format!(
-                    "☀️ Ya abrimos. El pedido inmediato {} sigue esperando el costo de domicilio \
-                     (municipio/zona desconocida) — contesta con el valor.",
+                to: phone_number.clone(),
+                body: "✅ ¡Ya abrimos!".to_string(),
+            },
+            BotAction::HandOffToHuman {
+                reason: HandoffReason::DeliveryQuote,
+                advisor_note: format!(
+                    "☀️ Ya abrimos y el pedido inmediato {} sigue sin costo de envío \
+                     (municipio/zona desconocida). Escríbele tú al cliente con el valor y \
+                     devuélveme la conversación cuando cierres.",
                     phone_marker(&phone_number)
                 ),
             },
-            BotAction::SendText {
-                to: phone_number.clone(),
-                body: "✅ ¡Ya abrimos! Estamos confirmando el valor del domicilio para tu \
-                       pedido, en un momento te decimos el total."
-                    .to_string(),
-            },
         ];
-        (ConversationState::AskDeliveryCost, ask_cost_actions)
+        (ConversationState::MainMenu, handoff_actions)
     };
 
     update_state(

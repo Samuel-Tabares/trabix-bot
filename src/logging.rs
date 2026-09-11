@@ -48,6 +48,7 @@ pub fn action_kind(action: &BotAction) -> &'static str {
         BotAction::SendAssetImage { .. } => "send_asset_image",
         BotAction::SendTransferInstructions { .. } => "send_transfer_instructions",
         BotAction::NotifyAdvisor { .. } => "notify_advisor",
+        BotAction::HandOffToHuman { .. } => "hand_off_to_human",
         BotAction::StartTimer { .. } => "start_timer",
         BotAction::CancelTimer { .. } => "cancel_timer",
         BotAction::UpsertDraftOrder { .. } => "upsert_draft_order",
@@ -142,6 +143,17 @@ pub fn log_bot_action(action: &BotAction) {
                 action = "notify_advisor",
                 requires_action = requires_action,
                 preview = %preview_text(body),
+                "dispatching bot action"
+            );
+        }
+        BotAction::HandOffToHuman {
+            reason,
+            advisor_note,
+        } => {
+            tracing::info!(
+                action = "hand_off_to_human",
+                reason = %reason.as_str(),
+                preview = %preview_text(advisor_note),
                 "dispatching bot action"
             );
         }

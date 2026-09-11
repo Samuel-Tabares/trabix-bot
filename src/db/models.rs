@@ -6,6 +6,42 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+/// Por qué el bot le entregó el caso a un humano. Se persiste para que el
+/// turno de recuperación (`ai::agent::run_resume_turn`), cuando el asesor
+/// devuelve la conversación, sepa qué venía a resolver y lo busque en lo que
+/// se dijo durante el handoff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffReason {
+    /// Municipio desconocido o envío nacional: el costo lo cotiza un humano.
+    DeliveryQuote,
+    /// Llegó el comprobante de una transferencia; un humano verifica en el banco.
+    PaymentVerification,
+}
+
+impl HandoffReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::DeliveryQuote => "delivery_quote",
+            Self::PaymentVerification => "payment_verification",
+        }
+    }
+
+    /// Lo que el turno de recuperación tiene que buscar en el transcript.
+    pub fn resume_hint(&self) -> &'static str {
+        match self {
+            Self::DeliveryQuote => {
+                "El asesor tenía que cotizarle al cliente el costo del envío. Busca ese valor en \
+                 lo que se dijo y, si está, fíjalo con set_manual_delivery_cost."
+            }
+            Self::PaymentVerification => {
+                "El asesor tenía que verificar en el banco que la transferencia llegó. Si dijo \
+                 explícitamente que el pago sí llegó, confírmalo con confirm_payment_received."
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ConversationStateData {
@@ -37,6 +73,8 @@ pub struct ConversationStateData {
     pub receipt_timer_expired: bool,
     pub pending_has_liquor: Option<bool>,
     pub pending_flavor: Option<String>,
+    /// Motivo del handoff humano en curso (`None` = el bot tiene el caso).
+    pub handoff_reason: Option<HandoffReason>,
     /// True una vez que el pedido `current_order_id` quedó CONFIRMADO. Bloquea
     /// crear una orden duplicada: para tocarlo de nuevo hay que reabrirlo con
     /// `modify_confirmed_order`, y para un pedido aparte hay que limpiar con
@@ -126,6 +164,7 @@ impl Default for ConversationStateData {
             pending_zone_kind: None,
             pending_zone_value: None,
             pending_zone_label: None,
+            handoff_reason: None,
         }
     }
 }

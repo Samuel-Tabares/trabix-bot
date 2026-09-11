@@ -82,6 +82,10 @@ pub struct AgentMessages {
     pub welcome: String,
     pub llm_failure_customer: String,
     pub daily_limit_customer: String,
+    /// Handoff humano por cotización de envío (`HandoffReason::DeliveryQuote`).
+    pub handoff_delivery_quote_customer: String,
+    /// Handoff humano por verificación de comprobante (`HandoffReason::PaymentVerification`).
+    pub handoff_payment_verification_customer: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -215,3 +215,6 @@ Cuéntame qué necesitas y te ayudo con todo por aquí mismo:
 ¿Qué se te antoja hoy? 😄"""
 llm_failure_customer = "Estamos teniendo un problema técnico en este momento 🙏 Un asesor revisará tu caso y te contactará en breve."
 daily_limit_customer = "Por hoy no puedo seguir atendiéndote por este chat 🙏 Un asesor revisará tu caso y te contactará directamente."
+
+handoff_delivery_quote_customer = "Voy a confirmar con un asesor el costo del envío a ese destino 📦 En un momento te escribe por aquí mismo con el valor."
+handoff_payment_verification_customer = "¡Comprobante recibido! 📄 Un asesor va a verificar que el pago llegó y te confirma por aquí mismo en un momento 🙏"

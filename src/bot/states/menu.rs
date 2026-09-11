@@ -148,6 +148,7 @@ mod tests {
             pending_zone_kind: None,
             pending_zone_value: None,
             pending_zone_label: None,
+            handoff_reason: None,
         }
     }
 

@@ -35,9 +35,9 @@ use crate::{
             BotAction, ConversationContext, ConversationState, ImageAsset, TimerType, UserInput,
         },
         states::checkout,
-        timers::{ADVISOR_RESPONSE_TIMEOUT, RECEIPT_TIMEOUT},
+        timers::RECEIPT_TIMEOUT,
     },
-    db::models::{CustomerAddress, OrderItemData},
+    db::models::{CustomerAddress, HandoffReason, OrderItemData},
     whatsapp::types::{Button, ButtonReplyPayload, ListRow, ListSection},
     AppState,
 };
@@ -611,41 +611,27 @@ fn try_handle_receipt_shortcut(
     context.receipt_timer_started_at = None;
     context.receipt_timer_expired = false;
 
-    // El comprobante NO confirma el pedido por sí solo — un asesor tiene que
-    // verificar en el banco que la plata sí llegó antes de que se marque
-    // "confirmed" (decisión de Samuel, 2026-08-12: el pedido se confirma
-    // manual, después de verificar, y se despacha después). `confirm_order_bookkeeping`
-    // (analytics, dirección, snapshot) solo corre cuando el asesor lo aprueba
-    // con `confirm_payment_received`. El comprobante en sí no se reenvía como
-    // imagen al asesor: ya quedó visible en el trace de `message_events` bajo
-    // channel='client' cuando el cliente lo subió, y `crm-app` muestra el
-    // trace completo por caso, no solo el carril del asesor.
+    // El comprobante no confirma nada por sí solo: un humano tiene que ver en el
+    // banco que la plata llegó. El handoff manda la nota al asesor, pausa al bot
+    // y le avisa al cliente, todo determinista.
     let actions = vec![
         BotAction::CancelTimer {
             timer_type: TimerType::ReceiptUpload,
             phone: context.phone_number.clone(),
         },
-        BotAction::NotifyAdvisor {
-            body: format!(
-                "🧾 Comprobante recibido, PENDIENTE de verificar en el banco. Si el pago sí \
-                 llegó, contesta confirmando (ej. \"confirmado\", \"sí llegó\") para cerrar el \
-                 pedido:\n\n{}",
+        BotAction::HandOffToHuman {
+            reason: HandoffReason::PaymentVerification,
+            advisor_note: format!(
+                "🧾 Comprobante recibido, PENDIENTE de verificar en el banco. Verifica y \
+                 escríbele tú al cliente; cuando cierres, devuélveme la conversación y yo \
+                 confirmo el pedido:\n\n{}",
                 advisor_case_summary(context)
             ),
-            requires_action: true,
-        },
-        BotAction::SendText {
-            to: context.phone_number.clone(),
-            body: "¡Comprobante recibido! 📄 Un asesor va a verificar que el pago llegó y te \
-                   confirmamos en un momento 🙏"
-                .to_string(),
         },
     ];
 
-    // Se queda en WaitReceipt (no MainMenu): sigue siendo, literalmente,
-    // "esperando el comprobante" hasta que alguien lo verifique — así
-    // confirm_payment_received puede seguir siendo un tool del motor de
-    // agente para este caso (WaitReceipt es agent-owned).
+    // Se queda en WaitReceipt: el pedido sigue literalmente esperando que
+    // alguien verifique el pago. El turno de recuperación lo retoma desde ahí.
     Some((ConversationState::WaitReceipt, actions))
 }
 
@@ -2097,28 +2083,35 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
         return auto_accept_order(id, context, delivery_cost);
     }
 
-    context.advisor_timer_started_at = Some(chrono::Utc::now());
-    context.advisor_timer_expired = false;
-
+    // No se conoce el domicilio (municipio fuera de la lista o envío nacional):
+    // el bot no tiene cómo cotizarlo y ya no existe el carril para preguntárselo
+    // al asesor. Se le entrega el caso a un humano y el bot se sale; vuelve con
+    // el turno de recuperación cuando le devuelvan la conversación.
     let actions = vec![
         BotAction::FinalizeCurrentOrder {
             status: "pending_advisor".to_string(),
         },
-        BotAction::StartTimer {
-            timer_type: TimerType::AdvisorResponse,
-            phone: context.phone_number.clone(),
-            duration: ADVISOR_RESPONSE_TIMEOUT,
+        BotAction::HandOffToHuman {
+            reason: HandoffReason::DeliveryQuote,
+            advisor_note: format!(
+                "📦 Falta cotizar el envío ({}). El cliente ya está esperando el valor: \
+                 escríbele tú por el chat y devuélveme la conversación cuando cierres.\n\n{}",
+                context
+                    .pending_zone_label
+                    .as_deref()
+                    .unwrap_or("destino sin resolver"),
+                advisor_case_summary(context)
+            ),
         },
     ];
 
-    let message = "Pedido enviado: falta el costo de domicilio (municipio/zona desconocida). \
-                    Pídele al asesor el VALOR del domicilio con message_advisor (no le preguntes \
-                    disponibilidad, se autoacepta apenas responda) y usa set_manual_delivery_cost \
-                    cuando responda.";
+    let message = "Pedido guardado, pero el costo del envío a ese destino no lo puedes calcular \
+                    tú. El caso ya quedó en manos de un asesor humano y al cliente ya se le avisó: \
+                    NO le escribas nada más ni intentes cotizarlo.";
 
     ToolOutcome::ResultWithStateChange(
         ok_result(id, message),
-        ConversationState::AskDeliveryCost,
+        ConversationState::MainMenu,
         actions,
     )
 }
@@ -3195,6 +3188,7 @@ mod tests {
             pending_zone_kind: None,
             pending_zone_value: None,
             pending_zone_label: None,
+            handoff_reason: None,
         }
     }
 
@@ -3343,7 +3337,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_checkout_scheduled_without_delivery_cost_asks_for_cost_not_availability() {
+    fn finalize_checkout_without_delivery_cost_hands_the_case_to_a_human() {
         let mut context = test_context();
         context.delivery_cost = None;
 
@@ -3351,13 +3345,28 @@ mod tests {
 
         match outcome {
             ToolOutcome::ResultWithStateChange(block, next_state, actions) => {
-                assert_eq!(next_state, ConversationState::AskDeliveryCost);
+                assert_eq!(next_state, ConversationState::MainMenu);
                 let ContentBlock::ToolResult { content, .. } = block else {
                     panic!("expected tool result");
                 };
-                assert!(content.contains("domicilio"));
-                assert!(content.contains("no le preguntes disponibilidad"));
-                assert!(actions
+                // Al modelo se le dice explícitamente que no siga hablando: el
+                // caso ya es de un humano y al cliente ya se le avisó.
+                assert!(content.contains("asesor humano"));
+                assert!(content.contains("NO le escribas"));
+                // La orden igual se persiste para que aparezca en Pendientes.
+                assert!(actions.iter().any(|action| matches!(
+                    action,
+                    BotAction::FinalizeCurrentOrder { status } if status == "pending_advisor"
+                )));
+                assert!(actions.iter().any(|action| matches!(
+                    action,
+                    BotAction::HandOffToHuman {
+                        reason: HandoffReason::DeliveryQuote,
+                        ..
+                    }
+                )));
+                // Ya no se arma ningún timer de espera del asesor.
+                assert!(!actions
                     .iter()
                     .any(|action| matches!(action, BotAction::StartTimer { .. })));
             }
@@ -3501,7 +3510,7 @@ mod tests {
     }
 
     #[test]
-    fn set_delivery_national_finalize_checkout_routes_to_ask_delivery_cost() {
+    fn set_delivery_national_finalize_checkout_hands_off_for_the_quote() {
         let mut context = test_context();
         context.items = vec![crate::db::models::OrderItemData {
             flavor: "Uva Vodka".to_string(),
@@ -3516,10 +3525,17 @@ mod tests {
         let outcome = finalize_checkout("id_1", &mut context);
 
         match outcome {
-            ToolOutcome::ResultWithStateChange(_, next_state, _) => {
-                assert_eq!(next_state, ConversationState::AskDeliveryCost);
+            ToolOutcome::ResultWithStateChange(_, next_state, actions) => {
+                assert_eq!(next_state, ConversationState::MainMenu);
+                assert!(actions.iter().any(|action| matches!(
+                    action,
+                    BotAction::HandOffToHuman {
+                        reason: HandoffReason::DeliveryQuote,
+                        ..
+                    }
+                )));
             }
-            _ => panic!("expected finalize_checkout to wait for the advisor's manual quote"),
+            _ => panic!("expected finalize_checkout to hand the quote off to a human"),
         }
     }
 
@@ -4217,17 +4233,21 @@ mod tests {
         assert!(result.is_some());
         let (state, actions) = result.unwrap();
         // Sigue en WaitReceipt: el comprobante llegó pero el pedido no se
-        // confirma solo — falta que el asesor verifique el pago (ver
-        // confirm_payment_received).
+        // confirma solo — falta que un humano verifique el pago en el banco y
+        // devuelva la conversación (ver `run_resume_turn`).
         assert_eq!(state, ConversationState::WaitReceipt);
         assert_eq!(context.receipt_media_id.as_deref(), Some("media_123"));
         assert!(!context.order_confirmed);
         // El comprobante ya no se reenvía como imagen al asesor (queda visible
-        // vía channel='client' desde que el cliente lo subió); el asesor solo
-        // recibe la notificación de texto.
-        assert!(actions
-            .iter()
-            .any(|action| matches!(action, BotAction::NotifyAdvisor { .. })));
+        // vía channel='client' desde que el cliente lo subió). Lo que sale es
+        // el handoff: nota al asesor + pausa del bot + aviso al cliente.
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            BotAction::HandOffToHuman {
+                reason: HandoffReason::PaymentVerification,
+                ..
+            }
+        )));
     }
 
     #[test]
