@@ -289,7 +289,7 @@ FIFO consumido), `customers` de Kall corregido a 40 u / $208.000, y su conversac
 
 ---
 
-### 6. Carril asesor→bot eliminado; el bot retoma leyendo el handoff — CERRADO (2026-09-11, v1.27.0)
+### 6. Carril asesor→bot eliminado; el bot retoma leyendo el handoff — CERRADO (2026-09-11, v1.27.0) · DESPLEGADO 2026-09-14
 
 **Decisión de Samuel (2026-09-11): el asesor nunca más le habla al bot.** Le habla al cliente, y
 cuando devuelve la conversación el bot lee lo que se dijo y sigue el pedido desde ahí.
@@ -306,7 +306,10 @@ escribe, incluido el evento `Purchase` a la CAPI de Meta— y el riesgo asumido 
 
 **Lo que queda abierto de esto:**
 
-- **Falta el E2E contra producción.** No hay staging; el plan es el mismo método del QA del
+- **Falta el E2E contra producción — es lo único abierto.** Ya está desplegado (2026-09-14,
+  contenedor arriba 12:52:29 UTC, sin errores en logs), pero el turno de recuperación **nunca ha
+  corrido contra un caso real**: lo único que lo respalda son 182 tests unitarios.
+  No hay staging; el plan es el mismo método del QA del
   2026-08-31: un pedido de 20+ unidades a una ciudad fuera de Quindío desde el teléfono de Samuel →
   verificar push, silencio del bot y aviso al cliente; cotizar desde `crm-app`; "Devolver al bot" →
   verificar que retoma, fija el domicilio correcto, pide método de pago, y que el reporte de cierre
