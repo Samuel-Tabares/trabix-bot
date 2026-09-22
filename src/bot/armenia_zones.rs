@@ -70,6 +70,16 @@ struct ZoneTable {
 
 static TABLE: OnceLock<ZoneTable> = OnceLock::new();
 
+/// Fuerza el parseo de la tabla al arrancar, no en la primera direccion de un
+/// cliente. `[zona_por_comuna]` esta pensado para que Samuel lo edite a mano,
+/// asi que un typo ahi es esperable — y sin esto el `panic!` del parser caia
+/// en mitad de una conversacion real en vez de reventar el deploy, que es
+/// donde un error de configuracion tiene que verse.
+pub fn validate_at_startup() {
+    let count = table().by_barrio.len();
+    tracing::info!(barrios = count, "tabla de zonas de Armenia cargada");
+}
+
 fn table() -> &'static ZoneTable {
     TABLE.get_or_init(|| {
         let parsed: ZonesFile = toml::from_str(ZONES_TOML)

@@ -49,6 +49,10 @@ distintas, ninguna de ellas "el bot no sabe programar pedidos".
 - `HandoffReason::BlockedAmount`, con su mensaje al cliente y su pista para el turno de
   recuperación (tomar la cifra de lo que dijo el humano, no recalcularla).
 - Tool `resolve_armenia_address`.
+- `armenia_zones::validate_at_startup()`, llamada desde `main`. `[zona_por_comuna]` está pensado
+  para editarse a mano, así que un typo ahí es esperable: sin esto el `panic!` del parser caía en
+  mitad de una conversación real (la tabla se carga con `OnceLock` perezoso) en vez de reventar el
+  deploy, que es donde un error de configuración tiene que verse.
 
 ### Changed
 - El prompt ya no dice "apenas sepas la zona/barrio llama set_delivery_zone_armenia

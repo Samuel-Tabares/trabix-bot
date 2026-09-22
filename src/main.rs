@@ -27,6 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
     let messages = ClientMessages::load_default()?;
     set_client_messages(messages)?;
+    granizado_bot::bot::armenia_zones::validate_at_startup();
 
     let pool = init_pool(&config.database_url).await?;
     sqlx::migrate!().run(&pool).await?;
