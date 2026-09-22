@@ -244,12 +244,22 @@ async fn process_incoming_message(
     Ok(())
 }
 
-fn describe_input(input: &UserInput) -> (&'static str, String) {
+fn describe_input(input: &UserInput) -> (String, String) {
     match input {
-        UserInput::ButtonPress(id) => ("button", id.clone()),
-        UserInput::TextMessage(body) => ("text", body.clone()),
-        UserInput::ImageMessage(id) => ("image", id.clone()),
-        UserInput::ListSelection(id) => ("list", id.clone()),
+        UserInput::ButtonPress(id) => ("button".to_string(), id.clone()),
+        UserInput::TextMessage(body) => ("text".to_string(), body.clone()),
+        UserInput::ImageMessage(id) => ("image".to_string(), id.clone()),
+        UserInput::ListSelection(id) => ("list".to_string(), id.clone()),
+        UserInput::MediaMessage {
+            kind,
+            media_id,
+            text,
+        } => (
+            kind.clone(),
+            text.clone()
+                .or_else(|| media_id.clone())
+                .unwrap_or_default(),
+        ),
     }
 }
 

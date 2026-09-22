@@ -85,6 +85,12 @@ pub struct AgentMessages {
     pub handoff_delivery_quote_customer: String,
     /// Handoff humano por verificación de comprobante (`HandoffReason::PaymentVerification`).
     pub handoff_payment_verification_customer: String,
+    /// Handoff humano por adjunto ilegible (`HandoffReason::UnreadableMedia`).
+    pub handoff_unreadable_media_customer: String,
+    /// Handoff humano porque el cliente pidió una persona (`HandoffReason::CustomerRequest`).
+    pub handoff_customer_request_customer: String,
+    /// Handoff humano por consulta de alianzas (`HandoffReason::PartnershipInquiry`).
+    pub handoff_partnership_customer: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -4,6 +4,49 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-09-22
+
+### Added
+- **El bot ya puede entregarle un caso a una persona por algo que no sea un pedido.** Hasta ahora
+  `HandoffReason` tenía exactamente dos variantes —cotizar un envío y verificar una transferencia—
+  y las dos las disparaba el código en puntos fijos del checkout. El prompt se lo decía al modelo
+  literal: *"hay exactamente dos cosas que tú no puedes resolver"*. Se agregan tres motivos:
+  `UnreadableMedia`, `CustomerRequest` y `PartnershipInquiry`, cada uno con su mensaje al cliente
+  y su pista para el turno de recuperación.
+- **Handoff automático ante cualquier adjunto que el modelo no puede leer** (imagen que no sea
+  comprobante, audio, nota de voz, video, documento, ubicación, contacto). El agente es ciego: un
+  adjunto le llega como el texto `[envió una imagen: <media_id>]`, nunca su contenido, así que
+  cualquier cosa que diga sobre él es inventada. Sticker y reacción quedan fuera a propósito —
+  son emojis, y pausar el bot 6 horas por un 👍 sería peor que el problema.
+- **Handoff automático cuando el cliente pide hablar con una persona.** El mensaje de bienvenida
+  ofrece "Hablar con un asesor" desde siempre y no había nada detrás. Lista de frases explícitas en
+  `HUMAN_REQUEST_PATTERNS`, comparadas contra el texto normalizado (minúsculas, sin tildes).
+- **Handoff automático cuando preguntan por "Emprende con Trabix" / alianzas / invertir.** Frases
+  específicas, no palabras sueltas: "emprendimiento" aparece en pedidos mayoristas legítimos y
+  escalar ahí pausaría un pedido vivo.
+- **Tool `hand_off_to_human`** para lo que los patrones no alcanzan a detectar (el cliente insiste
+  en algo sin herramienta, está molesto, pregunta por el modelo de negocio con otras palabras). Los
+  patrones son el piso determinista; la tool es el techo con criterio.
+- **Contexto de la página web en el prompt.** Las tres rutas del sitio, el texto con el que cada
+  botón de WhatsApp abre la conversación (así el bot sabe de dónde viene el cliente), lo que la
+  página promete y puede confirmarse, y qué es "Emprende con Trabix" — con el límite explícito de
+  que nunca explica márgenes, comisiones, rentabilidades ni cómo se reparte la plata.
+
+### Fixed
+- **Los mensajes que no eran texto, imagen o interactivo se perdían en silencio.** Audio, video,
+  documento, sticker, ubicación, contacto compartido y reacción caían todos en el `_ =>` de
+  `extract_user_input` y se convertían en `TextMessage("")`: se guardaba una fila de texto vacío en
+  `message_events` y el mensaje desaparecía de la bandeja. El último mensaje del cliente Juan Saa
+  (2026-09-15, fila 456) fue exactamente eso. Ahora cada tipo se parsea con su `content_type` real
+  y su `media_id`, y un tipo que Meta agregue después queda registrado con su nombre en vez de
+  desaparecer.
+
+### Changed
+- El turno de recuperación ya no obliga a escribirle al cliente: si el handoff no era de un pedido
+  y el asesor ya lo resolvió, el bot solo reporta en Pendientes y se calla.
+- `IncomingMessage` y su cadena de tipos pierden el derive `Eq` (la ubicación trae lat/long como
+  `f64`). `PartialEq` es lo único que usaban los tests.
+
 ## [1.27.0] - 2026-09-11
 
 ### Changed

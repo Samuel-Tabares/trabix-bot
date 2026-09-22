@@ -174,3 +174,6 @@ daily_limit_customer = "Por hoy no puedo seguir atendiéndote por este chat 🙏
 
 handoff_delivery_quote_customer = "Voy a confirmar con un asesor el costo del envío a ese destino 📦 En un momento te escribe por aquí mismo con el valor."
 handoff_payment_verification_customer = "¡Comprobante recibido! 📄 Un asesor va a verificar que el pago llegó y te confirma por aquí mismo en un momento 🙏"
+handoff_unreadable_media_customer = "Por aquí no alcanzo a ver lo que me mandaste 👀 Ya se lo pasé a un asesor y te escribe por este mismo chat en un momento 🙏"
+handoff_customer_request_customer = "¡Listo! 🙌 Ya le pasé tu caso a un asesor y te escribe por aquí mismo en un momento."
+handoff_partnership_customer = "Sí, existe *Emprende con Trabix* 🚀 Los detalles te los da un asesor directamente: ya le pasé tu caso y te escribe por aquí en un momento."

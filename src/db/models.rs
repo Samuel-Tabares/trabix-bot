@@ -15,6 +15,17 @@ pub enum HandoffReason {
     DeliveryQuote,
     /// Llegó el comprobante de una transferencia; un humano verifica en el banco.
     PaymentVerification,
+    /// El cliente mandó un adjunto que el bot no puede leer (imagen, audio,
+    /// video, documento, ubicación, contacto). El modelo es ciego a todo eso:
+    /// lo único honesto es que lo vea un humano (caso Juan Saa, 2026-09-14).
+    UnreadableMedia,
+    /// El cliente pidió explícitamente hablar con una persona. El menú de
+    /// bienvenida lo ofrece desde siempre; hasta ahora no existía el camino.
+    CustomerRequest,
+    /// El cliente preguntó por "Emprende con Trabix" / alianzas / invertir.
+    /// El bot no cotiza ni explica ese modelo: está en rediseño y sus números
+    /// son confidenciales (ver `MODELO NEGOCIO/` en el workspace).
+    PartnershipInquiry,
 }
 
 impl HandoffReason {
@@ -22,6 +33,9 @@ impl HandoffReason {
         match self {
             Self::DeliveryQuote => "delivery_quote",
             Self::PaymentVerification => "payment_verification",
+            Self::UnreadableMedia => "unreadable_media",
+            Self::CustomerRequest => "customer_request",
+            Self::PartnershipInquiry => "partnership_inquiry",
         }
     }
 
@@ -35,6 +49,20 @@ impl HandoffReason {
             Self::PaymentVerification => {
                 "El asesor tenía que verificar en el banco que la transferencia llegó. Si dijo \
                  explícitamente que el pago sí llegó, confírmalo con confirm_payment_received."
+            }
+            Self::UnreadableMedia => {
+                "El cliente mandó un adjunto que tú no puedes leer y un humano lo revisó. Lo que \
+                 decía está en lo que se dijo durante el handoff: sácalo de ahí, no supongas qué \
+                 contenía el archivo."
+            }
+            Self::CustomerRequest => {
+                "El cliente pidió hablar con una persona y un humano lo atendió. Retoma desde lo \
+                 que quedó resuelto; si el tema no era del pedido, no lo revivas."
+            }
+            Self::PartnershipInquiry => {
+                "El cliente preguntó por Emprende con Trabix / alianzas. Ese tema lo maneja el \
+                 equipo, tú no lo explicas ni lo cotizas. Retoma solo si quedó pendiente un pedido \
+                 de granizados."
             }
         }
     }

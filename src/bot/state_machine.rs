@@ -4,7 +4,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     db::models::{ConversationStateData, OrderItemData},
-    whatsapp::types::{Button, IncomingMessage, ListSection},
+    whatsapp::types::{
+        Button, ContactCard, IncomingMessage, ListSection, LocationContent, MediaContent,
+    },
 };
 
 use super::states::{checkout, menu};
@@ -269,6 +271,46 @@ pub enum UserInput {
     TextMessage(String),
     ImageMessage(String),
     ListSelection(String),
+    /// Cualquier otro adjunto: audio, video, documento, sticker, ubicación,
+    /// contacto compartido, reacción, o un tipo que Meta agregue mañana.
+    ///
+    /// Antes TODOS estos caían en el `_ =>` del match y se convertían en
+    /// `TextMessage("")`: se guardaba una fila vacía en `message_events` y el
+    /// mensaje desaparecía de la bandeja — el último mensaje del cliente Juan
+    /// Saa (2026-09-15) fue exactamente eso. `kind` viaja tal cual el `type`
+    /// de Meta porque es también el `content_type` con el que se persiste, y
+    /// `crm-app` ya sabe etiquetar todos esos valores.
+    MediaMessage {
+        kind: String,
+        media_id: Option<String>,
+        /// Caption, nombre de archivo o resumen legible (ubicación, contacto).
+        text: Option<String>,
+    },
+}
+
+impl UserInput {
+    /// `true` si es un adjunto que el modelo no puede leer y por lo tanto exige
+    /// ojos humanos. La imagen entra acá salvo cuando es un comprobante de
+    /// transferencia, que tiene su propio atajo determinista.
+    ///
+    /// Sticker y reacción quedan FUERA a propósito: son emojis, no contenido.
+    /// Entregarle un 👍 a un humano pausaría el bot 6 horas en mitad de un
+    /// pedido, que es peor que el problema que este handoff viene a resolver.
+    pub fn needs_human_eyes(&self) -> bool {
+        match self {
+            Self::ImageMessage(_) => true,
+            Self::MediaMessage { kind, .. } => {
+                !matches!(kind.as_str(), "sticker" | "reaction")
+            }
+            _ => false,
+        }
+    }
+
+    /// Una reacción (emoji sobre un mensaje anterior) no se responde ni se
+    /// escala: se registra en la bandeja y el turno termina ahí.
+    pub fn is_reaction(&self) -> bool {
+        matches!(self, Self::MediaMessage { kind, .. } if kind == "reaction")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -781,18 +823,118 @@ pub fn extract_user_input(message: &IncomingMessage) -> UserInput {
                 .map(|image| image.id.clone())
                 .unwrap_or_default(),
         ),
-        _ => UserInput::TextMessage(String::new()),
+        "audio" | "voice" => media_input(message.kind.as_str(), message.audio.as_ref()),
+        "video" => media_input("video", message.video.as_ref()),
+        "document" => media_input("document", message.document.as_ref()),
+        "sticker" => media_input("sticker", message.sticker.as_ref()),
+        "location" => UserInput::MediaMessage {
+            kind: "location".to_string(),
+            media_id: None,
+            text: message.location.as_ref().map(describe_location),
+        },
+        "contacts" => UserInput::MediaMessage {
+            kind: "contacts".to_string(),
+            media_id: None,
+            text: message.contacts.as_deref().map(describe_contacts),
+        },
+        "reaction" => UserInput::MediaMessage {
+            kind: "reaction".to_string(),
+            media_id: None,
+            text: message
+                .reaction
+                .as_ref()
+                .and_then(|reaction| reaction.emoji.clone()),
+        },
+        // Un tipo que Meta agregue después (o uno que no modelamos, como
+        // `order` o `system`). Se registra con su nombre real en vez de
+        // desaparecer: `crm-app` lo muestra como "Contenido" y el handoff lo
+        // pone en manos de alguien que sí puede leerlo.
+        other => UserInput::MediaMessage {
+            kind: truncate_content_type(other),
+            media_id: None,
+            text: None,
+        },
     }
+}
+
+fn media_input(kind: &str, media: Option<&MediaContent>) -> UserInput {
+    UserInput::MediaMessage {
+        kind: kind.to_string(),
+        media_id: media.map(|item| item.id.clone()),
+        text: media.and_then(|item| {
+            item.caption
+                .as_deref()
+                .or(item.filename.as_deref())
+                .map(str::to_string)
+        }),
+    }
+}
+
+fn describe_location(location: &LocationContent) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(name) = location.name.as_deref().filter(|s| !s.trim().is_empty()) {
+        parts.push(name.to_string());
+    }
+    if let Some(address) = location.address.as_deref().filter(|s| !s.trim().is_empty()) {
+        parts.push(address.to_string());
+    }
+    if let (Some(lat), Some(lon)) = (location.latitude, location.longitude) {
+        parts.push(format!("{lat}, {lon}"));
+    }
+    if parts.is_empty() {
+        "ubicación sin detalle".to_string()
+    } else {
+        parts.join(" — ")
+    }
+}
+
+fn describe_contacts(contacts: &[ContactCard]) -> String {
+    let described: Vec<String> = contacts
+        .iter()
+        .map(|card| {
+            let name = card
+                .name
+                .as_ref()
+                .and_then(|name| name.formatted_name.as_deref())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("sin nombre");
+            match card
+                .phones
+                .iter()
+                .find_map(|phone| phone.phone.as_deref().or(phone.wa_id.as_deref()))
+            {
+                Some(phone) => format!("{name} ({phone})"),
+                None => name.to_string(),
+            }
+        })
+        .collect();
+
+    if described.is_empty() {
+        "contacto sin detalle".to_string()
+    } else {
+        described.join("; ")
+    }
+}
+
+/// `message_events.content_type` es `varchar(20)`: un tipo nuevo de Meta con
+/// nombre largo haría fallar el INSERT y el mensaje se perdería otra vez, que
+/// es justo lo que este camino existe para evitar.
+fn truncate_content_type(kind: &str) -> String {
+    let cleaned = kind.trim();
+    if cleaned.is_empty() {
+        return "unsupported".to_string();
+    }
+    cleaned.chars().take(20).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::whatsapp::types::{
-        ButtonReply, ImageContent, IncomingMessage, InteractiveContent, ListReply, MessageContext,
-        TextContent,
+        ButtonReply, ImageContent, IncomingMessage, InteractiveContent, ListReply, LocationContent,
+        MediaContent, MessageContext, ReactionContent, TextContent,
     };
 
-    use super::{extract_input, UserInput};
+    use super::{extract_input, extract_user_input, UserInput};
 
     fn base_message(kind: &str) -> IncomingMessage {
         IncomingMessage {
@@ -803,8 +945,94 @@ mod tests {
             text: None,
             interactive: None,
             image: None,
+            audio: None,
+            video: None,
+            document: None,
+            sticker: None,
+            location: None,
+            contacts: None,
+            reaction: None,
             referral: None,
         }
+    }
+
+    /// El agujero que dejó sin registrar el último mensaje del cliente Juan Saa
+    /// (2026-09-15): todo lo que no fuera texto, imagen o interactivo caía en
+    /// el `_ =>` y se guardaba como una fila de texto vacío.
+    #[test]
+    fn every_message_type_survives_with_its_own_content_type() {
+        let mut audio = base_message("audio");
+        audio.audio = Some(MediaContent {
+            id: "media-audio".to_string(),
+            mime_type: Some("audio/ogg".to_string()),
+            caption: None,
+            filename: None,
+            voice: Some(true),
+        });
+        assert_eq!(
+            extract_user_input(&audio),
+            UserInput::MediaMessage {
+                kind: "audio".to_string(),
+                media_id: Some("media-audio".to_string()),
+                text: None,
+            }
+        );
+
+        let mut document = base_message("document");
+        document.document = Some(MediaContent {
+            id: "media-doc".to_string(),
+            mime_type: Some("application/pdf".to_string()),
+            caption: None,
+            filename: Some("comprobante.pdf".to_string()),
+            voice: None,
+        });
+        assert_eq!(
+            extract_user_input(&document),
+            UserInput::MediaMessage {
+                kind: "document".to_string(),
+                media_id: Some("media-doc".to_string()),
+                text: Some("comprobante.pdf".to_string()),
+            }
+        );
+
+        let mut location = base_message("location");
+        location.location = Some(LocationContent {
+            latitude: Some(4.53),
+            longitude: Some(-75.68),
+            name: None,
+            address: Some("Cra 15 #20-30".to_string()),
+        });
+        assert_eq!(
+            extract_user_input(&location),
+            UserInput::MediaMessage {
+                kind: "location".to_string(),
+                media_id: None,
+                text: Some("Cra 15 #20-30 — 4.53, -75.68".to_string()),
+            }
+        );
+
+        let mut reaction = base_message("reaction");
+        reaction.reaction = Some(ReactionContent {
+            message_id: Some("wamid-prev".to_string()),
+            emoji: Some("👍".to_string()),
+        });
+        let parsed = extract_user_input(&reaction);
+        assert!(parsed.is_reaction());
+        assert!(!parsed.needs_human_eyes());
+    }
+
+    /// Un tipo que Meta agregue mañana tiene que quedar registrado igual, con
+    /// su nombre real, en vez de desaparecer.
+    #[test]
+    fn an_unknown_message_type_keeps_its_name() {
+        assert_eq!(
+            extract_user_input(&base_message("order")),
+            UserInput::MediaMessage {
+                kind: "order".to_string(),
+                media_id: None,
+                text: None,
+            }
+        );
     }
 
     #[test]

@@ -10,12 +10,24 @@
 >
 > El modelo vigente son tres piezas:
 >
-> 1. **Handoff determinista** (`BotAction::HandOffToHuman`). Hay exactamente dos cosas que el bot no
->    puede resolver: cotizar el envio a un destino sin tarifa (municipio fuera de lista o envio
->    nacional) y verificar que una transferencia llego al banco. En los dos casos el bot deja la nota
->    en el carril del asesor con `requires_action=true`, se marca `human_takeover_until` a si mismo,
->    le manda al cliente un texto fijo de `config/messages.toml`, y se sale. Nada de esto queda a
->    criterio del modelo.
+> 1. **Handoff determinista** (`BotAction::HandOffToHuman`). El bot deja la nota en el carril del
+>    asesor con `requires_action=true`, se marca `human_takeover_until` a si mismo, le manda al
+>    cliente un texto fijo de `config/messages.toml`, y se sale. Nada de esto queda a criterio del
+>    modelo. Desde v1.28.0 hay **cinco** motivos (`HandoffReason`), no dos:
+>    - `DeliveryQuote` — cotizar el envio a un destino sin tarifa (municipio fuera de lista o envio
+>      nacional). Lo dispara `finalize_checkout`.
+>    - `PaymentVerification` — verificar que una transferencia llego al banco, cuando entra el
+>      comprobante. Lo dispara `try_handle_receipt_shortcut`.
+>    - `UnreadableMedia` — cualquier adjunto que el modelo no puede leer: imagen que no sea
+>      comprobante, audio, nota de voz, video, documento, ubicacion, contacto. Sticker y reaccion
+>      quedan fuera (son emojis).
+>    - `CustomerRequest` — el cliente pide hablar con una persona (`HUMAN_REQUEST_PATTERNS`).
+>    - `PartnershipInquiry` — el cliente pregunta por "Emprende con Trabix"/alianzas/invertir
+>      (`PARTNERSHIP_PATTERNS`).
+>
+>    Los tres ultimos los decide `try_handle_handoff_shortcut` en `ai::agent`, **antes** de la
+>    llamada al LLM: no se gasta un turno y no hay forma de que el modelo decida no escalar. Lo que
+>    los patrones no alcanzan a ver lo entrega el modelo con la tool `hand_off_to_human`.
 > 2. **Memoria continua.** Mientras el bot esta pausado, lo que dice el cliente y lo que le escribe
 >    el asesor se apendan a `agent_case_messages` sin llamar al LLM
 >    (`ai::memory::append_transcript_entry`), con marcadores que pone el sistema.
@@ -881,8 +893,14 @@ Traza append-only de cada mensaje que pasa por el bot, para que `crm-web/` pueda
 conversacion completa. Campos: `case_phone` (el cliente del caso — los mensajes con el asesor
 tambien se agrupan bajo el telefono del cliente), `channel` (`client` = carril cliente↔bot,
 `advisor` = carril interno bot↔asesor), `actor` (`client` / `bot` / `advisor`), `content_type`
-(`text`, `buttons`, `list`, `image`, `button_reply`, `list_reply`), `body`, `payload` (JSONB con
-botones/listas/media_id), `wa_message_id`, `created_at`.
+(`text`, `buttons`, `list`, `image`, `button_reply`, `list_reply` y, desde v1.28.0, tambien
+`audio`, `video`, `document`, `sticker`, `location`, `contacts`, `reaction` y el `type` crudo de
+cualquier tipo nuevo de Meta, recortado a 20 caracteres por el ancho de la columna), `body`,
+`payload` (JSONB con botones/listas/media_id), `wa_message_id`, `created_at`.
+
+Hasta v1.27.0 todo lo que no fuera texto, imagen o interactivo se guardaba como una fila de `text`
+con `body` vacio: el mensaje quedaba invisible en la bandeja. El ultimo mensaje del cliente Juan Saa
+(2026-09-15, fila 456) fue exactamente eso.
 
 Se escribe best-effort en las costuras compartidas (`execute_actions`, `send_timer_actions`,
 entradas de cliente y asesor, saludo del agente, degradacion por falla del LLM): un fallo de

@@ -49,6 +49,18 @@ pub async fn process_customer_input(
 
     log_inbound_event(&state, &phone, CHANNEL_CLIENT, ACTOR_CLIENT, &input).await;
 
+    // Una reacción (un emoji sobre un mensaje anterior) ya quedó registrada
+    // arriba y es visible en la bandeja, que era todo el problema: antes caía
+    // en el `_ =>` de `extract_user_input` y se guardaba como texto vacío. No
+    // se responde ni se entrega a nadie — un 👍 no es una pregunta.
+    if input.is_reaction() {
+        tracing::info!(
+            phone = %mask_phone(&phone),
+            "reacción del cliente registrada; no genera turno"
+        );
+        return Ok(());
+    }
+
     let conversation = load_or_create_conversation(&state, &phone).await?;
 
     // Fase 2: un asesor mandó texto libre desde crm-app (`set_human_takeover`,
@@ -285,22 +297,40 @@ fn channel_for_recipient(case_phone: &str, to: &str, advisor_phone: &str) -> &'s
     }
 }
 
-fn describe_inbound_input(input: &UserInput) -> OutboundDescription {
+/// Igual que `OutboundDescription` pero con el `content_type` dueño de su
+/// String: un adjunto que el bot no modela viaja con el `type` que mandó Meta,
+/// que no se conoce en tiempo de compilación.
+type InboundDescription = (String, Option<String>, Option<serde_json::Value>);
+
+fn describe_inbound_input(input: &UserInput) -> InboundDescription {
     match input {
-        UserInput::TextMessage(text) => ("text", Some(text.clone()), None),
+        UserInput::TextMessage(text) => ("text".to_string(), Some(text.clone()), None),
         UserInput::ButtonPress(id) => (
-            "button_reply",
+            "button_reply".to_string(),
             Some(id.clone()),
             Some(json!({ "button_id": id })),
         ),
         UserInput::ListSelection(id) => (
-            "list_reply",
+            "list_reply".to_string(),
             Some(id.clone()),
             Some(json!({ "list_id": id })),
         ),
-        UserInput::ImageMessage(media_id) => {
-            ("image", None, Some(json!({ "media_id": media_id })))
-        }
+        UserInput::ImageMessage(media_id) => (
+            "image".to_string(),
+            None,
+            Some(json!({ "media_id": media_id })),
+        ),
+        UserInput::MediaMessage {
+            kind,
+            media_id,
+            text,
+        } => (
+            kind.clone(),
+            text.clone(),
+            media_id
+                .as_ref()
+                .map(|media_id| json!({ "media_id": media_id })),
+        ),
     }
 }
 
@@ -341,7 +371,7 @@ async fn log_inbound_event(
         case_phone,
         channel,
         actor,
-        content_type,
+        &content_type,
         body.as_deref(),
         payload,
         None,
@@ -511,6 +541,10 @@ async fn degrade_agent_failure(
         }
         UserInput::ButtonPress(id) | UserInput::ListSelection(id) => format!("[botón: {id}]"),
         UserInput::ImageMessage(_) => "[imagen]".to_string(),
+        UserInput::MediaMessage { kind, text, .. } => match text {
+            Some(text) => format!("[{kind}: {text}]"),
+            None => format!("[{kind}]"),
+        },
     };
     let advisor_body = format!(
         "⚠️ Error técnico del bot IA (mensaje de {} sin procesar).\nCliente: {} ({})\nÚltimo \
@@ -666,6 +700,15 @@ pub async fn perform_handoff(
         }
         crate::db::models::HandoffReason::PaymentVerification => {
             &client_messages().agent.handoff_payment_verification_customer
+        }
+        crate::db::models::HandoffReason::UnreadableMedia => {
+            &client_messages().agent.handoff_unreadable_media_customer
+        }
+        crate::db::models::HandoffReason::CustomerRequest => {
+            &client_messages().agent.handoff_customer_request_customer
+        }
+        crate::db::models::HandoffReason::PartnershipInquiry => {
+            &client_messages().agent.handoff_partnership_customer
         }
     };
     send_text(state, case_phone, case_phone, body).await?;

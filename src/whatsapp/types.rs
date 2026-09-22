@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WebhookPayload {
     pub entry: Vec<Entry>,
 }
@@ -61,24 +61,24 @@ impl WebhookPayload {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IncomingMessageEvent {
     pub message: IncomingMessage,
     #[serde(default)]
     pub contact: Option<Contact>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Entry {
     pub changes: Vec<Change>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Change {
     pub value: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Value {
     #[serde(default)]
     pub messages: Option<Vec<IncomingMessage>>,
@@ -129,7 +129,7 @@ pub struct ContactProfile {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IncomingMessage {
     pub from: String,
     pub id: String,
@@ -143,6 +143,20 @@ pub struct IncomingMessage {
     pub interactive: Option<InteractiveContent>,
     #[serde(default)]
     pub image: Option<ImageContent>,
+    #[serde(default)]
+    pub audio: Option<MediaContent>,
+    #[serde(default)]
+    pub video: Option<MediaContent>,
+    #[serde(default)]
+    pub document: Option<MediaContent>,
+    #[serde(default)]
+    pub sticker: Option<MediaContent>,
+    #[serde(default)]
+    pub location: Option<LocationContent>,
+    #[serde(default)]
+    pub contacts: Option<Vec<ContactCard>>,
+    #[serde(default)]
+    pub reaction: Option<ReactionContent>,
     #[serde(default)]
     pub referral: Option<MessageReferral>,
 }
@@ -202,6 +216,67 @@ pub struct ImageContent {
     pub id: String,
     #[serde(default)]
     pub mime_type: Option<String>,
+}
+
+/// Forma común de `audio`, `video`, `document` y `sticker` en el webhook de
+/// Meta. Cada tipo usa un subconjunto (solo `document` trae `filename`, solo
+/// `audio` trae `voice`), así que todo va opcional y un campo ausente no
+/// revienta el payload entero — la lección de `Contact::name`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MediaContent {
+    pub id: String,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub caption: Option<String>,
+    #[serde(default)]
+    pub filename: Option<String>,
+    #[serde(default)]
+    pub voice: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocationContent {
+    #[serde(default)]
+    pub latitude: Option<f64>,
+    #[serde(default)]
+    pub longitude: Option<f64>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub address: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContactCard {
+    #[serde(default)]
+    pub name: Option<ContactCardName>,
+    #[serde(default)]
+    pub phones: Vec<ContactCardPhone>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContactCardName {
+    #[serde(default)]
+    pub formatted_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContactCardPhone {
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub wa_id: Option<String>,
+}
+
+/// Una reacción (emoji sobre un mensaje anterior). No es contenido que haya que
+/// responder ni entregarle a un humano: se registra y ya.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReactionContent {
+    #[serde(default)]
+    pub message_id: Option<String>,
+    #[serde(default)]
+    pub emoji: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -338,6 +413,13 @@ mod tests {
             }),
             interactive: None,
             image: None,
+            audio: None,
+            video: None,
+            document: None,
+            sticker: None,
+            location: None,
+            contacts: None,
+            reaction: None,
             referral: None,
         }
     }

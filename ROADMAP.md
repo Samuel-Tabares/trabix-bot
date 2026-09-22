@@ -331,6 +331,45 @@ escribe, incluido el evento `Purchase` a la CAPI de Meta— y el riesgo asumido 
 
 ---
 
+### 7. Handoff por adjunto, por petición de persona y por alianzas — CERRADO (2026-09-22, v1.28.0) · SIN DESPLEGAR
+
+**Origen: el chat de Juan Saa (+57 313 643 6411), 2026-09-14.** Llegó desde `/volumen/` del sitio,
+pidió "Hablar con un asesor" en su segundo mensaje, mandó una captura de la página y preguntó por la
+opción de *emprender*. El bot le contestó *"con gusto te ayudo yo mismo"*, *"no pude ver bien la
+imagen"* y *"por ahora solo manejo pedidos de granizados aquí"* — y **no generó una sola fila de
+canal `advisor`**: cero Pendientes, cero push. Samuel lo encontró de casualidad ~20 horas después.
+
+No fue una falla del modelo: hizo exactamente lo que el sistema le permitía. `HandoffReason` tenía
+dos variantes y el prompt le decía *"hay exactamente dos cosas que tú no puedes resolver"*.
+`message_advisor` existía pero es solo una nota — no pausa al bot ni le avisa al cliente.
+
+Lo que se construyó está en `CHANGELOG.md` v1.28.0. La forma del arreglo es en capas, a propósito:
+patrones deterministas antes del LLM (piso, no se puede saltar) + contexto del sitio en el prompt +
+`hand_off_to_human` para lo que los patrones no ven (techo, con criterio).
+
+**Lo que queda abierto de esto:**
+
+- **Falta desplegar y falta el E2E contra producción.** Los patrones nunca han corrido contra
+  mensajes reales. Lo que hay son tests unitarios. Mínimo a probar desde el teléfono de Samuel:
+  mandar una foto cualquiera (→ handoff + push + el adjunto abre desde la bandeja), escribir
+  "quiero hablar con un asesor" (→ handoff), escribir "me interesa lo de emprender" (→ handoff con
+  el mensaje de alianzas), mandar una nota de voz y un sticker (la nota escala, el sticker no), y
+  reaccionar con un emoji (queda en la bandeja, no escala).
+- **Los patrones son una lista fija en el código, no configuración.** Agregar una frase exige
+  recompilar y desplegar. Si la lista empieza a moverse seguido, mudarla a `config/messages.toml`.
+- **Sin telemetría de falsos positivos.** No hay forma de contar cuántos handoffs disparó cada
+  patrón. Si el bot empieza a escalar de más, la evidencia hay que sacarla a mano de los logs
+  (`handed the case off to a human` trae el `reason`).
+- **El bot sigue siendo ciego.** Este cambio lo hace honesto al respecto, no lo arregla. Darle
+  visión real (bajar el media de Graph API y mandarlo en base64 al modelo) es otra decisión, con su
+  costo en tokens por turno — ver la discusión en el chat del 2026-09-22.
+- **La fuga del sitio sigue abierta y no es de este repo**: `website/alianzas/index.html` tiene el
+  botón flotante de WhatsApp apuntando a este bot, mientras la tarjeta de la home promete "contacto
+  por correo". El handoff nuevo tapa el síntoma; la decisión de a dónde debe ir ese botón es de
+  `website/`.
+
+---
+
 ## Definición de "listo" para cualquier cambio aquí
 
 `cargo check` + `cargo test` en verde · `CHANGELOG.md` actualizado · versión bumpeada en
