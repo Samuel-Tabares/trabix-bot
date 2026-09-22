@@ -91,6 +91,11 @@ pub struct AgentMessages {
     pub handoff_customer_request_customer: String,
     /// Handoff humano por consulta de alianzas (`HandoffReason::PartnershipInquiry`).
     pub handoff_partnership_customer: String,
+    /// Handoff humano porque el guard de cifras bloqueó el mensaje
+    /// (`HandoffReason::BlockedAmount`). El cliente ya recibió el texto de
+    /// reemplazo del guard, así que este mensaje no se le manda repetido — se
+    /// reusa el mismo texto a propósito.
+    pub handoff_blocked_amount_customer: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

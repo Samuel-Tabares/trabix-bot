@@ -370,6 +370,45 @@ patrones deterministas antes del LLM (piso, no se puede saltar) + contexto del s
 
 ---
 
+### 8. Las tres fallas del chat de Kall Díaz — CERRADO (2026-09-22, v1.29.0) · SIN DESPLEGAR
+
+Origen: el chat de Kall Díaz (+57 313 524 8660), del 2026-08-30 al 2026-09-18, y sus 3 pedidos en
+base. Samuel lo trajo como "los pedidos programados no funcionan bien". **No era eso.** Eran tres
+fallas distintas, y la de programados no es que el bot no sepa programar:
+
+1. **La zona de domicilio se adivinaba.** Misma dirección, $6.000 el 30 de agosto y $8.000 el 18 de
+   septiembre. Detalle y arreglo en `CHANGELOG.md` v1.29.0 y en
+   `general_info/current_runtime_reference.md` → "Zona de domicilio en Armenia".
+2. **El guard de cifras dejaba al cliente esperando en silencio.** Kall esperó 6 horas.
+3. **Un pedido programado se duplicaba al pasar su hora.** Órdenes 45 y 46, misma entrega.
+
+Se evaluó y **se descartó** la propuesta original (handoff en todo pedido programado): de los tres
+incidentes de programados en ese chat, uno fue la regla de 24h ya corregida el 2026-09-08, otro el
+guard de cifras y otro el duplicado — ninguno se arreglaba con un handoff, y habría agregado
+trabajo manual en todos los programados que sí funcionan. El handoff se colgó del guard de cifras,
+que es el caso que de verdad moría sin avisar. Decisión de Samuel, 2026-09-22.
+
+**Lo que queda abierto:**
+
+- **`[zona_por_comuna]` de `config/armenia_zones.toml` es un BORRADOR sin revisar.** Las 10 líneas
+  se asignaron por geografía de las comunas, sin conocimiento del costo real de reparto. El único
+  dato confirmado por Samuel es Granada (comuna 9) = centro. **Hasta que las revise, el costo puede
+  seguir saliendo mal — solo que ahora sale mal de forma consistente y auditable, no aleatoria.**
+- **Las direcciones ya guardadas conservan su zona vieja.** `customer_addresses` tiene 12 filas; la
+  de Kall quedó en `centro/$8.000` (correcta) porque el bot la pisó el 2026-09-18, pero no se hizo
+  backfill del resto contra la tabla nueva. El prompt le pide al modelo repasar por
+  `resolve_armenia_address` una zona guardada que no le conste, que es mitigación, no arreglo.
+- **Falta el E2E contra producción.** Mínimo: un pedido a una dirección con barrio conocido (que
+  resuelva solo), uno con un nombre de conjunto que no esté en la tabla (que pregunte la zona), y
+  verificar que un programado conserva su pedido si se pregunta por él después de la hora.
+- **Sin telemetría de cuántas veces pregunta.** Si la tabla resulta tener mala cobertura, el bot va
+  a preguntar la zona seguido y no hay forma de contarlo salvo leer logs.
+- **El duplicado del 2026-09-18 sigue en la base.** Órdenes 45 y 46 están las dos `confirmed`. No
+  se tocaron datos de producción en este cambio; si una de las dos se registró como venta, hay que
+  revisarlo a mano.
+
+---
+
 ## Definición de "listo" para cualquier cambio aquí
 
 `cargo check` + `cargo test` en verde · `CHANGELOG.md` actualizado · versión bumpeada en

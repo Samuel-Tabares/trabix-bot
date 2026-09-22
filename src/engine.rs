@@ -710,6 +710,9 @@ pub async fn perform_handoff(
         crate::db::models::HandoffReason::PartnershipInquiry => {
             &client_messages().agent.handoff_partnership_customer
         }
+        crate::db::models::HandoffReason::BlockedAmount => {
+            &client_messages().agent.handoff_blocked_amount_customer
+        }
     };
     send_text(state, case_phone, case_phone, body).await?;
 

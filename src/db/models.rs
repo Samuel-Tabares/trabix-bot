@@ -22,6 +22,11 @@ pub enum HandoffReason {
     /// El cliente pidió explícitamente hablar con una persona. El menú de
     /// bienvenida lo ofrece desde siempre; hasta ahora no existía el camino.
     CustomerRequest,
+    /// El guard de cifras bloqueó el mensaje del modelo: intentó decir un
+    /// valor en pesos que ninguna herramienta respalda. Antes esto era un
+    /// callejón sin salida silencioso (caso Kall Díaz, 2026-09-18: seis horas
+    /// de espera por un pedido programado que nunca avanzó).
+    BlockedAmount,
     /// El cliente preguntó por "Emprende con Trabix" / alianzas / invertir.
     /// El bot no cotiza ni explica ese modelo: está en rediseño y sus números
     /// son confidenciales (ver `MODELO NEGOCIO/` en el workspace).
@@ -35,6 +40,7 @@ impl HandoffReason {
             Self::PaymentVerification => "payment_verification",
             Self::UnreadableMedia => "unreadable_media",
             Self::CustomerRequest => "customer_request",
+            Self::BlockedAmount => "blocked_amount",
             Self::PartnershipInquiry => "partnership_inquiry",
         }
     }
@@ -63,6 +69,12 @@ impl HandoffReason {
                 "El cliente preguntó por Emprende con Trabix / alianzas. Ese tema lo maneja el \
                  equipo, tú no lo explicas ni lo cotizas. Retoma solo si quedó pendiente un pedido \
                  de granizados."
+            }
+            Self::BlockedAmount => {
+                "Tu mensaje anterior se bloqueó porque mencionaba una cifra sin respaldo de una \
+                 herramienta, y un humano le dio el valor al cliente. Toma la cifra de lo que se \
+                 dijo durante el handoff, NO la recalcules tú, y vuelve a llamar las herramientas \
+                 del pedido antes de repetirle cualquier total."
             }
         }
     }

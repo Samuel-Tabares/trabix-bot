@@ -24,6 +24,9 @@
 >    - `CustomerRequest` — el cliente pide hablar con una persona (`HUMAN_REQUEST_PATTERNS`).
 >    - `PartnershipInquiry` — el cliente pregunta por "Emprende con Trabix"/alianzas/invertir
 >      (`PARTNERSHIP_PATTERNS`).
+>    - `BlockedAmount` (v1.29.0) — el guard de cifras bloqueo el mensaje del modelo. Antes eso era
+>      un callejon sin salida silencioso: se reemplazaba el texto, se escribia un `warn` y el turno
+>      terminaba. El cliente Kall Diaz espero 6 horas por eso el 2026-09-18.
 >
 >    Los tres ultimos los decide `try_handle_handoff_shortcut` en `ai::agent`, **antes** de la
 >    llamada al LLM: no se gasta un turno y no hay forma de que el modelo decida no escalar. Lo que
@@ -907,6 +910,31 @@ entradas de cliente y asesor, saludo del agente, degradacion por falla del LLM):
 logging solo genera warning y nunca bloquea la entrega. Aplica a ambos motores. El ping `✅` del
 asesor no se registra. La tabla solo captura hacia adelante (no hay backfill de conversaciones
 previas a la migracion).
+
+### Zona de domicilio en Armenia (v1.29.0)
+
+La zona de tarifa (norte $6.000 / centro $8.000 / sur $10.000) **no la elige el modelo**. Hasta
+v1.28.0 `set_delivery_zone_armenia` recibia el sector como parametro y no habia tabla detras: el
+modelo leia el barrio y adivinaba. Con la misma direccion de Kall Diaz dijo norte ($6.000) el
+2026-08-30 y centro ($8.000) el 2026-09-18, y ademas guardaba la adivinanza en
+`customer_addresses.zone_value`, asi que el error se heredaba en cada recompra.
+
+Hoy hay dos caminos y solo dos:
+
+1. `resolve_armenia_address { address }` — resuelve contra `config/armenia_zones.toml` (~295
+   barrios de las 10 comunas oficiales de Armenia) via `bot::armenia_zones::lookup_zone`. Normaliza
+   minusculas/tildes/puntuacion y recorta prefijos genericos ("Barrio", "Conjunto Residencial",
+   "Urbanizacion"...), y busca la ventana de palabras mas larga que coincida.
+2. `set_delivery_zone_armenia { sector }` — solo cuando el CLIENTE dijo la zona. Su palabra manda
+   sobre la tabla.
+
+Si el barrio no esta en la tabla (`Unknown`) o cae en dos comunas con zonas distintas
+(`Ambiguous` — un conjunto que se llama igual que un barrio de otro lado), el bot **pregunta**. Esa
+es la parte que arregla el bug; la tabla solo ahorra la pregunta cuando se puede.
+
+El archivo se compila con `include_str!`, asi que editarlo exige recompilar — lo cual ya pasa en
+cada `railway up`. La unica seccion pensada para editarse es `[zona_por_comuna]` (10 lineas);
+`[excepciones]` corrige un barrio suelto sin tocar la division oficial.
 
 ## Configuracion Y Operacion
 

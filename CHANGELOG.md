@@ -4,6 +4,58 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-09-22
+
+Todo lo de esta versión sale del chat del cliente Kall Díaz (2026-08-30 → 2026-09-18). Tres fallas
+distintas, ninguna de ellas "el bot no sabe programar pedidos".
+
+### Fixed
+- **El bot adivinaba la zona de domicilio de Armenia.** `set_delivery_zone_armenia` recibía el
+  sector (`norte`/`centro`/`sur`) como un parámetro que elegía el modelo, y no había ninguna tabla
+  detrás: el modelo leía "Barrio Granada" y decidía. Con Kall Díaz dijo **norte y cobró $6.000** el
+  2026-08-30, y **centro, $8.000** el 2026-09-18, sobre la misma dirección. Peor: persistía la
+  adivinanza en `customer_addresses.zone_value` como si fuera un hecho, así que cada recompra
+  heredaba el error.
+
+  Ahora hay `config/armenia_zones.toml` (los ~295 barrios de las 10 comunas oficiales de Armenia) y
+  `bot::armenia_zones::lookup_zone`, determinista. La tool nueva `resolve_armenia_address` recibe el
+  texto de la dirección y resuelve la zona sola. **Lo que arregla el bug no es la tabla, es que ya
+  no se adivina**: si el barrio no está o cae en dos comunas con zonas distintas (un conjunto que se
+  llama igual que un barrio de otro lado), devuelve `Unknown`/`Ambiguous` y el bot tiene que
+  preguntarle la zona al cliente. `set_delivery_zone_armenia` sigue existiendo para cuando el
+  CLIENTE dice la zona — su palabra manda sobre la tabla.
+
+- **Un mensaje bloqueado por el guard de cifras era un callejón sin salida silencioso.**
+  `sanitize_hallucinated_amounts` reemplazaba el mensaje entero por un texto neutro, escribía un
+  `warn` y ahí terminaba el turno: sin reintento, sin nota en Pendientes, sin push. El 2026-09-18
+  Kall pidió entrega "para hoy después de las 4 pm", el modelo intentó decir un total sin respaldo,
+  el guard se lo tragó, y el cliente **esperó seis horas** escribiendo "?" a un bot que le repetía
+  "dame un momento". Pasó cuatro veces en ese chat.
+
+  Ahora la función devuelve también qué cifras bloqueó, y un bloqueo en un turno de cliente dispara
+  `HandoffReason::BlockedAmount`. El texto de reemplazo dejó de prometer un reintento que nunca
+  ocurría y dice lo que de verdad pasa: que alguien del equipo le escribe.
+
+- **Un pedido programado se duplicaba apenas pasaba su hora.**
+  `confirmed_order_already_delivered` daba por entregado un pedido programado en el minuto exacto de
+  su fecha/hora, sin que nadie confirmara la entrega. El pedido 45 de Kall estaba confirmado para
+  las 16:00; a las 18:27 preguntó "¿van a traer el pedido?" y el bot le contestó *"no tienes ningún
+  pedido activo"* y le armó el **pedido 46** con los mismos ítems. Dos órdenes confirmadas en base
+  por una sola entrega real. Ahora un pedido programado conserva su binding hasta
+  `IMMEDIATE_ORDER_ACTIVE_HOURS` (6h) **después** de la hora agendada: que pase la hora no significa
+  que se entregó, el domiciliario puede ir tarde.
+
+### Added
+- `HandoffReason::BlockedAmount`, con su mensaje al cliente y su pista para el turno de
+  recuperación (tomar la cifra de lo que dijo el humano, no recalcularla).
+- Tool `resolve_armenia_address`.
+
+### Changed
+- El prompt ya no dice "apenas sepas la zona/barrio llama set_delivery_zone_armenia
+  INMEDIATAMENTE" — eso era exactamente la instrucción que autorizaba la adivinanza. Ahora enumera
+  las dos únicas fuentes válidas de una zona (la tabla o la boca del cliente) y cierra con "que un
+  nombre te suene a una zona no es saberla".
+
 ## [1.28.0] - 2026-09-22
 
 ### Added

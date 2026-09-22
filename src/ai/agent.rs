@@ -162,13 +162,22 @@ DIRECCIONES GUARDADAS (recompra):
   en vez de pedirle que la escriba de nuevo. Si elige una, usa select_saved_address con su \
   address_id — y AUN ASÍ llama después set_delivery_zone_armenia/set_delivery_nearby_town con la \
   misma zona para fijar el costo real, nunca uses el costo que te muestra select_saved_address como \
-  definitivo. Si dice "otra dirección" o la lista viene vacía, sigue el flujo normal (pídesela y \
+  definitivo. Si la dirección guardada trae una zona que no te consta, pásala por \
+  resolve_armenia_address en vez de darla por buena: las direcciones guardadas antes de la tabla de \
+  barrios pueden tener una zona mal puesta. Si dice "otra dirección" o la lista viene vacía, sigue el flujo normal (pídesela y \
   resuélvela con las tools de zona de abajo).
 
 DOMICILIO AUTOMÁTICO (resuelvelo tu siempre que una herramienta pueda):
-- Armenia: apenas sepas la zona/barrio (norte/centro/sur) llama set_delivery_zone_armenia \
-  INMEDIATAMENTE — la herramienta te da el costo sola. Si la \
-  dirección dice "sur/norte/centro de Armenia" ya tienes la zona, úsala sin volver a preguntar. ✓
+- Armenia: NUNCA deduzcas la zona de un barrio, un conjunto ni una dirección. No la sabes, y \
+  adivinarla ya le cobró de menos a un cliente real durante tres semanas. Hay dos caminos y solo \
+  dos:
+  · El cliente te dio una DIRECCIÓN → llama resolve_armenia_address con el texto completo. Si \
+    reconoce el barrio te fija el costo sola; si no lo reconoce o es ambiguo, te va a decir que le \
+    preguntes la zona al cliente. Hazlo, con esas palabras: "¿esa dirección queda al norte, en el \
+    centro o al sur?".
+  · El cliente DIJO la zona ("es en el sur", "norte de Armenia") → llama set_delivery_zone_armenia \
+    con esa zona. Lo que dice el cliente manda sobre la tabla.
+  Que un nombre te suene a una zona no es saberla. Si no viene de una de esas dos fuentes, pregunta.
 - DOMICILIO GRATIS EN ARMENIA: aplica ÚNICAMENTE entre 6 y 19 unidades, y solo en Armenia. Por \
   debajo de 6 se cobra tarifa de zona. Desde 20 unidades es precio mayorista y el domicilio \
   SIEMPRE se cobra, sin excepción. Fuera de Armenia nunca es gratis, en ninguna cantidad.
@@ -652,23 +661,52 @@ async fn run_case_turn(
         .unwrap_or_else(|| current_state.clone());
 
     let known_amounts = known_tool_amounts(&history);
+    let mut blocked_amounts: Vec<String> = Vec::new();
     for action in actions.iter_mut() {
         match action {
             BotAction::SendText { to, body } => {
                 *body = normalize_whatsapp_markdown(body);
-                *body = sanitize_hallucinated_amounts(body, &known_amounts, to, false);
+                let (clean, blocked) =
+                    sanitize_hallucinated_amounts(body, &known_amounts, to, false);
+                *body = clean;
+                blocked_amounts.extend(blocked);
             }
             BotAction::NotifyAdvisor { body, .. } => {
                 *body = normalize_whatsapp_markdown(body);
-                *body = sanitize_hallucinated_amounts(
+                let (clean, _) = sanitize_hallucinated_amounts(
                     body,
                     &known_amounts,
                     &context.phone_number,
                     true,
                 );
+                *body = clean;
             }
             _ => {}
         }
+    }
+
+    // Un mensaje bloqueado por el guard de cifras era un callejon sin salida:
+    // al cliente le llegaba "dame un momento, estoy verificando las cifras" y
+    // el turno terminaba ahi, sin reintento y sin avisarle a nadie — solo un
+    // `warn` en los logs. Al cliente Kall Diaz le paso cuatro veces; el
+    // 2026-09-18 espero SEIS HORAS por un pedido programado que nunca avanzo.
+    //
+    // Si el modelo no logra decir una cifra respaldada, eso es literalmente
+    // algo que el bot no puede resolver: se entrega el caso. El texto de
+    // reemplazo ya salio, asi que el cliente queda avisado dos veces, pero
+    // prefiero eso a dejarlo esperando.
+    if !blocked_amounts.is_empty() && turn_kind == TurnKind::Customer {
+        actions.push(BotAction::HandOffToHuman {
+            reason: HandoffReason::BlockedAmount,
+            advisor_note: format!(
+                "🚫 El bot intentó decirle al cliente una cifra que ninguna herramienta \
+                 respalda ({}), así que el mensaje se bloqueó y no pudo seguir solo. \
+                 Revisa el pedido, dile tú el total correcto y devuélveme la \
+                 conversación.\n\n{}",
+                blocked_amounts.join(", "),
+                advisor_case_summary(context)
+            ),
+        });
     }
 
     if actions.is_empty() {
@@ -931,7 +969,14 @@ pub(crate) async fn record_greeting_turn(
 ///
 /// Criterio: un pedido deja de ser modificable cuando ya se entregó.
 /// - Inmediato: `IMMEDIATE_ORDER_ACTIVE_HOURS` después de confirmarse.
-/// - Programado: cuando pasa su fecha/hora de entrega.
+/// - Programado: `IMMEDIATE_ORDER_ACTIVE_HOURS` después de su fecha/hora de
+///   entrega. La hora agendada por sí sola NO significa entregado — el
+///   domiciliario puede ir tarde. Soltar el binding en el minuto exacto le
+///   costó a Kall Díaz un pedido duplicado el 2026-09-18: tenía el pedido 45
+///   confirmado para las 16:00, a las 18:27 preguntó "¿van a traer el
+///   pedido?" y el bot le contestó "no tienes ningún pedido activo" y le armó
+///   el pedido 46 con los mismos ítems. Dos órdenes confirmadas en base por
+///   una sola entrega real.
 /// - Sin `order_confirmed_at` (estado escrito por una versión anterior): se trata
 ///   como entregado. Es la dirección segura — como mucho crea una orden de más,
 ///   que sí es visible y corregible, en vez de destruir una existente.
@@ -965,7 +1010,9 @@ fn confirmed_order_already_delivered(
             ) {
                 let now_bogota =
                     crate::bot::states::scheduling::current_bogota_now().naive_local();
-                return chrono::NaiveDateTime::new(date, time) < now_bogota;
+                let scheduled = chrono::NaiveDateTime::new(date, time);
+                return scheduled + chrono::Duration::hours(IMMEDIATE_ORDER_ACTIVE_HOURS)
+                    < now_bogota;
             }
         }
     }
@@ -1320,6 +1367,7 @@ fn dispatch_tool(
                 None => ToolOutcome::Result(ok_result(id, json!({ "found": false }).to_string())),
             }
         }
+        "resolve_armenia_address" => wrap(id, resolve_armenia_address(input, context)),
         "set_delivery_zone_armenia" => wrap(id, set_delivery_zone_armenia(input, context)),
         "set_delivery_nearby_town" => wrap(id, set_delivery_nearby_town(input, context)),
         "set_delivery_national" => wrap(id, set_delivery_national(input, context)),
@@ -1765,45 +1813,90 @@ fn free_delivery_status_line(context: &ConversationContext, total_units: u32) ->
     }
 }
 
+/// Resuelve la zona a partir del TEXTO de la dirección, sin que el modelo
+/// elija. Ver `bot::armenia_zones`: si el barrio no está en la tabla o cae en
+/// dos zonas, no se adivina — se le devuelve al modelo la orden de preguntar.
+fn resolve_armenia_address(input: &Value, context: &mut ConversationContext) -> (String, bool) {
+    let address = input
+        .get("address")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if address.is_empty() {
+        return ("La dirección no puede venir vacía.".to_string(), true);
+    }
+
+    let ask = |detail: String| {
+        (
+            format!(
+                "{detail} NO la adivines: pregúntale al cliente si esa dirección queda en el \
+                 NORTE, el CENTRO o el SUR de Armenia, y cuando te responda llama \
+                 set_delivery_zone_armenia con lo que él diga.",
+            ),
+            true,
+        )
+    };
+
+    match crate::bot::armenia_zones::lookup_zone(address) {
+        crate::bot::armenia_zones::ZoneLookup::Resolved { zone, barrio } => {
+            let (message, is_error) = apply_armenia_zone(zone, context);
+            (format!("Barrio reconocido: {barrio}. {message}"), is_error)
+        }
+        crate::bot::armenia_zones::ZoneLookup::Ambiguous { barrio } => ask(format!(
+            "'{barrio}' existe en más de una zona de Armenia, así que no se puede saber cuál es."
+        )),
+        crate::bot::armenia_zones::ZoneLookup::Unknown => ask(
+            "Esa dirección no tiene un barrio que yo reconozca (puede ser un conjunto, unos \
+             apartamentos o un nombre local)."
+                .to_string(),
+        ),
+    }
+}
+
 fn set_delivery_zone_armenia(input: &Value, context: &mut ConversationContext) -> (String, bool) {
     let sector = input.get("sector").and_then(Value::as_str).unwrap_or("");
     match ArmeniaZone::from_text(sector) {
-        Some(zone) => {
-            let total_units: u32 = context.items.iter().map(|item| item.quantity).sum();
-            let cost = delivery_zone::armenia_delivery_cost(zone, total_units);
-            context.delivery_cost = Some(cost as i32);
-            context.pending_zone_kind = Some("armenia".to_string());
-            context.pending_zone_value = Some(zone.storage_key().to_string());
-            context.pending_zone_label = Some(format!("Armenia - {}", zone.label()));
-            let message = if cost == 0 {
-                format!(
-                    "Zona {} de Armenia: domicilio GRATIS $0 (pedido de {total_units} unidades, \
-                     califica para domicilio gratis).",
-                    zone.label(),
-                )
-            } else if let Some(faltan) = delivery_zone::units_until_free_delivery(total_units) {
-                format!(
-                    "Zona {} de Armenia: domicilio ${} (agrega {faltan} unidad{} más y el \
-                     domicilio te sale GRATIS).",
-                    zone.label(),
-                    format_thousands(cost),
-                    if faltan == 1 { "" } else { "es" },
-                )
-            } else {
-                format!(
-                    "Zona {} de Armenia: domicilio ${} (pedido de {total_units} unidades, precio \
-                     mayorista con domicilio cobrado).",
-                    zone.label(),
-                    format_thousands(cost),
-                )
-            };
-            (message, false)
-        }
+        Some(zone) => apply_armenia_zone(zone, context),
         None => (
             format!("Sector desconocido: '{sector}'. Debe ser norte, centro o sur."),
             true,
         ),
     }
+}
+
+/// Fija la zona en el contexto y arma el texto del tool-result. Lo comparten
+/// `set_delivery_zone_armenia` (la zona la dijo el CLIENTE) y
+/// `resolve_armenia_address` (la zona salió de la tabla de barrios).
+fn apply_armenia_zone(zone: ArmeniaZone, context: &mut ConversationContext) -> (String, bool) {
+    let total_units: u32 = context.items.iter().map(|item| item.quantity).sum();
+    let cost = delivery_zone::armenia_delivery_cost(zone, total_units);
+    context.delivery_cost = Some(cost as i32);
+    context.pending_zone_kind = Some("armenia".to_string());
+    context.pending_zone_value = Some(zone.storage_key().to_string());
+    context.pending_zone_label = Some(format!("Armenia - {}", zone.label()));
+    let message = if cost == 0 {
+        format!(
+            "Zona {} de Armenia: domicilio GRATIS $0 (pedido de {total_units} unidades, \
+             califica para domicilio gratis).",
+            zone.label(),
+        )
+    } else if let Some(faltan) = delivery_zone::units_until_free_delivery(total_units) {
+        format!(
+            "Zona {} de Armenia: domicilio ${} (agrega {faltan} unidad{} más y el \
+             domicilio te sale GRATIS).",
+            zone.label(),
+            format_thousands(cost),
+            if faltan == 1 { "" } else { "es" },
+        )
+    } else {
+        format!(
+            "Zona {} de Armenia: domicilio ${} (pedido de {total_units} unidades, precio \
+             mayorista con domicilio cobrado).",
+            zone.label(),
+            format_thousands(cost),
+        )
+    };
+    (message, false)
 }
 
 fn set_delivery_nearby_town(input: &Value, context: &mut ConversationContext) -> (String, bool) {
@@ -2919,12 +3012,15 @@ fn normalize_whatsapp_markdown(body: &str) -> String {
     out
 }
 
+/// Devuelve el texto a enviar y las cifras que se bloquearon (vacio = no se
+/// bloqueo nada). El llamador usa esa lista para entregar el caso a un humano:
+/// antes solo se registraba un `warn` y el cliente quedaba esperando.
 fn sanitize_hallucinated_amounts(
     body: &str,
     known_amounts: &std::collections::HashSet<String>,
     phone: &str,
     is_advisor: bool,
-) -> String {
+) -> (String, Vec<String>) {
     let mentioned = extract_currency_amounts(body);
     let hallucinated: Vec<&String> = mentioned
         .iter()
@@ -2932,8 +3028,9 @@ fn sanitize_hallucinated_amounts(
         .collect();
 
     if hallucinated.is_empty() {
-        return body.to_string();
+        return (body.to_string(), Vec::new());
     }
+    let blocked: Vec<String> = hallucinated.iter().map(|a| (*a).clone()).collect();
 
     tracing::warn!(
         phone = %crate::logging::mask_phone(phone),
@@ -2946,13 +3043,14 @@ fn sanitize_hallucinated_amounts(
     // ("tu pedido", "antes de confirmarte") le salía al ASESOR vía
     // NotifyAdvisor cuando el disparo era `message_advisor`, lo cual no
     // tiene sentido ahí.
-    if is_advisor {
-        "(mensaje bloqueado: mencionaba una cifra no verificada; el bot va a reintentar)"
-            .to_string()
+    let replacement = if is_advisor {
+        "(mensaje bloqueado: mencionaba una cifra no verificada)".to_string()
     } else {
-        "Dame un momento, estoy verificando las cifras exactas de tu pedido antes de confirmarte 🙏"
+        "Déjame confirmar ese valor con alguien del equipo 🙏 En un momento te escriben por aquí \
+         mismo."
             .to_string()
-    }
+    };
+    (replacement, blocked)
 }
 
 fn tool_definitions() -> Vec<ToolDefinition> {
@@ -3062,8 +3160,23 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            name: "resolve_armenia_address".to_string(),
+            description: "Dada la dirección textual de un cliente en Armenia, resuelve su zona de tarifa contra la tabla oficial de barrios y fija el domicilio sola. Si el barrio no se reconoce o cae en dos zonas, te devuelve la orden de preguntarle la zona al cliente — nunca adivina. Llámala SIEMPRE que tengas una dirección de Armenia, antes que set_delivery_zone_armenia.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "string",
+                        "description": "La dirección tal cual la escribió el cliente, completa y sin resumirla."
+                    }
+                },
+                "required": ["address"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDefinition {
             name: "set_delivery_zone_armenia".to_string(),
-            description: "Fija el domicilio automatico segun la zona de Armenia (norte/centro/sur). Usar solo cuando la direccion es dentro de Armenia.".to_string(),
+            description: "Fija el domicilio segun la zona de Armenia (norte/centro/sur). ÚSALA SOLO cuando el CLIENTE te dijo explícitamente la zona. Si lo único que tienes es la dirección, usa resolve_armenia_address: no deduzcas la zona de un barrio.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": { "sector": { "type": "string", "enum": ["norte", "centro", "sur"] } },
@@ -3394,30 +3507,78 @@ mod tests {
         let mut known = std::collections::HashSet::new();
         known.insert("$44.000".to_string());
         let body = "Tu total es $44.000, ¿confirmamos?";
-        assert_eq!(
-            sanitize_hallucinated_amounts(body, &known, "3000000000", false),
-            body
-        );
+        let (sanitized, blocked) =
+            sanitize_hallucinated_amounts(body, &known, "3000000000", false);
+        assert_eq!(sanitized, body);
+        assert!(blocked.is_empty());
     }
 
     #[test]
     fn sanitize_blocks_text_with_an_unbacked_amount() {
         let known = std::collections::HashSet::new();
         let body = "Tu total es $925.000, ¿confirmamos?";
-        let sanitized = sanitize_hallucinated_amounts(body, &known, "3000000000", false);
+        let (sanitized, blocked) =
+            sanitize_hallucinated_amounts(body, &known, "3000000000", false);
         assert_ne!(sanitized, body);
         assert!(!sanitized.contains('$'));
+        // La cifra bloqueada se reporta para que el llamador entregue el caso.
+        assert_eq!(blocked, vec!["$925.000".to_string()]);
     }
 
     #[test]
     fn sanitize_uses_advisor_appropriate_wording_when_blocked() {
         let known = std::collections::HashSet::new();
         let body = "Confírmale que el total es $925.000";
-        let sanitized = sanitize_hallucinated_amounts(body, &known, "3000000000", true);
+        let (sanitized, blocked) = sanitize_hallucinated_amounts(body, &known, "3000000000", true);
         assert_ne!(sanitized, body);
         assert!(!sanitized.contains('$'));
+        assert!(!blocked.is_empty());
         // No debe sonar como si le habláramos al cliente en segunda persona.
         assert!(!sanitized.to_lowercase().contains("tu pedido"));
+    }
+
+    /// El texto de reemplazo ya no puede prometer que "el bot va a reintentar"
+    /// ni dejar al cliente esperando: ahora el caso se entrega a un humano.
+    #[test]
+    fn the_blocked_replacement_tells_the_customer_someone_will_write() {
+        let known = std::collections::HashSet::new();
+        let (sanitized, _) =
+            sanitize_hallucinated_amounts("Son $925.000", &known, "3000000000", false);
+        let lowered = sanitized.to_lowercase();
+        assert!(lowered.contains("equipo") || lowered.contains("asesor"));
+        assert!(!lowered.contains("dame un momento"));
+    }
+
+    /// Un pedido programado NO se da por entregado en el minuto exacto de su
+    /// hora: el domiciliario puede ir tarde. Caso Kall Díaz 2026-09-18 —
+    /// agendado 16:00, a las 18:27 el bot dijo "no tienes ningún pedido
+    /// activo" y creó un duplicado.
+    #[test]
+    fn a_scheduled_order_is_not_delivered_the_minute_its_time_passes() {
+        let mut context = test_context();
+        context.order_confirmed = true;
+        context.current_order_id = Some(45);
+        context.delivery_type = Some("scheduled".to_string());
+        let now_bogota = crate::bot::states::scheduling::current_bogota_now().naive_local();
+
+        // Agendado hace 2h30 (lo de Kall): sigue siendo el mismo pedido.
+        let recent = now_bogota - chrono::Duration::minutes(150);
+        context.scheduled_date = Some(recent.format("%Y-%m-%d").to_string());
+        context.scheduled_time = Some(recent.format("%H:%M").to_string());
+        assert!(!confirmed_order_already_delivered(
+            &context,
+            chrono::Utc::now()
+        ));
+
+        // Pasada la ventana de gracia sí se suelta, que es el punto original
+        // de esta función (no pisar un pedido viejo con una recompra).
+        let old = now_bogota - chrono::Duration::hours(IMMEDIATE_ORDER_ACTIVE_HOURS + 1);
+        context.scheduled_date = Some(old.format("%Y-%m-%d").to_string());
+        context.scheduled_time = Some(old.format("%H:%M").to_string());
+        assert!(confirmed_order_already_delivered(
+            &context,
+            chrono::Utc::now()
+        ));
     }
 
     #[test]
@@ -3469,10 +3630,10 @@ mod tests {
     fn sanitize_ignores_text_without_any_amount() {
         let known = std::collections::HashSet::new();
         let body = "¿Me confirmas tu dirección?";
-        assert_eq!(
-            sanitize_hallucinated_amounts(body, &known, "3000000000", false),
-            body
-        );
+        let (sanitized, blocked) =
+            sanitize_hallucinated_amounts(body, &known, "3000000000", false);
+        assert_eq!(sanitized, body);
+        assert!(blocked.is_empty());
     }
 
     fn handoff_reason_for(input: &UserInput) -> Option<HandoffReason> {

@@ -177,3 +177,4 @@ handoff_payment_verification_customer = "¡Comprobante recibido! 📄 Un asesor 
 handoff_unreadable_media_customer = "Por aquí no alcanzo a ver lo que me mandaste 👀 Ya se lo pasé a un asesor y te escribe por este mismo chat en un momento 🙏"
 handoff_customer_request_customer = "¡Listo! 🙌 Ya le pasé tu caso a un asesor y te escribe por aquí mismo en un momento."
 handoff_partnership_customer = "Sí, existe *Emprende con Trabix* 🚀 Los detalles te los da un asesor directamente: ya le pasé tu caso y te escribe por aquí en un momento."
+handoff_blocked_amount_customer = "Ya le pasé tu caso a un asesor para confirmarte el valor exacto 🙏 Te escribe por aquí mismo en un momento."

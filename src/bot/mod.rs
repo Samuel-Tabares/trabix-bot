@@ -1,3 +1,4 @@
+pub mod armenia_zones;
 pub mod delivery_zone;
 pub mod pricing;
 pub mod state_machine;
