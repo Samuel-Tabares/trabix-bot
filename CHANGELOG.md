@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.31.0] - 2026-09-23
+
+### Changed
+
+- **Los granizados SIN licor se venden al detal, por unidad.** Antes solo por mayor desde 20
+  unidades; `SIN_LICOR_RETAIL_AVAILABLE` pasa a `true` y el guard queda para si vuelve a agotarse.
+  **El sin licor NO lleva la promo del segundo a mitad de precio** —esa es solo del con licor— y
+  hay un test que fija la diferencia: 2 con licor cuestan $12.000, 2 sin licor cuestan $14.000.
+  Confundirlas regalaría plata en cada pedido sin alcohol.
+- **Los precios al detal se leen de `crm-app`.** `LIQUOR_DETAIL_FULL_PRICE`,
+  `LIQUOR_DETAIL_PROMO_PRICE` y `NON_LIQUOR_DETAIL_PRICE` eran constantes de `pricing.rs`, así que
+  cambiar el precio en `/settings/precios` **no cambiaba lo que el bot le cobraba al cliente**: dos
+  fuentes de verdad para el mismo número. Ahora viajan en el mismo `GET /api/internal/pricing` que
+  ya traía los tiers mayoristas, con los compilados como fallback.
+  El bloque `retail` lleva `#[serde(default)]`: una respuesta vieja de `crm-app` que todavía no lo
+  mande no tumba el parseo entero ni deja al bot sin tiers.
+
+### Notas
+
+- 215 tests en verde. El test `finalize_checkout_blocks_sin_licor_retail` se reescribió como
+  `sin_licor_se_vende_al_detal` — verificaba justo lo contrario de la regla nueva.
+
 ## [1.30.0] - 2026-09-22
 
 El catálogo de sabores deja de vivir en `config/messages.toml` y pasa a `crm-app`. Agregar o
