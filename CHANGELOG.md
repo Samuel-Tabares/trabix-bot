@@ -17,13 +17,30 @@ distintas, ninguna de ellas "el bot no sabe programar pedidos".
   adivinanza en `customer_addresses.zone_value` como si fuera un hecho, así que cada recompra
   heredaba el error.
 
-  Ahora hay `config/armenia_zones.toml` (los ~295 barrios de las 10 comunas oficiales de Armenia) y
-  `bot::armenia_zones::lookup_zone`, determinista. La tool nueva `resolve_armenia_address` recibe el
-  texto de la dirección y resuelve la zona sola. **Lo que arregla el bug no es la tabla, es que ya
-  no se adivina**: si el barrio no está o cae en dos comunas con zonas distintas (un conjunto que se
-  llama igual que un barrio de otro lado), devuelve `Unknown`/`Ambiguous` y el bot tiene que
-  preguntarle la zona al cliente. `set_delivery_zone_armenia` sigue existiendo para cuando el
-  CLIENTE dice la zona — su palabra manda sobre la tabla.
+  Ahora hay `config/armenia_zones.toml` (515 barrios de Armenia) y `bot::armenia_zones::lookup_zone`,
+  determinista. La tool nueva `resolve_armenia_address` recibe el texto de la dirección y resuelve la
+  zona sola. **Lo que arregla el bug no es la tabla, es que ya no se adivina**: si el barrio no está
+  o cae en dos zonas (un conjunto que se llama igual que un barrio de otro lado, o un barrio justo
+  sobre la frontera), devuelve `Unknown`/`Ambiguous` y el bot tiene que preguntarle la zona al
+  cliente. `set_delivery_zone_armenia` sigue existiendo para cuando el CLIENTE dice la zona — su
+  palabra manda sobre la tabla.
+
+  **De dónde sale la tabla.** Samuel definió las fronteras por referencias físicas (2026-09-22):
+  norte desde Fundadores hasta Los Geranios incluyendo el Coliseo del Café y la Av. Centenario desde
+  el CC Plaza Flora; centro de ahí hacia abajo hasta el Parque Cafetero, la Estación del Ferrocarril
+  y Comfenalco El Bosque; sur de ahí hasta la salida (Estadio, Puerto Espejo, Mercar). Esas
+  referencias se geocodificaron y se proyectaron sobre el eje principal de la ciudad — PCA sobre 451
+  barrios de OpenStreetMap; **Armenia corre en diagonal NE-SO a 39.6°, así que un corte por latitud
+  sola clasificaría mal**. Las tres referencias de cada frontera cayeron casi en la misma línea
+  (norte/centro: Plaza Flora +1760 m, Coliseo +1608, Fundadores +1506 → corte en +1625; centro/sur:
+  Comfenalco +439, Ferrocarril +53, Parque Cafetero −256 → corte en +79), lo que confirma que la
+  descripción era geométricamente coherente. Verificado contra el único dato dado a mano: Granada =
+  centro (+894 m).
+
+  **Un primer intento reconstruyó la tabla desde la división por comunas y quedó con 6 de las 10
+  comunas invertidas** — la comuna 1 se llama "Centenario" pero está 100% al SUR: el nombre viene de
+  la avenida, que atraviesa la ciudad entera, no de la ubicación. Por eso la tabla final sale de
+  coordenadas y el TOML lleva un aviso de no regenerarla desde las comunas.
 
 - **Un mensaje bloqueado por el guard de cifras era un callejón sin salida silencioso.**
   `sanitize_hallucinated_amounts` reemplazaba el mensaje entero por un texto neutro, escribía un
@@ -49,10 +66,10 @@ distintas, ninguna de ellas "el bot no sabe programar pedidos".
 - `HandoffReason::BlockedAmount`, con su mensaje al cliente y su pista para el turno de
   recuperación (tomar la cifra de lo que dijo el humano, no recalcularla).
 - Tool `resolve_armenia_address`.
-- `armenia_zones::validate_at_startup()`, llamada desde `main`. `[zona_por_comuna]` está pensado
-  para editarse a mano, así que un typo ahí es esperable: sin esto el `panic!` del parser caía en
-  mitad de una conversación real (la tabla se carga con `OnceLock` perezoso) en vez de reventar el
-  deploy, que es donde un error de configuración tiene que verse.
+- `armenia_zones::validate_at_startup()`, llamada desde `main`. El TOML está pensado para editarse
+  a mano, así que un typo ahí es esperable: sin esto el `panic!` del parser caía en mitad de una
+  conversación real (la tabla se carga con `OnceLock` perezoso) en vez de reventar el deploy, que es
+  donde un error de configuración tiene que verse.
 
 ### Changed
 - El prompt ya no dice "apenas sepas la zona/barrio llama set_delivery_zone_armenia

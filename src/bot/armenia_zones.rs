@@ -44,10 +44,10 @@ const GENERIC_PREFIXES: &[&str] = &[
 
 #[derive(Debug, Deserialize)]
 struct ZonesFile {
-    zona_por_comuna: HashMap<String, String>,
+    /// Nombres que existen en mas de una zona: nunca se resuelven solos.
     #[serde(default)]
-    excepciones: HashMap<String, String>,
-    barrios: HashMap<String, Vec<String>>,
+    ambiguos: Vec<String>,
+    barrios: HashMap<String, String>,
 }
 
 /// Que se pudo concluir de una direccion. `Ambiguous` y `Unknown` son
@@ -86,32 +86,23 @@ fn table() -> &'static ZoneTable {
             .expect("config/armenia_zones.toml debe ser TOML valido");
 
         let mut by_barrio: HashMap<String, Vec<ArmeniaZone>> = HashMap::new();
-        for (comuna_key, barrios) in &parsed.barrios {
-            let Some(zone_text) = parsed.zona_por_comuna.get(comuna_key) else {
-                panic!("{comuna_key} no tiene zona en [zona_por_comuna]");
-            };
-            let zone = ArmeniaZone::from_text(zone_text)
-                .unwrap_or_else(|| panic!("zona invalida para {comuna_key}: {zone_text}"));
-            for barrio in barrios {
-                let key = normalize_place(barrio);
-                if key.is_empty() {
-                    continue;
-                }
-                let zones = by_barrio.entry(key).or_default();
-                if !zones.contains(&zone) {
-                    zones.push(zone);
-                }
+        for (barrio, zone_text) in &parsed.barrios {
+            let key = normalize_place(barrio);
+            if key.is_empty() {
+                continue;
             }
+            let zone = ArmeniaZone::from_text(zone_text)
+                .unwrap_or_else(|| panic!("zona invalida para '{barrio}': '{zone_text}'"));
+            by_barrio.insert(key, vec![zone]);
         }
 
-        // Una excepcion PISA lo que diga la comuna, incluso si el barrio
-        // estaba ambiguo: es la valvula para corregir un caso puntual sin
-        // tocar la division oficial.
-        for (barrio, zone_text) in &parsed.excepciones {
+        // Los ambiguos se cargan DESPUES y pisan cualquier zona: listar un
+        // nombre ahi es la forma de obligar al bot a preguntar por el.
+        for barrio in &parsed.ambiguos {
             let key = normalize_place(barrio);
-            let zone = ArmeniaZone::from_text(zone_text)
-                .unwrap_or_else(|| panic!("zona invalida en [excepciones] para {barrio}"));
-            by_barrio.insert(key, vec![zone]);
+            if !key.is_empty() {
+                by_barrio.insert(key, Vec::new());
+            }
         }
 
         ZoneTable { by_barrio }
@@ -177,6 +168,7 @@ pub fn lookup_zone(address: &str) -> ZoneLookup {
                     zone: *zone,
                     barrio: candidate,
                 },
+                // Vacio = marcado como ambiguo en el TOML.
                 _ => ZoneLookup::Ambiguous { barrio: candidate },
             };
         }
@@ -190,13 +182,72 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_table_parses_and_covers_every_comuna() {
+    fn the_table_parses_and_is_not_suspiciously_small() {
         let table = table();
         assert!(
-            table.by_barrio.len() > 250,
-            "se esperaban ~295 barrios, hay {}",
+            table.by_barrio.len() > 450,
+            "se esperaban ~515 barrios, hay {}",
             table.by_barrio.len()
         );
+    }
+
+    /// Las tres zonas tienen que estar representadas: si una desaparece es que
+    /// alguien rompió el TOML (o lo regeneró mal) y el bot cobraría de más o
+    /// de menos en silencio.
+    #[test]
+    fn the_three_zones_are_all_present() {
+        let mut seen = std::collections::HashSet::new();
+        for zones in table().by_barrio.values() {
+            for z in zones {
+                seen.insert(z.label());
+            }
+        }
+        assert_eq!(seen.len(), 3, "faltan zonas: {seen:?}");
+    }
+
+    /// Frontera sur declarada por Samuel: el Estadio, Puerto Espejo y Mercar
+    /// están todos al sur.
+    #[test]
+    fn the_southern_landmarks_are_south() {
+        for address in [
+            "ciudadela puerto espejo etapa 2",
+            "castilla grande casa 4",
+            "bosques de pinares",
+        ] {
+            match lookup_zone(address) {
+                ZoneLookup::Resolved { zone, .. } => {
+                    assert_eq!(zone, ArmeniaZone::Sur, "{address} no dio sur")
+                }
+                other => panic!("{address}: {other:?}"),
+            }
+        }
+    }
+
+    /// Y los del norte, al norte. La Castellana y Laureles están arriba del
+    /// Coliseo del Café.
+    #[test]
+    fn the_northern_landmarks_are_north() {
+        for address in ["la castellana", "laureles", "la campiña"] {
+            match lookup_zone(address) {
+                ZoneLookup::Resolved { zone, .. } => {
+                    assert_eq!(zone, ArmeniaZone::Norte, "{address} no dio norte")
+                }
+                other => panic!("{address}: {other:?}"),
+            }
+        }
+    }
+
+    /// Un nombre listado en `ambiguos` siempre pregunta, aunque el resto de la
+    /// tabla pudiera resolverlo. "Fundadores" y "El Bosque" son justo las
+    /// referencias que Samuel puso SOBRE las fronteras.
+    #[test]
+    fn names_marked_ambiguous_always_ask() {
+        for address in ["fundadores", "el bosque casa 2", "san jose"] {
+            assert!(
+                matches!(lookup_zone(address), ZoneLookup::Ambiguous { .. }),
+                "{address} debería preguntar"
+            );
+        }
     }
 
     /// El caso que origino el modulo: Granada (comuna 9) es centro, $8.000.
@@ -220,39 +271,33 @@ mod tests {
         ));
     }
 
-    /// "Cibeles casa 10" — el ejemplo de Samuel. Un nombre que no esta en la
-    /// division oficial no se adivina.
+    /// "Cibeles casa 10" era el ejemplo de Samuel de un nombre que podía ser
+    /// barrio, conjunto o apartamentos. La division oficial por comunas NO lo
+    /// tenia; OpenStreetMap si lo ubica, asi que hoy se resuelve solo. Es la
+    /// razon por la que la tabla se genero de coordenadas y no de la lista
+    /// administrativa.
     #[test]
-    fn an_unknown_place_is_not_guessed() {
-        assert_eq!(lookup_zone("cibeles casa 10"), ZoneLookup::Unknown);
-        assert_eq!(lookup_zone("apartamento 301"), ZoneLookup::Unknown);
+    fn cibeles_resolves_now_that_the_table_comes_from_coordinates() {
+        assert!(matches!(
+            lookup_zone("cibeles casa 10"),
+            ZoneLookup::Resolved { .. }
+        ));
     }
 
-    /// Nombres repetidos en dos comunas con zonas distintas: preguntar, no
-    /// elegir. Es justo el caso "puede ser un barrio o un conjunto".
-    /// "Las Veraneras" existe en la comuna 2 y en la 10.
-    ///
-    /// Ojo: que un nombre sea ambiguo depende de la asignacion de
-    /// [zona_por_comuna]. Si dos comunas que hoy tienen zonas distintas pasan
-    /// a tener la misma, ese nombre deja de ser ambiguo solo — es el
-    /// comportamiento correcto, pero explica por que este test puede cambiar
-    /// si se reasignan las comunas.
+    /// Lo que de verdad no se reconoce sigue sin adivinarse.
+    #[test]
+    fn an_unknown_place_is_not_guessed() {
+        assert_eq!(lookup_zone("apartamento 301"), ZoneLookup::Unknown);
+        assert_eq!(lookup_zone("por la esquina de la tienda"), ZoneLookup::Unknown);
+    }
+
+    /// "Las Veraneras" aparece en dos puntos de la ciudad que caen en zonas
+    /// distintas: preguntar, no elegir.
     #[test]
     fn a_name_in_two_zones_is_ambiguous() {
         assert!(matches!(
             lookup_zone("Parque Residencial Las Veraneras torre 2"),
             ZoneLookup::Ambiguous { .. }
-        ));
-    }
-
-    /// Un nombre repetido pero cuyas dos comunas caen en la MISMA zona si se
-    /// resuelve: no hay nada que preguntar. "Los Andes" esta en la comuna 6 y
-    /// en la 10, las dos norte en el borrador actual.
-    #[test]
-    fn a_repeated_name_within_one_zone_still_resolves() {
-        assert!(matches!(
-            lookup_zone("Conjunto Residencial Los Andes apto 402"),
-            ZoneLookup::Resolved { .. }
         ));
     }
 

@@ -921,20 +921,21 @@ modelo leia el barrio y adivinaba. Con la misma direccion de Kall Diaz dijo nort
 
 Hoy hay dos caminos y solo dos:
 
-1. `resolve_armenia_address { address }` — resuelve contra `config/armenia_zones.toml` (~295
-   barrios de las 10 comunas oficiales de Armenia) via `bot::armenia_zones::lookup_zone`. Normaliza
+1. `resolve_armenia_address { address }` — resuelve contra `config/armenia_zones.toml` (515
+   barrios, geocodificados y cortados por las fronteras fisicas que definio Samuel; el TOML explica
+   el metodo) via `bot::armenia_zones::lookup_zone`. Normaliza
    minusculas/tildes/puntuacion y recorta prefijos genericos ("Barrio", "Conjunto Residencial",
    "Urbanizacion"...), y busca la ventana de palabras mas larga que coincida.
 2. `set_delivery_zone_armenia { sector }` — solo cuando el CLIENTE dijo la zona. Su palabra manda
    sobre la tabla.
 
-Si el barrio no esta en la tabla (`Unknown`) o cae en dos comunas con zonas distintas
-(`Ambiguous` — un conjunto que se llama igual que un barrio de otro lado), el bot **pregunta**. Esa
-es la parte que arregla el bug; la tabla solo ahorra la pregunta cuando se puede.
+Si el barrio no esta en la tabla (`Unknown`) o esta marcado como ambiguo (`Ambiguous` — un conjunto
+que se llama igual que un barrio de otro lado, o un barrio justo sobre la frontera), el bot
+**pregunta**. Esa es la parte que arregla el bug; la tabla solo ahorra la pregunta cuando se puede.
 
 El archivo se compila con `include_str!`, asi que editarlo exige recompilar — lo cual ya pasa en
-cada `railway up`. La unica seccion pensada para editarse es `[zona_por_comuna]` (10 lineas);
-`[excepciones]` corrige un barrio suelto sin tocar la division oficial.
+cada `railway up`. Corregir un barrio es cambiar su linea en `[barrios]`; para que el bot siempre
+pregunte por un nombre, se mueve a la lista `ambiguos`.
 
 ## Configuracion Y Operacion
 

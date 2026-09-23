@@ -1,132 +1,565 @@
-# Zonas de domicilio de Armenia — barrio → zona de tarifa.
+# Barrio de Armenia -> zona de tarifa de domicilio.
 #
-# El bot NO deduce la zona de una dirección. Antes de esta tabla, el modelo leía
-# "Barrio Granada" y adivinaba: el 2026-08-30 dijo "zona norte" y cobró $6.000,
-# el 2026-09-18 dijo centro y cobró $8.000 — misma dirección, mismo cliente
-# (Kall Díaz). Peor: guardaba la adivinanza en customer_addresses como si fuera
-# un hecho y todos los pedidos siguientes heredaban el error.
+# norte $6.000 · centro $8.000 · sur $10.000 (tarifas en bot/delivery_zone.rs).
 #
-# ─────────────────────────────────────────────────────────────────────────────
-# LO ÚNICO QUE HAY QUE REVISAR SON LAS 10 LÍNEAS DE [zona_por_comuna].
-# ─────────────────────────────────────────────────────────────────────────────
-# Los ~295 barrios de [barrios] son la división oficial de Armenia (10 comunas)
-# y no hay que tocarlos. Cada barrio hereda la zona de su comuna; si alguno no
-# la sigue, se corrige con una línea en [excepciones] sin tocar nada más.
+# DE DONDE SALE ESTA TABLA
+# ────────────────────────
+# Las fronteras las definio Samuel por referencias fisicas (2026-09-22):
+#   · NORTE  — desde Fundadores hasta Los Geranios, incluyendo el Coliseo del
+#              Cafe y la Av. Centenario desde el CC Plaza Flora hacia arriba.
+#   · CENTRO — de Plaza Flora / Fundadores / Coliseo del Cafe hacia abajo,
+#              hasta el Parque Cafetero, la Estacion del Ferrocarril y
+#              Comfenalco El Bosque.
+#   · SUR    — de ahi hacia abajo hasta la salida de Armenia (Estadio, Puerto
+#              Espejo, Mercar saliendo para Montenegro).
 #
-# Tarifas (delivery_zone.rs): norte $6.000 · centro $8.000 · sur $10.000.
+# Esas referencias se geocodificaron y se proyectaron sobre el eje principal de
+# la ciudad (PCA sobre 451 barrios de OpenStreetMap; Armenia corre en diagonal
+# NE-SO, 39.6 grados, asi que un corte por latitud sola clasificaria mal). Las
+# tres referencias de cada frontera caen casi en la misma linea, lo que confirma
+# que la descripcion era geometricamente coherente:
+#   frontera norte/centro = +1.625 m sobre el eje (Plaza Flora 1760, Coliseo
+#                           1608, Fundadores 1506)
+#   frontera centro/sur   =    +79 m (Comfenalco 439, Ferrocarril 53, Parque
+#                           Cafetero -256)
+# Verificado contra el unico dato que dio Samuel a mano: Granada = centro (+894).
 #
-# Si un barrio NO está en esta tabla, o cae en dos comunas con zonas distintas,
-# el bot PREGUNTA "¿norte, centro o sur?" en vez de adivinar. Esa es la parte
-# que de verdad arregla el bug; la tabla solo ahorra la pregunta.
+# ATENCION: NO reconstruir esta tabla desde la division por comunas. Se intento
+# primero y 6 de las 10 comunas quedaron invertidas — la comuna 1 se llama
+# "Centenario" pero esta 100%% al SUR: el nombre viene de la avenida, que
+# atraviesa la ciudad entera, no de la ubicacion.
+#
+# COMO CORREGIR
+# ─────────────
+# Cada linea es independiente: cambia la zona del barrio que este mal y listo.
+# Para que el bot siempre pregunte por un nombre, muevelo a `ambiguos`.
+#
+# Si un nombre NO esta aca, el bot PREGUNTA "norte, centro o sur?" en vez de
+# adivinar. Esa es la garantia real; la tabla solo ahorra la pregunta.
 
-# ⚠️ BORRADOR — asignación hecha por geografía de las comunas, sin conocimiento
-# del costo real de reparto. Revísalas: cambiar una línea reasigna su comuna
-# entera. El único dato confirmado es Granada (comuna 9) = centro.
-[zona_por_comuna]
-comuna_1  = "norte"   # Centenario
-comuna_2  = "sur"   # Rufino José Cuervo
-comuna_3  = "sur"   # Alfonso López
-comuna_4  = "centro"   # Francisco de Paula Santander
-comuna_5  = "centro"   # El Bosque
-comuna_6  = "norte"   # San José
-comuna_7  = "centro"   # El Cafetero
-comuna_8  = "sur"   # Libertadores
-comuna_9  = "centro"   # Los Fundadores
-comuna_10 = "norte"   # Quimbaya
+# Nombres que existen en mas de una zona (un conjunto que se llama igual que un
+# barrio de otro lado, o un barrio justo sobre la frontera). El bot nunca elige
+# por su cuenta entre dos zonas: pregunta.
+ambiguos = [
+  "bello horizonte", "centenario", "el bosque", "fundadores", "las veraneras", "los andes",
+  "piamonte", "san diego", "san jose", "villa de las americas",
+]
 
-# Barrios que no siguen la zona de su comuna. Clave = nombre normalizado
-# (minúsculas, sin tildes, sin el prefijo "Barrio"/"Conjunto Residencial"/etc).
-[excepciones]
-
-# División oficial de Armenia, Quindío. Generado, no editar a mano.
+# 515 barrios. Los marcados # c heredaron la zona de su comuna porque
+# OpenStreetMap no los ubica; el resto sale de coordenadas reales.
 [barrios]
-# Comuna 1 — Centenario
-comuna_1 = [
-  "arenales", "arrayanes", "balcones del eden", "bambusa", "bosques de pinares",
-  "castilla grande", "cañas gordas", "de bosques de pinares", "el emperador", "el milagro",
-  "el palmar", "genesis", "guaduales de la villa", "guaduales del eden", "la arcadia",
-  "la castilla", "la isabela", "la linda", "la villa", "maravelez", "nuestra señora de la paz",
-  "parque de la villa", "pinares", "portal de pinares", "portal del eden",
-  "santa maria del bosque", "simon bolivar", "tres esquinas", "villa centenario",
-  "vista hermosa",
-]
-# Comuna 2 — Rufino José Cuervo
-comuna_2 = [
-  "14 de octubre", "19 de enero", "8 de marzo", "alcazar del cafe", "antonio nariño",
-  "bello horizonte", "bosques de gibraltar", "calima", "cristales", "el carmelo", "el poblado",
-  "el porvenir", "el tesorito", "farallones", "gibraltar", "girasoles",
-  "jardines de la fachada", "jesus maria ocampo", "la fachada", "la milagrosa", "la virginia",
-  "las acacias", "las brisas", "las veraneras", "lindaraja", "lindaraja ii", "los naranjos",
-  "los quindos i", "los quindos ii", "los quindos iii", "luis carlos galan", "manantiales",
-  "marco fidel suarez", "nuevo horizonte", "patricia", "puerto espejo", "san francisco",
-  "san vicente de paul", "santa rita", "serranias", "veracruz", "villa alejandra",
-  "villa claudia", "villa de la vida y el trabajo", "villa del carmen", "zuldemayda",
-]
-# Comuna 3 — Alfonso López
-comuna_3 = [
-  "13 de junio", "25 de mayo", "alfonso lopez", "arcades", "arcoiris", "belen",
-  "bosques de viena", "casablanca", "ciudad dorada", "ciudadela", "cooperativo", "el placer",
-  "la adiela", "la alhambra", "la esmeralda", "la miranda", "los kioscos", "manuela beltran",
-  "meson de sinai", "montecarlo", "nuevo armenia i", "nuevo armenia ii",
-  "reservas de san diego", "san diego", "santa maria", "villa hermosa", "villa laura",
-]
-# Comuna 4 — Francisco de Paula Santander
-comuna_4 = [
-  "belencito", "boyaca", "brasilia", "brasilia nueva", "cincuentenario", "el prado",
-  "el refugio", "gaitan", "miraflores", "miraflores bajo", "obrero", "popular", "san jose sur",
-  "santa fe", "santa helena", "santander", "villa del cafe", "villa juliana",
-]
-# Comuna 5 — El Bosque
-comuna_5 = [
-  "1 de mayo", "7 de agosto", "artesanos", "berlin", "casas fiscales", "el recreo",
-  "el silencio i", "el silencio ii", "kennedy", "la anunciacion", "la union", "monteprado",
-  "montevideo", "montevideo bajo", "nueva libertad", "nuevo recreo", "palmares del recreo",
-  "salazar", "villa liliana",
-]
-# Comuna 6 — San José
-comuna_6 = [
-  "aldea de los comuneros", "altos de la pavona", "carolina i", "el cortijo", "el parque i",
-  "el parque ii", "gustavo rojas pinilla i", "gustavo rojas pinilla ii", "la clarita",
-  "la irlanda", "la montana", "la patria", "la pavona", "las americas", "los almendros",
-  "los andes", "los cambulos", "monteblanco i", "monteblanco ii", "monteblanco iii", "quindio",
-  "quintas de juliana", "quintas de los andes", "rincon de los andes", "san andres", "san jose",
-  "san jose de la sierra", "santa sofia", "universal", "vaguita de trigueros", "villa andrea",
-  "villa carolina ii", "villa celmira", "villa de las americas", "villa jardin", "villa ximena",
-]
-# Comuna 7 — El Cafetero
-comuna_7 = [
-  "alberto zuleta", "centro", "guayaquil alto", "la aldea", "la florida", "maria cristina i",
-  "maria cristina ii", "maria cristina iii", "parque valencia", "patio bonito alto",
-  "patio bonito bajo", "patio bonito plano", "rincon santo", "san fernando", "san nicolas",
-  "sotavento", "torres del rio", "uribe", "velez",
-]
-# Comuna 8 — Libertadores
-comuna_8 = [
-  "ahitamara", "altos de la calleja", "centenario", "corbones", "el berlin", "el limonar i",
-  "el limonar ii", "el limonar iii", "el limonar iv", "el paraiso", "francisco jose de caldas",
-  "jubileo", "la divisa", "la esperanza", "las colinas", "las mercedes", "libertadores",
-  "nuevo berlin", "piamonte", "tigreros", "villa inglesa", "villa sofia",
-]
-# Comuna 9 — Los Fundadores
-comuna_9 = [
-  "alto de las palmas", "altos del niagara", "bajo niagara", "el remanso", "gran bretaña",
-  "granada", "guayacanes", "la arboleda", "la cabaña", "las 60 casas", "las palmas",
-  "los alamos", "modelo", "nisa bulevar", "palmas del modelo", "quintas del yulima",
-  "rincon de yulima", "sorrento", "torres del granada", "vieja libertad", "yulima i",
-  "yulima ii", "yulima iii",
-]
-# Comuna 10 — Quimbaya
-comuna_10 = [
-  "alcazar", "alejandria", "altos del bosque", "bavaria", "bosques de palermo",
-  "bosques de san martin", "bosques de viena", "bulevar del coliseo", "caminos de calay",
-  "caminos de san lorenzo", "casa loma", "coinca", "el alcazar", "el molino", "el nogal",
-  "el palmar", "el retiro", "fundadores", "galan", "jardin de las mercedes", "la abadia",
-  "la alqueria", "la aurora", "la campiña", "la estancia", "la hacienda",
-  "la hacienda palmacera", "la lorena", "la mariela", "la nueva cecilia", "la suiza",
-  "las lomas", "las veraneras", "laureles", "los andes", "los fundadores", "los profesionales",
-  "los tulipanes", "mercedes del norte", "nueva cecilia", "palmas de sorrento",
-  "pasadena country", "plazoleta andina", "portal de la colonia", "providencia", "quimbaya",
-  "rincon de andalucia", "rincon de la samaria", "salvador allende", "santillana del mar",
-  "simon bolivar", "torres de marfil", "torres del alcazar", "torres providencia i",
-  "torres providencia ii", "unidad i", "unidad ii", "unidad iii", "unidad iv", "unidad v",
-]
+"1 de mayo" = "sur"  # c
+"13 de junio" = "sur"
+"14 de octubre" = "sur"
+"19 de enero" = "sur"
+"19 de enero bajo" = "sur"
+"25 de mayo" = "sur"
+"7 de agosto" = "sur"
+"8 de marzo" = "sur"
+"aguazul" = "sur"
+"ahitamara" = "centro"
+"alameda del norte" = "norte"
+"alamos" = "centro"
+"alcala" = "norte"
+"alcazar" = "norte"
+"alcazar del cafe" = "sur"  # c
+"aldea de los comuneros" = "sur"  # c
+"alejandria" = "sur"
+"alfonso lopez" = "sur"
+"alfonso lopez pumarejo" = "sur"
+"altamira" = "norte"
+"alto de las palmas" = "centro"  # c
+"altos de agua bonita" = "sur"
+"altos de la calleja" = "centro"
+"altos de la pavona" = "sur"
+"altos de la sierra" = "norte"
+"altos de monserrate" = "sur"
+"altos de sotavento 3" = "centro"
+"altos del bosque" = "norte"
+"altos del niagara" = "centro"  # c
+"altos del olivar" = "norte"
+"antonio nariño" = "sur"
+"arcades" = "sur"  # c
+"arco iris" = "sur"
+"arcoiris" = "sur"
+"arenales" = "sur"
+"arrayanes" = "sur"
+"artesanos" = "sur"
+"badajoz" = "norte"
+"bajo niagara" = "centro"  # c
+"balcon de armenia 1 etapa" = "centro"
+"balcon de armenia 2 etapa" = "centro"
+"balcones del eden" = "sur"
+"bambusa" = "sur"
+"bavaria" = "norte"  # c
+"belen" = "sur"
+"belencito" = "sur"
+"berlin" = "sur"
+"bolivar norte" = "centro"
+"boreal" = "norte"
+"bosques de cataluña" = "norte"
+"bosques de gibraltar" = "sur"
+"bosques de palermo" = "norte"
+"bosques de pinares" = "sur"
+"bosques de san juan" = "norte"
+"bosques de san martin" = "norte"
+"bosques de viena" = "sur"  # c
+"bosques de viena 1" = "norte"
+"bosques de viena 2" = "norte"
+"boyaca" = "sur"  # c
+"brasilia" = "sur"
+"brasilia nueva" = "sur"
+"brisas de la secreta" = "sur"
+"brisas del bosque" = "sur"
+"buenos aires alto" = "centro"
+"buenos aires bajo" = "centro"
+"bulevar del coliseo" = "norte"  # c
+"calima" = "sur"
+"calleja de san jose" = "sur"
+"caminos de calay" = "norte"
+"caminos de san lorenzo" = "norte"  # c
+"caminos del campo" = "sur"
+"cana" = "norte"
+"carolina i" = "sur"  # c
+"casa blanca" = "sur"
+"casa loma" = "norte"  # c
+"casablanca" = "sur"  # c
+"casaloma" = "norte"
+"casas fiscales" = "sur"
+"castela mar" = "norte"
+"castellon" = "norte"
+"castilla grande" = "sur"
+"castillejo" = "norte"
+"cañas gordas" = "sur"
+"centro" = "centro"
+"chalets de monteblanco" = "sur"
+"cibeles" = "sur"
+"cincuentenario" = "sur"
+"cisneros" = "sur"
+"ciudad dorada" = "sur"
+"ciudad real" = "norte"
+"ciudadela" = "sur"  # c
+"cocora parque residencial" = "norte"
+"coinca" = "norte"
+"coinca 1 etapa" = "norte"
+"coinca 2 etapa" = "norte"
+"colombia" = "sur"
+"comfenalco" = "sur"
+"concominio copacabana" = "sur"
+"condomio san carlos" = "norte"
+"coomeva" = "norte"
+"cooperativo" = "sur"
+"corbones" = "centro"
+"cristales" = "sur"  # c
+"cueva del humo" = "sur"
+"de bosques de pinares" = "sur"  # c
+"del cafe" = "sur"
+"don nicolas" = "sur"
+"el alcazar" = "norte"  # c
+"el berlin" = "centro"  # c
+"el cafetero" = "sur"
+"el carmelo" = "sur"
+"el cortijo" = "sur"
+"el dorado" = "sur"
+"el emperador" = "sur"
+"el jubileo" = "centro"
+"el limonar 1 etapa" = "centro"
+"el limonar 2 etapa" = "centro"
+"el limonar 3 etapa" = "centro"
+"el limonar 4 etapa" = "centro"
+"el limonar i" = "centro"  # c
+"el limonar ii" = "centro"  # c
+"el limonar iii" = "centro"  # c
+"el limonar iv" = "centro"  # c
+"el milagro" = "sur"  # c
+"el molino" = "norte"
+"el nogal" = "norte"
+"el palmar" = "sur"
+"el paraiso" = "centro"
+"el parque" = "sur"
+"el parque 2 etapa" = "sur"
+"el parque i" = "sur"  # c
+"el parque ii" = "sur"  # c
+"el placer" = "sur"
+"el poblado" = "sur"
+"el portal de san juan" = "norte"
+"el porvenir" = "sur"  # c
+"el prado" = "sur"
+"el recreo" = "sur"
+"el recuerdo" = "sur"
+"el refugio" = "sur"
+"el remanso" = "centro"
+"el retiro" = "norte"
+"el rincon" = "norte"
+"el robledal" = "norte"
+"el silencio etapa 1" = "sur"
+"el silencio etapa 2" = "sur"
+"el silencio i" = "sur"  # c
+"el silencio ii" = "sur"  # c
+"el sol" = "sur"
+"el tesorito" = "sur"
+"el tesoro" = "sur"
+"entre verdes" = "sur"
+"farallones" = "sur"
+"francisco de paula santander" = "sur"
+"francisco jose de caldas" = "centro"  # c
+"francisco londoño" = "sur"
+"gaitan" = "sur"
+"galan" = "centro"
+"galicia" = "norte"
+"genesis" = "sur"
+"getsemani" = "norte"
+"gibraltar" = "sur"
+"girasoles" = "sur"  # c
+"gran bretaña" = "centro"  # c
+"granada" = "centro"
+"guaduales de la villa" = "sur"
+"guaduales del eden" = "sur"
+"guayacanes" = "centro"  # c
+"guayaquil" = "centro"
+"gustavo rojas pinilla 1 etapa" = "sur"
+"gustavo rojas pinilla 2 etapa" = "sur"
+"gustavo rojas pinilla i" = "sur"  # c
+"gustavo rojas pinilla ii" = "sur"  # c
+"hacienda palmacera" = "norte"
+"iberica" = "centro"
+"jardin de la fachada" = "sur"
+"jardin de las americas" = "sur"
+"jardin de las mercedes" = "norte"  # c
+"jardin de las mercedes del norte" = "norte"
+"jardines de la fachada" = "sur"  # c
+"jardines del eden" = "sur"
+"jesus maria ocampo" = "sur"
+"jubileo" = "centro"  # c
+"kennedy" = "sur"
+"la abadia" = "norte"
+"la adiela" = "sur"
+"la aldea" = "sur"
+"la alhambra" = "sur"
+"la almeria" = "centro"
+"la alqueria" = "norte"
+"la anunciacion" = "sur"  # c
+"la anunciacion tcc" = "sur"
+"la arboleda" = "centro"
+"la arcadia" = "sur"
+"la aurora" = "norte"
+"la boca del tunel" = "centro"
+"la cabaña" = "centro"
+"la campiña" = "norte"
+"la castellana" = "norte"
+"la castilla" = "sur"
+"la cecilia" = "sur"
+"la cejita" = "sur"
+"la chec" = "centro"
+"la clarita" = "sur"
+"la colina" = "norte"
+"la colonia" = "norte"
+"la cristalina" = "sur"
+"la divisa" = "centro"
+"la esmeralda" = "sur"
+"la esperanza" = "centro"
+"la estancia" = "norte"
+"la fachada" = "sur"
+"la floresta de san juan" = "norte"
+"la florida" = "centro"
+"la fogata" = "norte"
+"la gran bretaña" = "centro"
+"la grecia" = "sur"
+"la hacienda" = "norte"
+"la hacienda palmacera" = "norte"  # c
+"la irlanda" = "sur"
+"la isabela" = "sur"
+"la linda" = "sur"  # c
+"la lorena" = "norte"
+"la mariela" = "norte"
+"la milagrosa" = "sur"
+"la miranda" = "sur"
+"la montana" = "sur"
+"la nueva cecilia" = "norte"
+"la nueva libertad" = "sur"
+"la pastorita" = "norte"
+"la patria" = "sur"
+"la pavona" = "sur"
+"la rioja" = "norte"
+"la riviera" = "sur"
+"la secreta" = "sur"
+"la suiza" = "norte"
+"la union" = "sur"
+"la villa" = "sur"
+"la virginia" = "sur"
+"las 60 casas" = "centro"  # c
+"las acacias" = "sur"
+"las americas" = "sur"
+"las brisas" = "sur"
+"las colinas" = "sur"
+"las lomas" = "norte"  # c
+"las mercedes" = "centro"
+"las palmas" = "centro"
+"las palmas de sorrento" = "norte"
+"las ramblas" = "norte"
+"las serranias" = "sur"
+"las sesenta casas" = "centro"
+"las terrazas" = "centro"
+"las torres de laureles" = "norte"
+"las vegas" = "sur"
+"laureles" = "norte"
+"libertadores" = "centro"
+"lindaraja" = "sur"  # c
+"lindaraja 1 etapa" = "sur"
+"lindaraja 2 etapa" = "sur"
+"lindaraja ii" = "sur"  # c
+"loma linda" = "norte"
+"loma verde" = "sur"
+"lomas de la union" = "sur"
+"los alamos" = "centro"  # c
+"los almendros" = "sur"
+"los arboles" = "sur"
+"los arcades" = "sur"
+"los balsos" = "norte"
+"los cambulos" = "sur"
+"los cedros" = "norte"
+"los cristales" = "sur"
+"los faroles" = "sur"
+"los fundadores" = "norte"  # c
+"los girasoles" = "sur"
+"los guayacanes" = "centro"
+"los kioscos" = "sur"
+"los libertadores" = "centro"
+"los naranjos" = "sur"
+"los nogales" = "sur"
+"los ocobos" = "norte"
+"los profesionales" = "norte"
+"los quimbayas" = "norte"
+"los quindos" = "sur"
+"los quindos i" = "sur"  # c
+"los quindos ii" = "sur"  # c
+"los quindos iii" = "sur"  # c
+"los sauces" = "centro"
+"los tulipanes" = "norte"  # c
+"luis carlos galan" = "sur"  # c
+"luis carlos galan sarmiento" = "sur"
+"mallorca" = "norte"
+"manantiales" = "sur"
+"manuela beltran" = "sur"
+"maravelez" = "sur"  # c
+"marbella" = "sur"
+"marco fidel suarez" = "sur"
+"maria cristina 1 etapa" = "centro"
+"maria cristina 2 etapa" = "centro"
+"maria cristina 3 etapa" = "centro"
+"mercedes del norte" = "norte"
+"meson de sinai" = "sur"  # c
+"milagro de dios" = "sur"
+"mirador de la isabela" = "sur"
+"mirador del bosque" = "centro"
+"mirador del quindio" = "sur"
+"miraflores" = "sur"
+"miraflores bajo" = "sur"  # c
+"modelo" = "centro"
+"monte santo" = "centro"
+"monteblanco etapa 1" = "sur"
+"monteblanco etapa 2" = "sur"
+"monteblanco etapa 3" = "sur"
+"monteblanco i" = "sur"  # c
+"monteblanco ii" = "sur"  # c
+"monteblanco iii" = "sur"  # c
+"montecarlo" = "sur"
+"monteprado" = "sur"
+"montevideo" = "sur"
+"montevideo bajo" = "sur"  # c
+"navacerra" = "norte"
+"navarra" = "norte"
+"netania" = "norte"
+"niagara" = "centro"
+"nisa bulevar" = "centro"  # c
+"niza bulevar" = "centro"
+"nuestra señora de la paz" = "sur"
+"nueva armenia 1 etapa" = "sur"
+"nueva armenia 2 etapa" = "sur"
+"nueva armenia 3 etapa" = "sur"
+"nueva cecilia" = "norte"  # c
+"nueva libertad" = "sur"  # c
+"nuevo amanecer" = "sur"
+"nuevo armenia i" = "sur"  # c
+"nuevo armenia ii" = "sur"  # c
+"nuevo berlin" = "centro"
+"nuevo horizonte" = "sur"  # c
+"nuevo montevideo" = "sur"
+"nuevo recreo" = "sur"
+"obrero" = "sur"
+"opalo" = "norte"
+"oro negro" = "norte"
+"ozono" = "norte"
+"palma real" = "norte"
+"palmares de alameda" = "norte"
+"palmares del recreo" = "sur"
+"palmas de corintia" = "norte"
+"palmas de la calleja" = "norte"
+"palmas de sorrento" = "norte"  # c
+"palmas del modelo" = "centro"
+"papiro" = "norte"
+"parque de la villa" = "sur"
+"pasadena country" = "norte"
+"patio bonito" = "centro"
+"patio bonito bajo" = "centro"
+"patio bonito plano" = "centro"
+"patricia" = "sur"
+"pietra santa" = "norte"
+"pinares" = "sur"
+"plaza centenario" = "centro"
+"plazoleta andina" = "norte"
+"plazuela de las americas" = "centro"
+"plazuelas de laureles" = "norte"
+"popular" = "sur"
+"portal de la colonia" = "norte"
+"portal de pinares" = "sur"
+"portal del berlin" = "sur"
+"portal del eden" = "sur"
+"pradito bajo" = "sur"
+"primero de mayo" = "sur"
+"providencia" = "norte"
+"providencia 1 etapa" = "norte"
+"providencia 2 etapa" = "norte"
+"providencia 3 etapa" = "norte"
+"provivienda universal" = "sur"
+"puerto espejo" = "sur"  # c
+"puerto espejo 1 etapa" = "sur"
+"puerto espejo 2 etapa" = "sur"
+"puertomontt" = "norte"
+"quimbaya" = "norte"
+"quindio" = "sur"
+"quintas de juliana" = "sur"
+"quintas de la floresta" = "norte"
+"quintas de la marina" = "sur"
+"quintas de la pastorita" = "norte"
+"quintas de los andes" = "sur"
+"quintas de san felipe" = "norte"
+"quintas de san julian 1 etapa" = "norte"
+"quintas de san julian 2 etapa" = "norte"
+"quintas de san sebastian" = "norte"
+"quintas de santa isabel" = "norte"
+"quintas de villa liliana" = "sur"
+"quintas del palmar" = "norte"
+"quintas del yulima" = "centro"  # c
+"reserva de la pastorita" = "norte"
+"reserva de toledo" = "norte"
+"reservas de san diego" = "sur"  # c
+"rincon de andalucia" = "norte"
+"rincon de la castellana" = "norte"
+"rincon de la samaria" = "norte"
+"rincon de los andes" = "sur"  # c
+"rincon de yulima" = "centro"  # c
+"rincon del retiro" = "norte"
+"rincon del yulima" = "norte"
+"rincon santo" = "sur"
+"rufino j cuervo" = "sur"
+"salamanca" = "norte"
+"salazar" = "sur"
+"salvador allende" = "norte"
+"san andres" = "sur"
+"san fernando" = "centro"
+"san francisco" = "sur"
+"san jeronimo campestre" = "norte"
+"san jose de la sierra" = "sur"  # c
+"san jose sur" = "sur"  # c
+"san simon" = "norte"
+"san vicente de paul" = "sur"
+"santa ana" = "sur"
+"santa catalina" = "norte"
+"santa clara" = "norte"
+"santa fe" = "sur"
+"santa helena" = "sur"  # c
+"santa maria" = "sur"
+"santa maria del bosque" = "sur"  # c
+"santa maria del parque" = "sur"
+"santa rita" = "sur"
+"santa sofia" = "sur"
+"santander" = "sur"
+"santillana del mar" = "norte"
+"sara" = "centro"
+"senderos de acaya" = "norte"
+"senderos del bosque" = "sur"
+"serra suiza" = "norte"
+"serranias" = "sur"  # c
+"sierraviento" = "norte"
+"simon bolivar" = "sur"
+"sinai" = "sur"
+"sorrento" = "centro"
+"sotavento 1" = "centro"
+"sotavento 2" = "centro"
+"terranova" = "norte"
+"terranova el alba" = "centro"
+"terraza bambu" = "centro"
+"terraza jardin" = "sur"
+"tigreros" = "centro"
+"toledo campestre" = "norte"
+"torre castellana" = "norte"
+"torre providencia 1 etapa" = "norte"
+"torre providencia 2 etapa" = "norte"
+"torrebela" = "centro"
+"torres de granada" = "centro"
+"torres de marfil" = "norte"
+"torres de san julian" = "norte"
+"torres del alcazar" = "norte"  # c
+"torres del granada" = "centro"  # c
+"torres del norte proviteq unidad 1" = "norte"
+"torres del norte proviteq unidad 2" = "norte"
+"torres del norte proviteq unidad 4" = "norte"
+"torres del norte proviteq unidad 5" = "norte"
+"torres providencia i" = "norte"  # c
+"torres providencia ii" = "norte"  # c
+"tres esquinas" = "sur"
+"unidad 3" = "norte"
+"unidad familiar aurita" = "sur"
+"unidad i" = "norte"  # c
+"unidad ii" = "norte"  # c
+"unidad iii" = "norte"  # c
+"unidad iv" = "norte"  # c
+"unidad v" = "norte"  # c
+"universal" = "sur"  # c
+"uribe" = "sur"
+"vaguita de trigueros" = "sur"  # c
+"velez" = "sur"
+"venecia" = "sur"
+"veracruz" = "sur"  # c
+"veracruz 2 etapa" = "sur"
+"vieja libertad" = "centro"
+"villa alejandra" = "sur"
+"villa andrea" = "sur"
+"villa carolina etapa 1" = "sur"
+"villa carolina etapa 2" = "sur"
+"villa carolina ii" = "sur"  # c
+"villa celmira" = "sur"
+"villa centenario" = "sur"  # c
+"villa claudia" = "sur"
+"villa de la vida y el trabajo" = "sur"
+"villa del cafe" = "sur"
+"villa del carmen" = "sur"
+"villa del centenario" = "sur"
+"villa esperanza" = "sur"
+"villa hermosa" = "sur"
+"villa inglesa" = "centro"
+"villa italia" = "sur"
+"villa jardin" = "sur"
+"villa juliana" = "sur"
+"villa laura" = "sur"
+"villa liliana" = "sur"
+"villa maravelez" = "sur"
+"villa marcela" = "centro"
+"villa sofia" = "centro"
+"villa ximena" = "sur"  # c
+"villa ximena 1 etapa" = "sur"
+"villa ximena 2 etapa" = "sur"
+"villa yolanda" = "sur"
+"villas de lusitania" = "sur"
+"villas de palermo" = "norte"
+"vista hermosa" = "sur"
+"yulima 2 etapa celula c" = "centro"
+"yulima 2 etapa celula d e" = "centro"
+"yulima 2 etapa celula f" = "centro"
+"yulima 2 etapa celula g h" = "centro"
+"yulima 3 etapa" = "norte"
+"yulima i" = "centro"  # c
+"yulima ii" = "centro"  # c
+"yulima iii" = "centro"  # c
+"zuldemayda" = "sur"
