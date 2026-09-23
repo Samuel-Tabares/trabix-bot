@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-09-22
+
+El catálogo de sabores deja de vivir en `config/messages.toml` y pasa a `crm-app`. Agregar o
+retirar un sabor ya no exige editar Rust y redesplegar: Samuel lo hace desde
+`/settings/sabores` y aplica al instante, en el bot y en la carta del website a la vez.
+
+### Added
+
+- **`src/bot/flavors.rs`** — catálogo con el mismo patrón que `pricing.rs`: caché en memoria
+  (`OnceLock<RwLock<Arc<_>>>`), fetch al boot, refresco cada 10 minutos como red de seguridad y
+  `POST /internal/flavors/refresh` que `crm-app` llama al guardar. El refresco es más seguido que
+  el de precios (1h) porque un sabor se acaba en mitad de un día de ventas y un precio no.
+- **`FlavorTable::default()`** — los 12 sabores que vivían en el TOML, como fallback compilado.
+  Sin `CRM_APP_FLAVORS_URL`, o si `crm-app` no responde al arranque, el bot sigue vendiendo lo
+  que vendía: quedarse sin catálogo sería dejar de vender.
+- **`CRM_APP_FLAVORS_URL`** (reusa `CRM_APP_PRICING_TOKEN`, mismo servicio y mismo secreto) y
+  **`CARTA_URL`**. Las dos opcionales.
+
+### Changed
+
+- **`AMBIGUOUS_GROUPS` deja de estar escrito a mano.** Era el parche del incidente del
+  2026-07-19: cuatro nombres base que existen con y sin licor, listados en `ai/tools.rs`, que
+  obligaban al bot a preguntar cuál quería el cliente en vez de adivinar. Ahora los grupos se
+  calculan agrupando por `base_name` y las palabras que distinguen cada variante se derivan del
+  nombre menos la base — "Maracumango Ron blanco" sobre "Maracumango" deja `ron` y `blanco`.
+  **Esto no era cosmética:** una lista a mano no podía cubrir un sabor creado desde un panel, así
+  que agregar "Mango" sin licor y "Mango Ron" con licor habría reintroducido el bug tal cual.
+- **`show_menu_image` → `show_menu`**: manda el link de la carta en vez de la imagen del menú. La
+  imagen era una foto fija que había que rehacer y resubir con cada cambio de sabores; la carta
+  refleja el catálogo real en el momento en que el cliente la abre. El prompt pide mandar el link
+  **y** la lista de sabores en texto en el mismo turno, porque mucha gente no abre links. Sin
+  `CARTA_URL` válida se cae a la imagen de siempre, que es el comportamiento anterior.
+- **`flavor_by_id` solo resuelve sabores activos.** Un sabor apagado desde el panel no se puede
+  agregar a un pedido, que es el punto de poder apagarlo. `get_menu` tampoco lo lista.
+
+### Notas
+
+- La tabla incluye los sabores **inactivos** a propósito: si un cliente nombra uno que se acabó, el
+  bot tiene que reconocerlo para decirle que no hay, en vez de no entenderle.
+- Un catálogo remoto sin un solo sabor activo se rechaza y gana el que ya estaba cargado: es una
+  respuesta rota o una base a medio migrar, no un estado legítimo.
+
 ## [1.29.0] - 2026-09-22
 
 Todo lo de esta versión sale del chat del cliente Kall Díaz (2026-08-30 → 2026-09-18). Tres fallas

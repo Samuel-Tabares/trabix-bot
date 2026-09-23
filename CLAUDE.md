@@ -4,6 +4,24 @@
 > `ROADMAP.md` describe qué falta, en qué orden y qué está bloqueado. Los dos juntos son suficientes
 > para trabajar sin salir del repo.
 
+> **Los sabores ya no viven acá (2026-09-22, v1.30.0).** El catálogo salió de
+> `config/messages.toml` y ahora lo administra `crm-app` en `/settings/sabores`. El bot lo lee por
+> `GET /api/internal/flavors` con el mismo patrón que los precios: caché en memoria, fetch al boot
+> que nunca bloquea el arranque, refresco cada 10 min y `POST /internal/flavors/refresh` para
+> propagación instantánea. Ver `src/bot/flavors.rs`.
+>
+> Sin `CRM_APP_FLAVORS_URL`, o si `crm-app` no responde, el bot usa `FlavorTable::default()` — los
+> 12 sabores que vivían en el TOML. Las listas del TOML quedan como último recurso; **editarlas ya
+> no cambia lo que el bot ofrece.**
+>
+> `AMBIGUOUS_GROUPS` ya no existe. La desambiguación entre variantes con y sin licor se calcula
+> agrupando por `base_name` y derivando las palabras distintivas del nombre. Al tocar ese circuito,
+> recordar que es código determinista y **nunca** prompt: es el parche del incidente del
+> 2026-07-19.
+>
+> `show_menu_image` pasó a `show_menu` y manda el link de la carta. **`CARTA_URL` está vacía** hasta
+> que el website nuevo se publique; vacía o inválida, el bot cae a la imagen del menú.
+
 ## Stack
 
 Rust (edition 2021) · Axum · SQLx/PostgreSQL · Tokio · Meta WhatsApp Cloud API (HMAC-validated
