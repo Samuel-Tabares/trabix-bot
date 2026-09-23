@@ -46,10 +46,11 @@ use crate::{
 };
 
 const MAX_TOOL_ITERATIONS: usize = 8;
-// Los granizados SIN licor están agotados al detal: por ahora solo se venden
-// al por mayor (20+ unidades sin licor en el pedido). Poner en true cuando
-// vuelva a haber stock al detal para desactivar el guard sin tocar más código.
-const SIN_LICOR_RETAIL_AVAILABLE: bool = false;
+// Desde 2026-09-23 los granizados SIN licor SÍ se venden al detal, por unidad
+// ($7.000, sin la promo del segundo a mitad que sí tiene el con licor). El
+// guard de `sin_licor_retail_block` queda por si vuelve a agotarse: poner esto
+// en false lo reactiva sin tocar nada más.
+const SIN_LICOR_RETAIL_AVAILABLE: bool = true;
 // Un pedido sin licor debe llegar a este mínimo para considerarse mayorista.
 const SIN_LICOR_WHOLESALE_MIN: u32 = 20;
 // Un pedido PROGRAMADO necesita al menos esta anticipación para poder gestionarlo.
@@ -235,13 +236,11 @@ Reglas que no puedes romper:
 - Lo que devuelve get_menu es lo que HAY hoy. Si un sabor no aparece ahi, se acabo: no lo \
   ofrezcas ni lo agregues al pedido. Si el cliente pide uno que no esta, dile que por ahora no \
   hay y ofrecele los que si.
-- SIN LICOR AGOTADO AL DETAL: por ahora los granizados sin licor (Manzana verde, Bonbonbum, \
-  Maracumango, Blueberry en su versión sin licor) SOLO se venden al por mayor (mínimo 20 unidades \
-  sin licor en el pedido). Al detal no hay sin licor por el momento. Si el cliente pide pocos sin \
-  licor, explícale esto con amabilidad y ofrécele completar 20+ unidades sin licor o cambiar a \
-  sabores CON licor, que son nuestro fuerte. El resto del menú (incluido el nuevo Smirnoff de \
-  tamarindo) es con licor y está disponible normal. finalize_checkout rechaza un pedido sin licor \
-  que no llegue al mínimo mayorista.
+- SIN LICOR AL DETAL: los granizados sin licor (Manzana verde, Bonbonbum, Maracumango, Blueberry \
+  en su versión sin licor) SI se venden por unidad, igual que los con licor. Son la opción para \
+  niños, cumpleaños y quien no toma alcohol. OJO con el precio: el sin licor NO tiene la promo del \
+  segundo a mitad de precio, esa es solo del con licor. Nunca cotices de memoria — usa \
+  calculate_order, que ya aplica el precio correcto de cada variante.
 - Maracumango, Manzana verde, Bonbonbum y Blueberry existen como productos DISTINTOS con y sin \
   licor (no son la misma bebida con/sin licor, son productos distintos). Si el cliente solo dice \
   el nombre base sin ninguna palabra que distinga la variante (ron, tequila, vodka, whiskey, \
@@ -4300,26 +4299,33 @@ mod tests {
     }
 
     #[test]
-    fn finalize_checkout_blocks_sin_licor_retail() {
+    fn sin_licor_se_vende_al_detal() {
+        // Antes este test verificaba lo contrario: que un pedido de pocas
+        // unidades sin licor fuera rechazado. Desde 2026-09-23 el sin licor se
+        // vende por unidad, así que 5 unidades tienen que pasar el guard.
         let mut context = test_context();
         context.delivery_cost = Some(0);
-        // Sin licor por debajo del mínimo mayorista: debe rechazarse.
         context.items = vec![crate::db::models::OrderItemData {
             flavor: "Manzana verde".to_string(),
             has_liquor: false,
             quantity: 5,
         }];
 
-        let outcome = finalize_checkout("id_1", &mut context);
-        match outcome {
-            ToolOutcome::Result(ContentBlock::ToolResult {
-                content, is_error, ..
-            }) => {
-                assert_eq!(is_error, Some(true));
-                assert!(content.to_lowercase().contains("sin licor"));
-            }
-            _ => panic!("expected sin-licor retail guard to block"),
-        }
+        assert!(
+            sin_licor_retail_block(&context).is_none(),
+            "el sin licor ya no se bloquea al detal"
+        );
+    }
+
+    #[test]
+    fn sin_licor_al_detal_no_lleva_la_promo_del_segundo_a_mitad() {
+        // El con licor cobra el par a $12.000 (el segundo a mitad); el sin
+        // licor va a precio pleno por unidad. Confundirlos le regalaría plata
+        // a cada pedido sin alcohol.
+        use crate::bot::pricing::{calcular_precio_licor_detal, calcular_precio_sin_licor_detal};
+        assert_eq!(calcular_precio_licor_detal(2), 12_000);
+        assert_eq!(calcular_precio_sin_licor_detal(2), 14_000);
+        assert_eq!(calcular_precio_sin_licor_detal(1), 7_000);
     }
 
     #[test]

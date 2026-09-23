@@ -26,6 +26,28 @@ pub struct WholesaleTier {
     pub client_discount_pct: u8,
 }
 
+/// Precios al detal, también sincronizados desde `crm-app`
+/// (`/settings/precios`). Antes eran constantes de este archivo, así que
+/// cambiarlos en el panel no cambiaba lo que el bot le cobraba al cliente.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetailPrices {
+    pub unit_with_alcohol: u32,
+    pub unit_without_alcohol: u32,
+    /// Lo que cuesta el PAR con licor (el "segundo a mitad de precio").
+    pub promo_pair_with_alcohol: u32,
+}
+
+impl Default for RetailPrices {
+    fn default() -> Self {
+        Self {
+            unit_with_alcohol: LIQUOR_DETAIL_FULL_PRICE,
+            unit_without_alcohol: NON_LIQUOR_DETAIL_PRICE,
+            promo_pair_with_alcohol: LIQUOR_DETAIL_FULL_PRICE + LIQUOR_DETAIL_PROMO_PRICE,
+        }
+    }
+}
+
 /// Tiers mayoristas por variante, sincronizados con la `pricing_version`
 /// activa de `crm-app` (`GET /api/internal/pricing`) — reemplaza el espejo
 /// estático manual que se volvía obsoleto cada vez que se cambiaban precios
@@ -36,6 +58,11 @@ pub struct WholesaleTier {
 pub struct PricingTable {
     pub with_alcohol: Vec<WholesaleTier>,
     pub without_alcohol: Vec<WholesaleTier>,
+    /// `#[serde(default)]` a propósito: una respuesta vieja de `crm-app` que
+    /// todavía no mande este bloque no debe tumbar el parseo entero y dejar al
+    /// bot sin tiers — cae a los precios compilados y sigue vendiendo.
+    #[serde(default)]
+    pub retail: RetailPrices,
 }
 
 impl Default for PricingTable {
@@ -55,6 +82,7 @@ impl Default for PricingTable {
                 WholesaleTier { min_quantity: 50, unit_price: 4_500, commission_pct: 18, client_discount_pct: 12 },
                 WholesaleTier { min_quantity: 100, unit_price: 4_200, commission_pct: 20, client_discount_pct: 15 },
             ],
+            retail: RetailPrices::default(),
         }
     }
 }
@@ -218,13 +246,24 @@ pub struct ReferralApplied {
 }
 
 pub fn calcular_precio_licor_detal(cantidad: u32) -> u32 {
+    let retail = &current_pricing_table().retail;
     let pares = cantidad / 2;
     let impares = cantidad % 2;
-    (pares * 12_000) + (impares * 8_000)
+    (pares * retail.promo_pair_with_alcohol) + (impares * retail.unit_with_alcohol)
 }
 
 pub fn calcular_precio_sin_licor_detal(cantidad: u32) -> u32 {
-    cantidad * NON_LIQUOR_DETAIL_PRICE
+    cantidad * current_pricing_table().retail.unit_without_alcohol
+}
+
+/// Precio unitario al detal, para mostrárselo al cliente.
+pub fn precio_unitario_detal(has_liquor: bool) -> u32 {
+    let retail = &current_pricing_table().retail;
+    if has_liquor {
+        retail.unit_with_alcohol
+    } else {
+        retail.unit_without_alcohol
+    }
 }
 
 pub fn precio_unitario_mayor(cantidad: u32, has_liquor: bool) -> u32 {
@@ -441,7 +480,7 @@ fn calcular_item_sin_licor_detal(item: &OrderItemData) -> ItemCalculated {
         subtotal,
         is_wholesale: false,
         promo_units: 0,
-        unit_price_reference: Some(NON_LIQUOR_DETAIL_PRICE),
+        unit_price_reference: Some(current_pricing_table().retail.unit_without_alcohol),
         persistence_lines: vec![PersistedOrderItem {
             flavor: item.flavor.clone(),
             has_liquor: false,
