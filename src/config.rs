@@ -101,7 +101,15 @@ impl Config {
             crm_app_pricing_url: read_optional("CRM_APP_PRICING_URL"),
             crm_app_pricing_token: read_optional("CRM_APP_PRICING_TOKEN"),
             crm_app_flavors_url: read_optional("CRM_APP_FLAVORS_URL"),
-            carta_url: read_optional("CARTA_URL"),
+            // Una URL vacía o que no sea http(s) se trata como ausente: el
+            // bot cae a la imagen del menú en vez de mandarle al cliente un
+            // link roto. `read_optional` devuelve Some("") para una variable
+            // definida y vacía, que es justo como se deja apagada esta función
+            // mientras la carta no esté publicada.
+            carta_url: read_optional("CARTA_URL").filter(|u| {
+                let u = u.trim();
+                u.starts_with("http://") || u.starts_with("https://")
+            }),
         })
     }
 }
