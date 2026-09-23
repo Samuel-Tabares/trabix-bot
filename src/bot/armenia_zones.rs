@@ -64,8 +64,24 @@ pub enum ZoneLookup {
 }
 
 struct ZoneTable {
-    /// barrio normalizado -> zonas posibles (mas de una = ambiguo).
+    /// barrio normalizado -> zonas posibles (vacio o >1 = ambiguo, preguntar).
     by_barrio: HashMap<String, Vec<ArmeniaZone>>,
+    /// Mismo mapa pero con el articulo inicial recortado ("el paraiso" ->
+    /// "paraiso"). La gente dicta "Barrio paraiso Mz D", no "El Paraiso", y sin
+    /// esto una direccion real de la base quedaba sin reconocer. Se consulta
+    /// solo si fallo la busqueda exacta, y se construye en tiempo de carga
+    /// para que editar la zona de un barrio arrastre su alias sola.
+    by_alias: HashMap<String, Vec<ArmeniaZone>>,
+}
+
+/// Articulos que la gente omite al nombrar un barrio.
+const LEADING_ARTICLES: &[&str] = &["el ", "la ", "los ", "las "];
+
+fn strip_leading_article(key: &str) -> Option<&str> {
+    LEADING_ARTICLES
+        .iter()
+        .find_map(|article| key.strip_prefix(article))
+        .filter(|rest| !rest.is_empty())
 }
 
 static TABLE: OnceLock<ZoneTable> = OnceLock::new();
@@ -105,7 +121,29 @@ fn table() -> &'static ZoneTable {
             }
         }
 
-        ZoneTable { by_barrio }
+        // Alias sin articulo. Si dos barrios distintos colapsan al mismo alias
+        // con zonas distintas, el alias queda ambiguo y se pregunta: nunca se
+        // elige uno. Un alias que choque con un nombre exacto no se crea —
+        // gana siempre el nombre completo.
+        let mut by_alias: HashMap<String, Vec<ArmeniaZone>> = HashMap::new();
+        for (key, zones) in &by_barrio {
+            let [zone] = zones.as_slice() else { continue };
+            let Some(short) = strip_leading_article(key) else {
+                continue;
+            };
+            if by_barrio.contains_key(short) {
+                continue;
+            }
+            let entry = by_alias.entry(short.to_string()).or_default();
+            if !entry.contains(zone) {
+                entry.push(*zone);
+            }
+        }
+
+        ZoneTable {
+            by_barrio,
+            by_alias,
+        }
     })
 }
 
@@ -154,23 +192,27 @@ pub fn lookup_zone(address: &str) -> ZoneLookup {
         return ZoneLookup::Unknown;
     }
 
-    let max_window = words.len().min(6);
-    for size in (1..=max_window).rev() {
-        for start in 0..=words.len() - size {
-            let candidate = words[start..start + size].join(" ");
-            // Una sola palabra generica ("casa", "calle") jamas es un barrio;
-            // el filtro real es que este en la tabla, esto solo evita ruido.
-            let Some(zones) = table.by_barrio.get(&candidate) else {
-                continue;
-            };
-            return match zones.as_slice() {
-                [zone] => ZoneLookup::Resolved {
-                    zone: *zone,
-                    barrio: candidate,
-                },
-                // Vacio = marcado como ambiguo en el TOML.
-                _ => ZoneLookup::Ambiguous { barrio: candidate },
-            };
+    // Dos pasadas: primero los nombres completos, y solo si ninguno pega se
+    // reintenta contra los alias sin articulo. Asi un nombre exacto siempre le
+    // gana a un alias.
+    for map in [&table.by_barrio, &table.by_alias] {
+        let max_window = words.len().min(6);
+        for size in (1..=max_window).rev() {
+            for start in 0..=words.len() - size {
+                let candidate = words[start..start + size].join(" ");
+                let Some(zones) = map.get(&candidate) else {
+                    continue;
+                };
+                return match zones.as_slice() {
+                    [zone] => ZoneLookup::Resolved {
+                        zone: *zone,
+                        barrio: candidate,
+                    },
+                    // Vacio = marcado como ambiguo en el TOML; mas de uno =
+                    // el alias colapsa dos barrios de zonas distintas.
+                    _ => ZoneLookup::Ambiguous { barrio: candidate },
+                };
+            }
         }
     }
 
@@ -282,6 +324,26 @@ mod tests {
             lookup_zone("cibeles casa 10"),
             ZoneLookup::Resolved { .. }
         ));
+    }
+
+    /// Dirección real de la base: "Barrio paraíso Mz D #153". La tabla tiene
+    /// "el paraiso", así que sin el alias sin artículo quedaba sin reconocer.
+    #[test]
+    fn a_barrio_named_without_its_article_still_resolves() {
+        match lookup_zone("Barrio paraíso Mz D #153") {
+            ZoneLookup::Resolved { zone, .. } => assert_eq!(zone, ArmeniaZone::Centro),
+            other => panic!("no resolvió: {other:?}"),
+        }
+    }
+
+    /// El nombre completo le gana al alias: "las palmas" no puede resolverse
+    /// como si fuera el alias de otra cosa.
+    #[test]
+    fn the_full_name_wins_over_an_alias() {
+        match lookup_zone("las palmas apto 5") {
+            ZoneLookup::Resolved { barrio, .. } => assert_eq!(barrio, "las palmas"),
+            other => panic!("no resolvió: {other:?}"),
+        }
     }
 
     /// Lo que de verdad no se reconoce sigue sin adivinarse.

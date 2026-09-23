@@ -66,6 +66,14 @@ distintas, ninguna de ellas "el bot no sabe programar pedidos".
 - `HandoffReason::BlockedAmount`, con su mensaje al cliente y su pista para el turno de
   recuperación (tomar la cifra de lo que dijo el humano, no recalcularla).
 - Tool `resolve_armenia_address`.
+- **Alias sin artículo** en `armenia_zones`: si la búsqueda exacta falla, se reintenta con el
+  artículo inicial recortado ("el paraiso" → "paraiso"). La gente dicta "Barrio paraíso Mz D", no
+  "El Paraíso", y dos de las 12 direcciones ya guardadas en producción quedaban sin reconocer solo
+  por eso. Se construyen en tiempo de carga desde la propia tabla, no a mano, para que cambiarle la
+  zona a un barrio arrastre su alias; si dos barrios de zonas distintas colapsan al mismo alias, el
+  alias queda ambiguo y se pregunta. Un nombre exacto siempre le gana a un alias.
+- `examples/zonecheck.rs`, utilitario de solo lectura para pasar las direcciones guardadas por la
+  tabla y ver cuáles quedaron con otra zona. No escribe en la base.
 - `armenia_zones::validate_at_startup()`, llamada desde `main`. El TOML está pensado para editarse
   a mano, así que un typo ahí es esperable: sin esto el `panic!` del parser caía en mitad de una
   conversación real (la tabla se carga con `OnceLock` perezoso) en vez de reventar el deploy, que es
