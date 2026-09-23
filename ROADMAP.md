@@ -394,10 +394,15 @@ que es el caso que de verdad moría sin avisar. Decisión de Samuel, 2026-09-22.
   se asignaron por geografía de las comunas, sin conocimiento del costo real de reparto. El único
   dato confirmado por Samuel es Granada (comuna 9) = centro. **Hasta que las revise, el costo puede
   seguir saliendo mal — solo que ahora sale mal de forma consistente y auditable, no aleatoria.**
-- **Las direcciones ya guardadas conservan su zona vieja.** `customer_addresses` tiene 12 filas; la
-  de Kall quedó en `centro/$8.000` (correcta) porque el bot la pisó el 2026-09-18, pero no se hizo
-  backfill del resto contra la tabla nueva. El prompt le pide al modelo repasar por
-  `resolve_armenia_address` una zona guardada que no le conste, que es mitigación, no arreglo.
+- **Una dirección guardada está mal cobrada.** Se auditaron las 12 filas de `customer_addresses`
+  contra la tabla nueva con `cargo run --example zonecheck` (2026-09-22): **8 coinciden** —incluida
+  la de Kall, `centro/$8.000`—, **3 no tienen un barrio reconocible** y el bot se las va a
+  repreguntar, y **1 está mal**: la id 9, `Barrio tigreros Calle 17 #26 A 02`, guardada como
+  `sur/$10.000` cuando Tigreros cae en centro (+302 m sobre el eje, frontera en +79) y son
+  **$8.000**. **La base no se tocó.** El prompt le pide al modelo repasar por
+  `resolve_armenia_address` una zona guardada que no le conste, así que debería autocorregirse en
+  el próximo pedido de ese cliente — pero eso depende del modelo, no del código. Cerrarlo de raíz
+  es un UPDATE de una fila, y es decisión de Samuel.
 - **Falta el E2E contra producción.** Mínimo: un pedido a una dirección con barrio conocido (que
   resuelva solo), uno con un nombre de conjunto que no esté en la tabla (que pregunte la zona), y
   verificar que un programado conserva su pedido si se pregunta por él después de la hora.
