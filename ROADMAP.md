@@ -331,7 +331,7 @@ escribe, incluido el evento `Purchase` a la CAPI de Meta— y el riesgo asumido 
 
 ---
 
-### 7. Handoff por adjunto, por petición de persona y por alianzas — CERRADO (2026-09-22, v1.28.0) · SIN DESPLEGAR
+### 7. Handoff por adjunto, por petición de persona y por alianzas — CERRADO (2026-09-22, v1.28.0) · DESPLEGADO 2026-09-22
 
 **Origen: el chat de Juan Saa (+57 313 643 6411), 2026-09-14.** Llegó desde `/volumen/` del sitio,
 pidió "Hablar con un asesor" en su segundo mensaje, mandó una captura de la página y preguntó por la
@@ -349,8 +349,8 @@ patrones deterministas antes del LLM (piso, no se puede saltar) + contexto del s
 
 **Lo que queda abierto de esto:**
 
-- **Falta desplegar y falta el E2E contra producción.** Los patrones nunca han corrido contra
-  mensajes reales. Lo que hay son tests unitarios. Mínimo a probar desde el teléfono de Samuel:
+- **Desplegado el 2026-09-22** (contenedor arriba 16:58 UTC). **Falta el E2E contra producción**:
+  los patrones nunca han corrido contra mensajes reales. Lo que hay son tests unitarios. Mínimo a probar desde el teléfono de Samuel:
   mandar una foto cualquiera (→ handoff + push + el adjunto abre desde la bandeja), escribir
   "quiero hablar con un asesor" (→ handoff), escribir "me interesa lo de emprender" (→ handoff con
   el mensaje de alianzas), mandar una nota de voz y un sticker (la nota escala, el sticker no), y
@@ -370,7 +370,7 @@ patrones deterministas antes del LLM (piso, no se puede saltar) + contexto del s
 
 ---
 
-### 8. Las tres fallas del chat de Kall Díaz — CERRADO (2026-09-22, v1.29.0) · SIN DESPLEGAR
+### 8. Las tres fallas del chat de Kall Díaz — CERRADO (2026-09-22, v1.29.0) · DESPLEGADO 2026-09-22
 
 Origen: el chat de Kall Díaz (+57 313 524 8660), del 2026-08-30 al 2026-09-18, y sus 3 pedidos en
 base. Samuel lo trajo como "los pedidos programados no funcionan bien". **No era eso.** Eran tres
@@ -390,10 +390,12 @@ que es el caso que de verdad moría sin avisar. Decisión de Samuel, 2026-09-22.
 
 **Lo que queda abierto:**
 
-- **`[zona_por_comuna]` de `config/armenia_zones.toml` es un BORRADOR sin revisar.** Las 10 líneas
-  se asignaron por geografía de las comunas, sin conocimiento del costo real de reparto. El único
-  dato confirmado por Samuel es Granada (comuna 9) = centro. **Hasta que las revise, el costo puede
-  seguir saliendo mal — solo que ahora sale mal de forma consistente y auditable, no aleatoria.**
+- **La tabla de zonas se rehízo desde coordenadas y Samuel la revisó** (2026-09-22). El primer
+  intento derivaba la zona de las comunas y quedó con 6 de 10 invertidas. La versión final
+  geocodifica las referencias físicas que dio Samuel y las proyecta sobre el eje de la ciudad;
+  él validó la lista de barrios por zona. Detalle del método en la cabecera del TOML.
+- **Desplegado el 2026-09-22** (contenedor arriba 01:58 UTC del 23, `barrios=525` en el log de
+  arranque).
 - **Una dirección guardada está mal cobrada.** Se auditaron las 12 filas de `customer_addresses`
   contra la tabla nueva con `cargo run --example zonecheck` (2026-09-22): **8 coinciden** —incluida
   la de Kall, `centro/$8.000`—, **3 no tienen un barrio reconocible** y el bot se las va a

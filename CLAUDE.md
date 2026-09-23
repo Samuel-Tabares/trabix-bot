@@ -32,14 +32,27 @@ still compiles but every live state is agent-owned, so `transition()` is unreach
 **The advisor never talks to the bot (v1.27.0).** There is no lane for it: `POST
 /internal/advisor/reply` is gone, and so are `Actor::Advisor`, `run_advisor_turn` and the
 `AdvisorResponse` timer. The advisor only writes to the **customer**. When the bot hits something it
-cannot resolve — quoting delivery to a destination with no tariff, or verifying a transfer reached
-the bank — it performs a deterministic handoff (`BotAction::HandOffToHuman`: advisor note +
-`human_takeover_until` + a fixed text to the customer) and steps out. When the conversation comes
+cannot resolve it performs a deterministic handoff (`BotAction::HandOffToHuman`: advisor note +
+`human_takeover_until` + a fixed text to the customer) and steps out. As of v1.29.0 there are
+**six** `HandoffReason`s, not two — quoting delivery with no tariff, verifying a transfer,
+**any attachment the model cannot read**, **the customer asking for a person**, **a question about
+"Emprende con Trabix"/alianzas**, and **a message the currency guard blocked**. The last four are
+decided by `try_handle_handoff_shortcut` *before* the LLM call, so the model cannot decline to
+escalate; `hand_off_to_human` is the tool for what those patterns miss. When the conversation comes
 back (`POST /internal/advisor/release`, or the 6h window lapsing into
 `timers::sweep_expired_handoffs`), `ai::agent::run_resume_turn` **reads the transcript of what was
 said during the handoff** and carries the order forward, then reports what it concluded on the
 advisor lane. Money tools (`set_manual_delivery_cost`, `confirm_payment_received`) only run in a
 resume turn. Full contract in `docs/internal_advisor_send.md`.
+
+**The model never picks the Armenia delivery zone (v1.29.0).** `set_delivery_zone_armenia` used to
+take `norte`/`centro`/`sur` as a parameter the model chose, with no table behind it: it read the
+barrio and guessed, charging the same address $6,000 one day and $8,000 another. Now
+`resolve_armenia_address` resolves the address text against `config/armenia_zones.toml` (525
+entries, derived from geocoded landmarks projected onto the city's principal axis — see the file's
+header, and **do not** regenerate it from the comuna division: that was tried and left 6 of 10
+comunas inverted). If the barrio is unknown or ambiguous the bot **asks**; that, not the table, is
+what fixes the bug. `set_delivery_zone_armenia` survives for when the *customer* states the zone.
 
 Prompt caching **is implemented** (v1.9.0): the static `SYSTEM_PROMPT` carries a
 `cache_control: ephemeral` breakpoint, which also caches the tool schemas; the dynamic "ESTADO
