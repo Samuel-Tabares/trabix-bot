@@ -474,6 +474,36 @@ pub async fn refresh_pricing(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Gemelo de `refresh_pricing` para el catálogo de sabores. La llama `crm-app`
+/// justo después de guardar en el panel, para que apagar un sabor se vea en la
+/// siguiente conversación en vez de esperar el refresco periódico.
+pub async fn refresh_flavors(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+
+    let (Some(url), Some(token)) = (
+        state.config.crm_app_flavors_url.as_deref(),
+        state.config.crm_app_pricing_token.as_deref(),
+    ) else {
+        return Ok(StatusCode::NO_CONTENT);
+    };
+
+    let http_client = reqwest::Client::new();
+    match crate::bot::flavors::fetch_flavor_table(&http_client, url, token).await {
+        Ok(table) => {
+            crate::bot::flavors::swap_flavor_table(table);
+            tracing::info!("flavor table refreshed from crm-app notification");
+        }
+        Err(err) => {
+            tracing::warn!(%err, "failed to refresh flavor table after crm-app notification")
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 fn is_unique_violation(err: &sqlx::Error) -> bool {
     err.as_database_error()
         .is_some_and(DatabaseError::is_unique_violation)

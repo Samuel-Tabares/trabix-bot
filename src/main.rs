@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 
 use axum::Router;
 use granizado_bot::{
+    bot::flavors::{fetch_flavor_table, init_flavor_table, swap_flavor_table, FlavorTable},
     bot::pricing::{fetch_pricing_table, init_pricing_table, swap_pricing_table, PricingTable},
     bot::timers::{new_timer_map, restore_pending_timers, spawn_timer_sweeper},
     config::Config,
@@ -70,6 +71,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     } else {
         init_pricing_table(PricingTable::default());
+    }
+
+    granizado_bot::bot::flavors::init_carta_url(config.carta_url.clone());
+
+    // Catálogo de sabores: misma forma que los tiers de arriba. La fuente viva
+    // es `crm-app` (`/settings/sabores`); sin `CRM_APP_FLAVORS_URL` el bot
+    // arranca con los 12 sabores compilados en `FlavorTable::default()`, que
+    // son los que vivían en `config/messages.toml`. Nunca bloquea el arranque:
+    // quedarse sin catálogo sería dejar de vender.
+    //
+    // Refresco cada 10 minutos, más seguido que el de precios (1h): un sabor
+    // se acaba en mitad de un día de ventas, un precio no. La propagación
+    // normal igual es instantánea vía `POST /internal/flavors/refresh`.
+    if let (Some(flavors_url), Some(flavors_token)) = (
+        config.crm_app_flavors_url.clone(),
+        config.crm_app_pricing_token.clone(),
+    ) {
+        match fetch_flavor_table(&pricing_http_client, &flavors_url, &flavors_token).await {
+            Ok(table) => init_flavor_table(table),
+            Err(err) => {
+                tracing::warn!(%err, "initial flavor fetch failed, using compiled defaults");
+                init_flavor_table(FlavorTable::default());
+            }
+        }
+
+        let refresh_client = pricing_http_client.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                match fetch_flavor_table(&refresh_client, &flavors_url, &flavors_token).await {
+                    Ok(table) => swap_flavor_table(table),
+                    Err(err) => tracing::warn!(%err, "failed to refresh flavor table"),
+                }
+            }
+        });
+    } else {
+        init_flavor_table(FlavorTable::default());
     }
 
     let transport = WhatsAppClient::new(

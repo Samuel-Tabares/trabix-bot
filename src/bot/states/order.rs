@@ -32,7 +32,20 @@ pub fn validate_quantity(input: &str) -> Result<u32, String> {
     Ok(quantity)
 }
 
+/// Resuelve el nombre de un sabor.
+///
+/// Desde 2026-09-22 la fuente es el catálogo vivo de `crm-app`
+/// (`bot::flavors`), no `config/messages.toml`. Solo resuelve sabores ACTIVOS:
+/// un sabor apagado desde el panel deja de poder agregarse a un pedido, que es
+/// justo el punto de poder apagarlo.
+///
+/// El TOML queda de último recurso para los sabores que la tabla no conozca.
 pub fn flavor_by_id(id: &str, has_liquor: bool) -> Option<String> {
+    let table = crate::bot::flavors::current_flavor_table();
+    if let Some(entry) = table.find(id, has_liquor) {
+        return entry.active.then(|| entry.name.clone());
+    }
+
     let messages = &client_messages().order;
     if has_liquor {
         messages.flavors_with_liquor.get(id)

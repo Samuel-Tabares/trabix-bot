@@ -228,6 +228,13 @@ Reglas que no puedes romper:
   apenas abramos, ver PEDIDO INMEDIATO abajo); solo ofrece programar si el cliente prefiere una \
   fecha/hora específica en vez de esperar a que abramos.
 - Antes de agregar un producto usa get_menu para conocer los flavor_id validos; no inventes ids.
+- CARTA Y SABORES: cuando el cliente pregunte por el menu, la carta o que sabores hay, usa \
+  show_menu (le manda el link de la carta, con fotos y lo que hay hoy) Y ADEMAS escribele los \
+  sabores en texto en ese mismo turno, sacados de get_menu. Las dos cosas juntas, no una sola: \
+  mucha gente no abre links, y al que si lo abre el texto no le estorba.
+- Lo que devuelve get_menu es lo que HAY hoy. Si un sabor no aparece ahi, se acabo: no lo \
+  ofrezcas ni lo agregues al pedido. Si el cliente pide uno que no esta, dile que por ahora no \
+  hay y ofrecele los que si.
 - SIN LICOR AGOTADO AL DETAL: por ahora los granizados sin licor (Manzana verde, Bonbonbum, \
   Maracumango, Blueberry en su versión sin licor) SOLO se venden al por mayor (mínimo 20 unidades \
   sin licor en el pedido). Al detal no hay sin licor por el momento. Si el cliente pide pocos sin \
@@ -1296,7 +1303,23 @@ fn dispatch_tool(
                 json!({ "is_open": status.is_open, "hours_text": status.hours_text }).to_string(),
             ))
         }
-        "show_menu_image" => ToolOutcome::ResultWithMenuImage(ok_result(id, "Imagen enviada.")),
+        // Antes mandaba la imagen del menú. Ahora manda el link de la carta:
+        // la imagen era una foto fija que había que rehacer y resubir cada vez
+        // que entraba o salía un sabor, mientras que la carta refleja el
+        // catálogo real en el momento en que el cliente la abre.
+        //
+        // Si `CARTA_URL` no está configurada se cae a la imagen de siempre, que
+        // es el comportamiento viejo — nunca se queda sin mostrar nada.
+        "show_menu" | "show_menu_image" => match crate::bot::flavors::carta_url() {
+            Some(url) => ToolOutcome::ResultWithAction(
+                ok_result(id, &format!("Link de la carta enviado: {url}")),
+                BotAction::SendText {
+                    to: context.phone_number.clone(),
+                    body: format!("Esta es nuestra carta de hoy 🍧\n{url}"),
+                },
+            ),
+            None => ToolOutcome::ResultWithMenuImage(ok_result(id, "Imagen enviada.")),
+        },
         "set_customer_field" => wrap(id, set_customer_field(input, context)),
         "set_delivery_immediate" => wrap(id, set_delivery_immediate(context)),
         "set_delivery_schedule" => wrap(id, set_delivery_schedule(input, context)),
@@ -3057,7 +3080,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
             name: "get_menu".to_string(),
-            description: "Devuelve el texto del menú vigente y los flavor_id válidos para con/sin licor.".to_string(),
+            description: "Devuelve el texto del menú vigente y los flavor_id válidos para con/sin licor. Solo trae los sabores DISPONIBLES hoy: si un sabor no aparece acá, no hay y no se puede pedir.".to_string(),
             input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         },
         ToolDefinition {
@@ -3066,8 +3089,8 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         },
         ToolDefinition {
-            name: "show_menu_image".to_string(),
-            description: "Envía la imagen del menú al cliente (además de cualquier mensaje que le mandes).".to_string(),
+            name: "show_menu".to_string(),
+            description: "Le manda al cliente el link de la carta, donde ve los sabores que hay hoy con foto. Úsala cuando pregunte por el menú, la carta o los sabores. Mándale además, en el mismo turno, la lista de sabores en texto con get_menu: mucha gente no abre links.".to_string(),
             input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         },
         ToolDefinition {

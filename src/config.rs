@@ -40,6 +40,14 @@ pub struct Config {
     /// mayoristas compilados por defecto — igual que siempre.
     pub crm_app_pricing_url: Option<String>,
     pub crm_app_pricing_token: Option<String>,
+    /// URL de `GET /api/internal/flavors` en `crm-app`. Mismo trato que las de
+    /// pricing: sin ella el bot se queda con el catálogo compilado por defecto
+    /// (los 12 sabores que vivían en `config/messages.toml`). Reusa
+    /// `crm_app_pricing_token` porque es el mismo secreto del mismo servicio.
+    pub crm_app_flavors_url: Option<String>,
+    /// URL pública de la carta, que el bot manda en vez de la imagen del menú.
+    /// Sin ella el bot no menciona ninguna carta y solo lista los sabores.
+    pub carta_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +100,8 @@ impl Config {
             advisor_takeover_hours: read_u64("ADVISOR_TAKEOVER_HOURS", 6),
             crm_app_pricing_url: read_optional("CRM_APP_PRICING_URL"),
             crm_app_pricing_token: read_optional("CRM_APP_PRICING_TOKEN"),
+            crm_app_flavors_url: read_optional("CRM_APP_FLAVORS_URL"),
+            carta_url: read_optional("CARTA_URL"),
         })
     }
 }

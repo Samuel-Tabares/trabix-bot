@@ -63,6 +63,8 @@ async fn setup_state() -> AppState {
         advisor_takeover_hours: 6,
         crm_app_pricing_url: None,
         crm_app_pricing_token: None,
+        crm_app_flavors_url: None,
+        carta_url: None,
     };
 
     AppState {

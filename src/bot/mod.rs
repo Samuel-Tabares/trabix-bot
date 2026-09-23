@@ -1,5 +1,6 @@
 pub mod armenia_zones;
 pub mod delivery_zone;
+pub mod flavors;
 pub mod pricing;
 pub mod state_machine;
 pub mod states;

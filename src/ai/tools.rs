@@ -11,6 +11,7 @@ use sqlx::PgPool;
 use crate::{
     bot::{
         delivery_zone::{lookup_nearby_town, ArmeniaZone, MIN_UNITS_OUTSIDE_ARMENIA},
+        flavors,
         pricing::{self, PedidoCalculado, ReferralApplied},
         states::{
             data_collect::{validate_address, validate_name, validate_phone},
@@ -35,20 +36,26 @@ pub struct MenuInfo {
     pub flavors_without_liquor: Vec<(String, String)>,
 }
 
+/// Los sabores salen del catálogo vivo de `crm-app` (`bot::flavors`), no del
+/// TOML. `menu_text` (precios y condiciones) sigue viniendo de `messages.toml`:
+/// los precios tienen su propio canal (`bot::pricing`) y ese texto no es una
+/// lista de sabores.
+///
+/// Solo se devuelven los ACTIVOS — es lo único que el bot puede ofrecer.
 pub fn get_menu() -> MenuInfo {
-    let order = &client_messages().order;
+    let table = flavors::current_flavor_table();
+    let listar = |has_liquor: bool| -> Vec<(String, String)> {
+        table
+            .active_sorted(has_liquor)
+            .into_iter()
+            .map(|f| (f.flavor_id.clone(), f.name.clone()))
+            .collect()
+    };
+
     MenuInfo {
         menu_text: client_messages().menu.menu_text.clone(),
-        flavors_with_liquor: order
-            .flavors_with_liquor
-            .iter()
-            .map(|(id, title)| (id.clone(), title.clone()))
-            .collect(),
-        flavors_without_liquor: order
-            .flavors_without_liquor
-            .iter()
-            .map(|(id, title)| (id.clone(), title.clone()))
-            .collect(),
+        flavors_with_liquor: listar(true),
+        flavors_without_liquor: listar(false),
     }
 }
 
@@ -58,114 +65,14 @@ pub fn resolve_flavor(has_liquor: bool, flavor_id: &str) -> Option<String> {
 
 // --- Catálogo: desambiguación de sabores en texto libre ---------------------
 //
-// Ver docs/canary-fixes-2026-07-19.md #5. Algunos nombres base ("Maracumango",
-// "Manzana verde", "Bonbonbum", "Blueberry") existen como productos DISTINTOS
-// en ambas variantes (con/sin licor). Si el cliente solo dice el nombre base
-// sin ninguna palabra que distinga la variante ("ron", "vodka", "tequila",
-// "whiskey", "champaña", "con/sin licor"), add_order_item debe rechazar el
-// intento en vez de confiar en que el LLM adivinó bien. Sabores que solo
-// existen en una variante (Uva Vodka, Smirnoff de lulo) no están en esta
-// tabla: son inequívocos sin importar qué palabras use el cliente.
-
-struct AmbiguousVariant {
-    flavor_id: &'static str,
-    has_liquor: bool,
-    keywords: &'static [&'static str],
-}
-
-const AMBIGUOUS_GROUPS: &[&[AmbiguousVariant]] = &[
-    &[
-        AmbiguousVariant {
-            flavor_id: "non_liquor_maracumango",
-            has_liquor: false,
-            keywords: &["sin licor", "sin alcohol"],
-        },
-        AmbiguousVariant {
-            flavor_id: "liquor_maracumango_ron_blanco",
-            has_liquor: true,
-            keywords: &["ron", "con licor", "con alcohol"],
-        },
-    ],
-    &[
-        AmbiguousVariant {
-            flavor_id: "non_liquor_manzana_verde",
-            has_liquor: false,
-            keywords: &["sin licor", "sin alcohol"],
-        },
-        AmbiguousVariant {
-            flavor_id: "liquor_manzana_verde_tequila",
-            has_liquor: true,
-            keywords: &["tequila", "con licor", "con alcohol"],
-        },
-    ],
-    &[
-        AmbiguousVariant {
-            flavor_id: "non_liquor_bonbonbum",
-            has_liquor: false,
-            keywords: &["sin licor", "sin alcohol"],
-        },
-        AmbiguousVariant {
-            flavor_id: "liquor_bonbonbum_whiskey",
-            has_liquor: true,
-            keywords: &["whiskey", "whisky"],
-        },
-        AmbiguousVariant {
-            flavor_id: "liquor_bonbonbum_fresa_champagne",
-            has_liquor: true,
-            keywords: &["champaña", "champagne", "fresa"],
-        },
-    ],
-    &[
-        AmbiguousVariant {
-            flavor_id: "non_liquor_blueberry",
-            has_liquor: false,
-            keywords: &["sin licor", "sin alcohol"],
-        },
-        AmbiguousVariant {
-            flavor_id: "liquor_blueberry_vodka",
-            has_liquor: true,
-            keywords: &["vodka", "con licor", "con alcohol"],
-        },
-    ],
-];
-
-/// Si `flavor_id`+`has_liquor` pertenecen a un grupo ambiguo y
-/// `customer_wording` no trae ninguna palabra que distinga la variante
-/// elegida, devuelve los nombres de las otras variantes del grupo (para que
-/// el LLM le pregunte al cliente cuál quiere en vez de agregar una \
-/// adivinada). Si el sabor es inequívoco o el texto del cliente ya distingue
-/// la variante, devuelve `Ok(())`.
-pub fn check_flavor_disambiguation(
-    flavor_id: &str,
-    has_liquor: bool,
-    customer_wording: &str,
-) -> Result<(), Vec<String>> {
-    let Some(group) = AMBIGUOUS_GROUPS.iter().find(|group| {
-        group
-            .iter()
-            .any(|variant| variant.flavor_id == flavor_id && variant.has_liquor == has_liquor)
-    }) else {
-        return Ok(());
-    };
-
-    let normalized = customer_wording.trim().to_lowercase();
-    let chosen = group
-        .iter()
-        .find(|variant| variant.flavor_id == flavor_id && variant.has_liquor == has_liquor)
-        .expect("flavor_id ya verificado como miembro del grupo");
-
-    if chosen.keywords.iter().any(|keyword| normalized.contains(keyword)) {
-        return Ok(());
-    }
-
-    let other_names = group
-        .iter()
-        .filter(|variant| !(variant.flavor_id == flavor_id && variant.has_liquor == has_liquor))
-        .filter_map(|variant| resolve_flavor(variant.has_liquor, variant.flavor_id))
-        .collect();
-
-    Err(other_names)
-}
+// Vivía acá como `AMBIGUOUS_GROUPS`, una tabla escrita a mano con los cuatro
+// nombres base que existen en ambas variantes. Se movió a `bot::flavors`
+// porque una lista a mano no puede cubrir un sabor agregado desde el panel de
+// `crm-app`: agregar "Mango" sin licor y "Mango Ron" con licor formaba un par
+// ambiguo que esta tabla no conocía, y el modelo volvía a adivinar la variante
+// — el bug del 2026-07-19. Ahora los grupos se calculan agrupando por
+// `base_name` y las palabras distintivas se derivan del nombre.
+pub use crate::bot::flavors::check_flavor_disambiguation;
 
 #[derive(Debug, Clone)]
 pub struct BusinessHoursStatus {
