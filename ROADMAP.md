@@ -416,7 +416,7 @@ que es el caso que de verdad moría sin avisar. Decisión de Samuel, 2026-09-22.
 
 ---
 
-### 9. El bot puede mandar archivos al cliente — CERRADO (2026-09-23, v1.32.0) · SIN DESPLEGAR
+### 9. El bot puede mandar archivos al cliente — CERRADO (2026-09-23, v1.32.0) · DESPLEGADO 2026-09-24
 
 `POST /internal/advisor/send-document`. Nace de un pedido concreto: cuando se acepta un pedido
 mayorista en Pendientes, `crm-app` debe mandarle la factura al cliente sin que nadie la descargue y
@@ -436,7 +436,8 @@ habría dejado al bot mudo con ese cliente.
 **Lo que queda abierto:**
 
 - **Nunca ha salido un documento a un teléfono real.** `upload_media` está probado por unidad, no
-  contra Meta. Es lo único que falta para cerrarlo de verdad.
+  contra Meta; el despliegue del 2026-09-24 solo prueba que el binario arranca. Es lo único que
+  falta para cerrarlo de verdad, y la primera vez que se acepte un pedido mayorista es esa prueba.
 - **La ventana de 24h lo va a bloquear seguido.** Un pedido se acepta días después de entregado, y
   ahí el cliente lleva más de 24h sin escribir: Meta solo admite plantillas, que están fuera del
   backlog (decisión de Samuel, 2026-08-25). `crm-app` avisa en Pendientes y la factura se manda a
