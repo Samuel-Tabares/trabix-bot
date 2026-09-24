@@ -85,7 +85,11 @@ Componentes principales:
     el header `X-Internal-Token` (`INTERNAL_API_TOKEN`; sin la variable el endpoint responde 503).
     No es un camino de webhook: no cambia el estado de la conversacion ni pausa timers, solo toma el
     lock del caso, envia texto y traza en `message_events` (`channel='client'`, `actor='advisor'`,
-    `payload.source='crm-app'`). Contrato: `docs/internal_advisor_send.md`. Desde Fase 8, `mod.rs`
+    `payload.source='crm-app'`). Desde v1.32.0 tambien `POST /internal/advisor/send-document`: sube
+    un PDF a la API de medios de Meta y lo manda como `document` (hoy, la factura de un pedido
+    mayorista aceptado en Pendientes). Ese NO marca toma de control humana ni toca la memoria del
+    agente — mandar una factura es automatico, no un asesor entrando a la conversacion.
+    Contrato: `docs/internal_advisor_send.md`. Desde Fase 8, `mod.rs`
     sirve estas rutas (y las de `referral-codes`) en un `internal_router()` separado, en su propio
     listener (`INTERNAL_PORT`, default 8081) sin dominio publico en Railway — `public_router()`
     (`/webhook`, `/privacy-policy`, `/terms-of-service`) queda solo en `PORT`. Antes ambos grupos
@@ -829,9 +833,10 @@ Campos importantes:
 `POST /internal/advisor/send` (`crm-app`), cada vez que un asesor manda texto libre al cliente desde
 la consola — es la señal de "esto lo está atendiendo un humano", sin botón ni flag manual. Ventana
 deslizante: cada envío nuevo la reemplaza a `now + ADVISOR_TAKEOVER_HOURS` (env, default `6`, no
-acumula). `POST /internal/advisor/reply` deliberadamente NO la toca (existe para que el bot siga el
-checkout automático después de que el asesor destraba una pregunta puntual, ver
-`docs/internal_advisor_send.md`).
+acumula). `POST /internal/advisor/send-document` (v1.32.0) deliberadamente NO la toca: mandarle la
+factura al cliente es un acto automático del sistema, no un asesor entrando a la conversación, y la
+ventana de 6h dejaría al bot mudo con ese cliente después de cada pedido aceptado. Ver
+`docs/internal_advisor_send.md`.
 
 Mientras `human_takeover_until` está en el futuro:
 

@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-09-23
+
+### Added
+
+- **`POST /internal/advisor/send-document`: el bot ya puede mandarle un archivo al cliente.** Existe
+  para que `crm-app` mande sola la factura cuando se acepta un pedido mayorista en Pendientes —
+  antes había que entrar a `/ventas/[id]`, descargar el PDF y adjuntarlo a mano en WhatsApp. El
+  archivo llega en base64, el bot lo sube a la API de medios de Meta y manda el `media_id`; no se le
+  pasa a Meta una URL para que la descargue porque la factura lleva nombre, dirección y teléfono del
+  cliente y eso habría significado exponerla en un endpoint sin autenticar.
+- `WhatsAppClient::upload_media` y `WhatsAppClient::send_document`. El cliente ya sabía **bajar**
+  medios (`download_media`, v1.23.0); ahora también subirlos.
+
+### Notas
+
+- **A diferencia de `/internal/advisor/send`, este endpoint NO marca toma de control humana ni
+  escribe en la memoria del agente.** Mandar una factura es automático, no un asesor entrando a la
+  conversación: con la ventana de 6h, aceptar un pedido habría dejado al bot mudo con ese cliente
+  sin que nadie lo pidiera.
+- La ventana de 24h de Meta aplica igual: si el cliente lleva más de 24h sin escribir el endpoint
+  devuelve `window_closed` y `crm-app` avisa en Pendientes en vez de reintentar. Es el caso más
+  probable al aceptar un pedido días después de entregado, y no hay plantilla porque las plantillas
+  están fuera del backlog por decisión de Samuel (2026-08-25).
+- 217 tests en verde. Contrato en `docs/internal_advisor_send.md`.
+
 ## [1.31.0] - 2026-09-23
 
 ### Changed

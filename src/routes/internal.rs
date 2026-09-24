@@ -16,6 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -41,6 +42,13 @@ pub const TOKEN_HEADER: &str = "x-internal-token";
 /// Límite de texto de la Cloud API de Meta.
 const MAX_BODY_CHARS: usize = 4096;
 
+/// Único tipo de archivo que se manda desde la consola hoy (la factura).
+const DOCUMENT_MIME: &str = "application/pdf";
+
+/// Meta admite documentos de hasta 100 MB; acá no hace falta ni de lejos, y un
+/// tope bajo evita que un bug del lado de la consola mande cualquier cosa.
+const MAX_DOCUMENT_BYTES: usize = 1_000_000;
+
 const CHANNEL_CLIENT: &str = "client";
 const ACTOR_ADVISOR: &str = "advisor";
 
@@ -49,6 +57,22 @@ pub struct AdvisorSendRequest {
     pub case_phone: String,
     pub body: String,
     /// Quién lo mandó desde la consola (usuario del CRM). Solo para la traza.
+    #[serde(default)]
+    pub sent_by: Option<String>,
+}
+
+/// La factura de un pedido mayorista aceptado en Pendientes. El archivo viaja
+/// en base64 dentro del JSON, no como multipart: el límite de cuerpo de axum
+/// (2 MB) deja pasar de sobra una factura de una página, y así el endpoint se
+/// parsea igual que los otros internos.
+#[derive(Debug, Deserialize)]
+pub struct AdvisorSendDocumentRequest {
+    pub case_phone: String,
+    pub filename: String,
+    #[serde(default)]
+    pub caption: Option<String>,
+    pub mime_type: String,
+    pub content_base64: String,
     #[serde(default)]
     pub sent_by: Option<String>,
 }
@@ -247,6 +271,129 @@ pub async fn advisor_send(
         preview = %preview_text(&body),
         takeover_until = %takeover_until,
         "advisor message sent from crm-app"
+    );
+
+    Ok(Json(AdvisorSendResponse { wa_message_id }))
+}
+
+/// Manda un archivo al cliente por WhatsApp. Hoy lo usa un solo camino: la
+/// factura que `crm-app` genera al aceptar un pedido mayorista en Pendientes.
+///
+/// Dos diferencias deliberadas con `advisor_send`:
+///
+/// 1. **No marca toma de control humana.** Mandar una factura es un acto
+///    automático del sistema, no un asesor entrando a la conversación. Si
+///    pusiera la ventana de 6h, aceptar un pedido dejaría al bot mudo con ese
+///    cliente sin que nadie lo haya pedido.
+/// 2. **No entra a la memoria del agente.** Las líneas de transcript existen
+///    para que el turno de recuperación sepa qué se dijo durante un handoff, y
+///    esto no es un handoff.
+///
+/// Sigue siendo el bot el que habla con Meta y el que escribe `message_events`,
+/// igual que todo lo demás de este archivo.
+pub async fn advisor_send_document(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<AdvisorSendDocumentRequest>, JsonRejection>,
+) -> Result<Json<AdvisorSendResponse>, ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+
+    let Json(payload) = payload
+        .map_err(|err| ApiError::InvalidRequest(format!("cuerpo JSON inválido: {err}")))?;
+
+    let case_phone = validate_phone(&payload.case_phone)?;
+    let filename = validate_filename(&payload.filename)?;
+    let caption = match payload.caption.as_deref().map(str::trim) {
+        Some("") | None => None,
+        Some(text) => Some(validate_body(text)?),
+    };
+
+    if payload.mime_type != DOCUMENT_MIME {
+        return Err(ApiError::InvalidRequest(format!(
+            "solo se admite {DOCUMENT_MIME}"
+        )));
+    }
+
+    let bytes = BASE64
+        .decode(payload.content_base64.as_bytes())
+        .map_err(|err| ApiError::InvalidRequest(format!("contenido base64 inválido: {err}")))?;
+    if bytes.is_empty() {
+        return Err(ApiError::InvalidRequest("el archivo viene vacío".into()));
+    }
+    if bytes.len() > MAX_DOCUMENT_BYTES {
+        return Err(ApiError::InvalidRequest(format!(
+            "el archivo pesa más de {} KB",
+            MAX_DOCUMENT_BYTES / 1024
+        )));
+    }
+
+    let _case_lock = crate::lock_conversation(&state.conversation_locks, &case_phone).await;
+
+    if get_conversation(&state.pool, &case_phone)
+        .await
+        .map_err(|err| ApiError::Internal(format!("error consultando la conversación: {err}")))?
+        .is_none()
+    {
+        return Err(ApiError::UnknownCase);
+    }
+
+    let media_id = state
+        .transport
+        .upload_media(bytes, DOCUMENT_MIME, &filename)
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                case_phone = %mask_phone(&case_phone),
+                error = %err,
+                "internal document upload failed at meta"
+            );
+            classify_whatsapp_error(&err)
+        })?;
+
+    let wa_message_id = state
+        .transport
+        .send_document(&case_phone, &media_id, &filename, caption.as_deref())
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                case_phone = %mask_phone(&case_phone),
+                error = %err,
+                "internal document send failed at meta"
+            );
+            classify_whatsapp_error(&err)
+        })?;
+
+    // Best-effort igual que en `advisor_send`: el archivo ya salió.
+    if let Err(err) = record_message_event(
+        &state.pool,
+        &case_phone,
+        CHANNEL_CLIENT,
+        ACTOR_ADVISOR,
+        "document",
+        caption.as_deref().or(Some(&filename)),
+        Some(json!({
+            "source": "crm-app",
+            "sent_by": payload.sent_by,
+            "filename": filename,
+            "media_id": media_id,
+        })),
+        wa_message_id.as_deref(),
+    )
+    .await
+    {
+        tracing::warn!(error = %err, "failed to record internal advisor document event");
+    }
+
+    if let Err(err) = update_last_message(&state.pool, &case_phone).await {
+        tracing::warn!(error = %err, "failed to bump last_message_at after internal document send");
+    }
+
+    tracing::info!(
+        case_phone = %mask_phone(&case_phone),
+        sent_by = %payload.sent_by.as_deref().unwrap_or("<desconocido>"),
+        filename = %filename,
+        message_id = %wa_message_id.as_deref().unwrap_or("<none>"),
+        "advisor document sent from crm-app"
     );
 
     Ok(Json(AdvisorSendResponse { wa_message_id }))
@@ -565,6 +712,27 @@ fn validate_phone(raw: &str) -> Result<String, ApiError> {
     Ok(trimmed.to_string())
 }
 
+/// El nombre es lo que ve el cliente debajo del archivo en WhatsApp, así que
+/// no puede venir vacío; se rechazan separadores de ruta porque no aportan
+/// nada y sí pueden confundir al visor del teléfono.
+fn validate_filename(raw: &str) -> Result<String, ApiError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::InvalidRequest("filename vacío".into()));
+    }
+    if trimmed.chars().count() > 120 {
+        return Err(ApiError::InvalidRequest(
+            "filename excede 120 caracteres".into(),
+        ));
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains('\0') {
+        return Err(ApiError::InvalidRequest(
+            "filename no puede contener separadores de ruta".into(),
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
 fn validate_body(raw: &str) -> Result<String, ApiError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -616,7 +784,7 @@ mod tests {
 
     use super::{
         authorize, classify_whatsapp_error, constant_time_eq, meta_error_code, validate_body,
-        validate_phone, ApiError, TOKEN_HEADER,
+        validate_filename, validate_phone, ApiError, TOKEN_HEADER,
     };
     use crate::whatsapp::client::WhatsAppError;
 
@@ -731,5 +899,29 @@ mod tests {
             ApiError::Disabled.status(),
             StatusCode::SERVICE_UNAVAILABLE
         );
+    }
+
+    #[test]
+    fn accepts_a_plain_invoice_filename() {
+        assert_eq!(
+            validate_filename("  factura-29.pdf "),
+            Ok("factura-29.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_empty_or_path_like_filenames() {
+        assert!(matches!(
+            validate_filename("   "),
+            Err(ApiError::InvalidRequest(_))
+        ));
+        assert!(matches!(
+            validate_filename("../../etc/passwd"),
+            Err(ApiError::InvalidRequest(_))
+        ));
+        assert!(matches!(
+            validate_filename("carpeta\\factura.pdf"),
+            Err(ApiError::InvalidRequest(_))
+        ));
     }
 }

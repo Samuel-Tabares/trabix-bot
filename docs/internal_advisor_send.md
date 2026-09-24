@@ -200,6 +200,55 @@ levanta esas filas de ahí y el caso queda marcado `needs_human`. `message_advis
 Lo que queda de `ADVISOR_PHONE` en el código es residuo de la clasificación de carriles
 (`engine::channel_for_recipient`), no un canal real.
 
+## `POST /internal/advisor/send-document` — mandar un archivo (v1.32.0)
+
+Manda un PDF al cliente. Hoy tiene un solo llamador: `crm-app` genera la factura al aceptar un
+pedido **mayorista** en Pendientes y la manda sola, sin que nadie la descargue ni la reenvíe a mano.
+
+```json
+{
+  "case_phone": "573001234567",
+  "filename": "factura-29.pdf",
+  "caption": "Factura #29 de tu pedido. Gracias por tu compra.",
+  "mime_type": "application/pdf",
+  "content_base64": "JVBERi0xLjMK…",
+  "sent_by": "<userId del CRM>"
+}
+```
+
+El archivo viaja en base64 dentro del JSON, no como multipart: el límite de cuerpo de axum (2 MB)
+deja pasar de sobra una factura de una página y así el endpoint se parsea igual que los demás. El
+bot lo **sube a la API de medios de Meta** (`POST /{phone_id}/media`) y manda el `media_id`, en vez
+de pasarle a Meta una URL para que la descargue. La factura lleva nombre, dirección y teléfono del
+cliente: la alternativa habría sido exponer un endpoint sin autenticar en `crm-app` para que Meta
+lo bajara, o sea datos de un cliente detrás de una URL adivinable.
+
+Validaciones: `mime_type` tiene que ser `application/pdf`, el `filename` no puede venir vacío ni
+traer separadores de ruta, y el archivo no puede pasar de 1 MB ya decodificado.
+
+**Dos diferencias deliberadas con `/internal/advisor/send`:**
+
+1. **No marca toma de control humana.** Mandar una factura es un acto automático del sistema, no un
+   asesor entrando a la conversación. Con la ventana de 6h, aceptar un pedido dejaría al bot mudo
+   con ese cliente sin que nadie lo haya pedido.
+2. **No entra a la memoria del agente.** Las líneas de transcript existen para que el turno de
+   recuperación sepa qué se dijo durante un handoff, y esto no es un handoff.
+
+Sí escribe `message_events` (`content_type='document'`, `actor='advisor'`, con `filename` y
+`media_id` en el payload) y sí actualiza `last_message_at`.
+
+**La ventana de 24h aplica igual.** Si el cliente lleva más de 24 horas sin escribir, Meta rechaza
+el documento y el endpoint devuelve `window_closed`. `crm-app` no reintenta: la venta ya quedó
+registrada, y el aviso en Pendientes dice que la factura hay que bajarla de `/ventas/[id]` y
+mandarla a mano. Es el escenario más probable cuando se acepta un pedido días después de entregado.
+
+```bash
+curl -i -X POST https://<bot>/internal/advisor/send-document \
+  -H "Content-Type: application/json" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  -d "{\"case_phone\":\"573001234567\",\"filename\":\"factura-29.pdf\",\"mime_type\":\"application/pdf\",\"content_base64\":\"$(base64 -i factura-29.pdf)\"}"
+```
+
 ## `GET /internal/media/:media_id` — proxy de adjuntos (v1.23.0)
 
 `crm-app` no tiene credenciales de Meta propias (a propósito, mismo principio de "un solo dueño de

@@ -8,8 +8,9 @@ use super::{
     buttons::quick_buttons,
     types::{
         Button, InteractiveBody, InteractiveMessage, ListAction, ListSection, MarkAsRead,
-        MessageSendResponse, OutgoingImageBody, OutgoingImageMessage, OutgoingListMessage,
-        OutgoingTextBody, OutgoingTextMessage,
+        MediaUploadResponse, MessageSendResponse, OutgoingDocumentBody, OutgoingDocumentMessage,
+        OutgoingImageBody, OutgoingImageMessage, OutgoingListMessage, OutgoingTextBody,
+        OutgoingTextMessage,
     },
 };
 
@@ -122,6 +123,77 @@ impl WhatsAppClient {
         };
 
         self.post_message("image", to, &payload).await
+    }
+
+    /// Sube un archivo a la API de medios de Meta y devuelve su `media_id`.
+    ///
+    /// Mandar un documento por WhatsApp admite dos caminos: una URL pública que
+    /// Meta descarga, o subirlo primero y mandar el id. Se sube. La factura
+    /// lleva nombre, dirección y teléfono del cliente, y la alternativa habría
+    /// sido exponer un endpoint sin autenticar en `crm-app` para que Meta lo
+    /// bajara — un documento con datos de un cliente detrás de una URL
+    /// adivinable. El id, en cambio, solo sirve con el token del bot.
+    pub async fn upload_media(
+        &self,
+        bytes: Vec<u8>,
+        mime_type: &str,
+        filename: &str,
+    ) -> Result<String, WhatsAppError> {
+        let url = format!(
+            "https://graph.facebook.com/v21.0/{}/media",
+            self.whatsapp_phone_id
+        );
+
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(filename.to_owned())
+            .mime_str(mime_type)
+            .map_err(WhatsAppError::Request)?;
+        let form = reqwest::multipart::Form::new()
+            .text("messaging_product", "whatsapp")
+            .text("type", mime_type.to_owned())
+            .part("file", part);
+
+        let response = self
+            .http_client
+            .post(url)
+            .bearer_auth(&self.whatsapp_token)
+            .multipart(form)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unable to read body>".into());
+            tracing::error!(%status, body = %preview_text(&body), "meta media upload returned an error");
+            return Err(WhatsAppError::Api { status, body });
+        }
+
+        let uploaded: MediaUploadResponse = response.json().await?;
+        Ok(uploaded.id)
+    }
+
+    pub async fn send_document(
+        &self,
+        to: &str,
+        media_id: &str,
+        filename: &str,
+        caption: Option<&str>,
+    ) -> Result<Option<String>, WhatsAppError> {
+        let payload = OutgoingDocumentMessage {
+            messaging_product: "whatsapp".into(),
+            to: to.into(),
+            kind: "document".into(),
+            document: OutgoingDocumentBody {
+                id: media_id.into(),
+                filename: filename.into(),
+                caption: caption.map(str::to_owned),
+            },
+        };
+
+        self.post_message("document", to, &payload).await
     }
 
     /// Descarga los bytes de un adjunto (imagen de comprobante, etc.) por su

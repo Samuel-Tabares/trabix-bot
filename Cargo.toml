@@ -1,6 +1,6 @@
 [package]
 name = "granizado-bot"
-version = "1.31.0"
+version = "1.32.0"
 edition = "2021"
 
 [dependencies]
@@ -18,3 +18,4 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"

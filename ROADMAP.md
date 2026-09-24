@@ -416,6 +416,34 @@ que es el caso que de verdad moría sin avisar. Decisión de Samuel, 2026-09-22.
 
 ---
 
+### 9. El bot puede mandar archivos al cliente — CERRADO (2026-09-23, v1.32.0) · SIN DESPLEGAR
+
+`POST /internal/advisor/send-document`. Nace de un pedido concreto: cuando se acepta un pedido
+mayorista en Pendientes, `crm-app` debe mandarle la factura al cliente sin que nadie la descargue y
+la adjunte a mano. El bot sigue siendo el único con credenciales de Meta, así que el archivo pasa
+por él.
+
+El PDF llega en base64 dentro del JSON (cabe de sobra en el límite de 2 MB de axum), el bot lo sube
+con `upload_media` y manda el `media_id` con `send_document`. **No se le pasa a Meta una URL para
+que la descargue**: la factura lleva nombre, dirección y teléfono del cliente, y eso habría exigido
+exponerla en un endpoint sin autenticar de `crm-app`.
+
+Dos cosas que este endpoint deliberadamente **no** hace, y conviene no "arreglarlas" después sin
+leer esto: no marca toma de control humana y no escribe en la memoria del agente. Mandar una factura
+es automático, no un asesor entrando a la conversación; con la ventana de 6h, aceptar un pedido
+habría dejado al bot mudo con ese cliente.
+
+**Lo que queda abierto:**
+
+- **Nunca ha salido un documento a un teléfono real.** `upload_media` está probado por unidad, no
+  contra Meta. Es lo único que falta para cerrarlo de verdad.
+- **La ventana de 24h lo va a bloquear seguido.** Un pedido se acepta días después de entregado, y
+  ahí el cliente lleva más de 24h sin escribir: Meta solo admite plantillas, que están fuera del
+  backlog (decisión de Samuel, 2026-08-25). `crm-app` avisa en Pendientes y la factura se manda a
+  mano; no hay reintento a propósito.
+
+---
+
 ## Definición de "listo" para cualquier cambio aquí
 
 `cargo check` + `cargo test` en verde · `CHANGELOG.md` actualizado · versión bumpeada en

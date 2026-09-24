@@ -378,6 +378,31 @@ pub struct OutgoingImageBody {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OutgoingDocumentMessage {
+    pub messaging_product: String,
+    pub to: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub document: OutgoingDocumentBody,
+}
+
+/// `filename` es lo que WhatsApp le muestra al cliente debajo del ícono del
+/// archivo; sin él aparece el id opaco de Meta.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OutgoingDocumentBody {
+    pub id: String,
+    pub filename: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+}
+
+/// Respuesta de `POST /{phone_id}/media`.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct MediaUploadResponse {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MarkAsRead {
     pub messaging_product: String,
     pub status: String,
