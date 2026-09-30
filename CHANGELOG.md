@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-09-30
+
+### Fixed
+
+- **El con licor al detal se cobraba con precios fijos del código.** `calcular_pedido` armaba el
+  subtotal de cada ítem con constantes ($8.000 / $4.000), no con la tabla que llega de
+  `/settings/precios`; el sin licor guardaba en `order_items` un precio unitario fijo. Cambiar el
+  precio al detal en el panel no cambiaba el total que cotizaba el bot. Ahora todo sale de la tabla
+  viva; el segundo del par cuesta `par − unidad`.
+- **El texto de precios de `get_menu` era fijo** (`messages.toml`). Ahora se arma de la misma tabla
+  (`pricing::menu_text()`), incluidos los tramos mayoristas.
+- El prompt ya no dice "$8.000": los valores salen de `get_menu`/`calculate_order`.
+
+### Added
+
+- El prompt reconoce el mensaje del carrito de la carta web (lista de sabores + "Total: $X") y lo
+  toma como el pedido, validando el total con `calculate_order`.
+
 ## [1.33.0] - 2026-09-30
 
 ### Changed

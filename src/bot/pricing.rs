@@ -8,9 +8,12 @@ use serde::Deserialize;
 
 use crate::db::models::OrderItemData;
 
-const LIQUOR_DETAIL_FULL_PRICE: u32 = 8_000;
-const LIQUOR_DETAIL_PROMO_PRICE: u32 = 4_000;
-const NON_LIQUOR_DETAIL_PRICE: u32 = 7_000;
+// Solo el fallback compilado de `RetailPrices::default()`. Todo cálculo lee la
+// tabla viva: estas constantes se usaban también para el subtotal por ítem, y
+// cambiar el precio en `/settings/precios` no cambiaba lo que el bot cobraba.
+const DEFAULT_LIQUOR_DETAIL_PRICE: u32 = 8_000;
+const DEFAULT_LIQUOR_PROMO_PAIR_PRICE: u32 = 12_000;
+const DEFAULT_NON_LIQUOR_DETAIL_PRICE: u32 = 7_000;
 
 static PRICING_TABLE: OnceLock<RwLock<Arc<PricingTable>>> = OnceLock::new();
 
@@ -41,9 +44,9 @@ pub struct RetailPrices {
 impl Default for RetailPrices {
     fn default() -> Self {
         Self {
-            unit_with_alcohol: LIQUOR_DETAIL_FULL_PRICE,
-            unit_without_alcohol: NON_LIQUOR_DETAIL_PRICE,
-            promo_pair_with_alcohol: LIQUOR_DETAIL_FULL_PRICE + LIQUOR_DETAIL_PROMO_PRICE,
+            unit_with_alcohol: DEFAULT_LIQUOR_DETAIL_PRICE,
+            unit_without_alcohol: DEFAULT_NON_LIQUOR_DETAIL_PRICE,
+            promo_pair_with_alcohol: DEFAULT_LIQUOR_PROMO_PAIR_PRICE,
         }
     }
 }
@@ -270,6 +273,55 @@ pub fn precio_unitario_mayor(cantidad: u32, has_liquor: bool) -> u32 {
     resolve_tier(cantidad, has_liquor).unit_price
 }
 
+fn pesos(value: u32) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push('.');
+        }
+        out.push(c);
+    }
+    format!("${out}")
+}
+
+fn tiers_text(tiers: &[WholesaleTier]) -> String {
+    let mut sorted = tiers.to_vec();
+    sorted.sort_by_key(|t| t.min_quantity);
+    sorted
+        .iter()
+        .enumerate()
+        .map(|(i, t)| match sorted.get(i + 1) {
+            Some(next) => format!("{}-{}u {}", t.min_quantity, next.min_quantity - 1, pesos(t.unit_price)),
+            None => format!("{}+u {}", t.min_quantity, pesos(t.unit_price)),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// El texto de precios que devuelve `get_menu`. Se arma de la tabla viva: era
+/// un bloque fijo en `messages.toml` y el modelo lo leía como verdad, así que
+/// un cambio en `/settings/precios` le llegaba al cálculo pero no al menú.
+pub fn menu_text() -> String {
+    let table = current_pricing_table();
+    let r = &table.retail;
+    let min_mayor = table
+        .with_alcohol
+        .iter()
+        .map(|t| t.min_quantity)
+        .min()
+        .unwrap_or(20);
+    format!(
+        "🍧PRECIOS\n\nDETAL:\nCon licor: {}\nPar con licor: {}\nSin licor: {} c/u\n\nAL MAYOR ({}+ del mismo tipo):\n\nCon licor:\n{}\n\nSin licor:\n{}\n\nSi quieres, te acompaño a armar tu pedido paso a paso ✨",
+        pesos(r.unit_with_alcohol),
+        pesos(r.promo_pair_with_alcohol),
+        pesos(r.unit_without_alcohol),
+        min_mayor,
+        tiers_text(&table.with_alcohol),
+        tiers_text(&table.without_alcohol),
+    )
+}
+
 pub fn calcular_pedido(items: &[OrderItemData]) -> PedidoCalculado {
     let total_con_licor_qty = total_quantity(items, true);
     let total_sin_licor_qty = total_quantity(items, false);
@@ -471,7 +523,8 @@ fn calcular_item_mayor(item: &OrderItemData, unit_price: u32) -> ItemCalculated 
 }
 
 fn calcular_item_sin_licor_detal(item: &OrderItemData) -> ItemCalculated {
-    let subtotal = calcular_precio_sin_licor_detal(item.quantity);
+    let unit_price = current_pricing_table().retail.unit_without_alcohol;
+    let subtotal = item.quantity * unit_price;
 
     ItemCalculated {
         flavor: item.flavor.clone(),
@@ -480,18 +533,24 @@ fn calcular_item_sin_licor_detal(item: &OrderItemData) -> ItemCalculated {
         subtotal,
         is_wholesale: false,
         promo_units: 0,
-        unit_price_reference: Some(current_pricing_table().retail.unit_without_alcohol),
+        unit_price_reference: Some(unit_price),
         persistence_lines: vec![PersistedOrderItem {
             flavor: item.flavor.clone(),
             has_liquor: false,
             quantity: item.quantity,
-            unit_price: NON_LIQUOR_DETAIL_PRICE,
+            unit_price,
             subtotal,
         }],
     }
 }
 
 fn calcular_item_licor_detal(item: &OrderItemData, start_position: u32) -> ItemCalculated {
+    let retail = &current_pricing_table().retail;
+    let full_price = retail.unit_with_alcohol;
+    // El segundo del par cuesta lo que le falta al primero para llegar al
+    // precio del par. Así la suma por ítem cuadra siempre con
+    // `calcular_precio_licor_detal`, aunque el par no sea exactamente 1,5x.
+    let promo_price = retail.promo_pair_with_alcohol.saturating_sub(full_price);
     let mut subtotal = 0;
     let mut regular_units = 0;
     let mut promo_units = 0;
@@ -499,10 +558,10 @@ fn calcular_item_licor_detal(item: &OrderItemData, start_position: u32) -> ItemC
     for offset in 0..item.quantity {
         let is_promo = (start_position + offset + 1) % 2 == 0;
         if is_promo {
-            subtotal += LIQUOR_DETAIL_PROMO_PRICE;
+            subtotal += promo_price;
             promo_units += 1;
         } else {
-            subtotal += LIQUOR_DETAIL_FULL_PRICE;
+            subtotal += full_price;
             regular_units += 1;
         }
     }
@@ -513,8 +572,8 @@ fn calcular_item_licor_detal(item: &OrderItemData, start_position: u32) -> ItemC
             flavor: item.flavor.clone(),
             has_liquor: true,
             quantity: regular_units,
-            unit_price: LIQUOR_DETAIL_FULL_PRICE,
-            subtotal: regular_units * LIQUOR_DETAIL_FULL_PRICE,
+            unit_price: full_price,
+            subtotal: regular_units * full_price,
         });
     }
     if promo_units > 0 {
@@ -522,8 +581,8 @@ fn calcular_item_licor_detal(item: &OrderItemData, start_position: u32) -> ItemC
             flavor: item.flavor.clone(),
             has_liquor: true,
             quantity: promo_units,
-            unit_price: LIQUOR_DETAIL_PROMO_PRICE,
-            subtotal: promo_units * LIQUOR_DETAIL_PROMO_PRICE,
+            unit_price: promo_price,
+            subtotal: promo_units * promo_price,
         });
     }
 
@@ -536,6 +595,27 @@ fn calcular_item_licor_detal(item: &OrderItemData, start_position: u32) -> ItemC
         promo_units,
         unit_price_reference: None,
         persistence_lines,
+    }
+}
+
+#[cfg(test)]
+mod menu_text_tests {
+    use super::*;
+
+    #[test]
+    fn formats_pesos_with_thousands_dots() {
+        assert_eq!(pesos(800), "$800");
+        assert_eq!(pesos(12_000), "$12.000");
+        assert_eq!(pesos(1_250_000), "$1.250.000");
+    }
+
+    #[test]
+    fn tier_ranges_come_from_the_table() {
+        let tiers = vec![
+            WholesaleTier { min_quantity: 50, unit_price: 4_700, commission_pct: 0, client_discount_pct: 0 },
+            WholesaleTier { min_quantity: 25, unit_price: 5_000, commission_pct: 0, client_discount_pct: 0 },
+        ];
+        assert_eq!(tiers_text(&tiers), "25-49u $5.000\n50+u $4.700");
     }
 }
 

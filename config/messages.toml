@@ -12,6 +12,8 @@ main_list_body = "¿Qué te gustaría hacer ahora? 👇"
 make_order_title = "Hacer Pedido"
 view_menu_title = "Ver Menú"
 menu_image_caption = "📋 Menú general de granizados"
+# Ya no se usa: get_menu arma los precios desde bot::pricing::menu_text()
+# (tabla viva de /settings/precios). Se deja porque el struct lo exige.
 menu_text = """🍧PRECIOS
 
 DETAL:

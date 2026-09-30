@@ -23,7 +23,6 @@ use crate::{
         models::{Conversation, Order, OrderItem, OrderItemData},
         queries,
     },
-    messages::client_messages,
     referrals::{normalize_referral_code, referral_registry},
 };
 
@@ -37,9 +36,8 @@ pub struct MenuInfo {
 }
 
 /// Los sabores salen del catálogo vivo de `crm-app` (`bot::flavors`), no del
-/// TOML. `menu_text` (precios y condiciones) sigue viniendo de `messages.toml`:
-/// los precios tienen su propio canal (`bot::pricing`) y ese texto no es una
-/// lista de sabores.
+/// TOML. `menu_text` (precios) se arma de la tabla viva de `bot::pricing`,
+/// que sale de `/settings/precios` en `crm-app`.
 ///
 /// Solo se devuelven los ACTIVOS — es lo único que el bot puede ofrecer.
 pub fn get_menu() -> MenuInfo {
@@ -53,7 +51,7 @@ pub fn get_menu() -> MenuInfo {
     };
 
     MenuInfo {
-        menu_text: client_messages().menu.menu_text.clone(),
+        menu_text: crate::bot::pricing::menu_text(),
         flavors_with_liquor: listar(true),
         flavors_without_liquor: listar(false),
     }
