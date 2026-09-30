@@ -275,7 +275,10 @@ Correcciones del canary 2026-07-20 (resto del backlog de `docs/canary-fixes-2026
   transferencia) el prompt exige recapitular productos+variante+cantidad, fecha/hora absolutas,
   direccion y total con domicilio, y esperar OK explicito. Refuerzo de prompt.
 - CERO BOTONES EN MODO AGENTE (item 3): el primer contacto responde un saludo fijo `[agent].welcome`
-  SIN llamar al LLM (flag `has_greeted`); el resto es texto LLM. Los timers que emitian botones
+  SIN llamar al LLM (flag `has_greeted`) **solo si ese mensaje es un saludo puro**
+  (`ai::agent::is_bare_greeting`, v1.33.0). Si ya trae contenido ("hola quiero 3 maracumango a
+  ...", el mensaje de la carta con sabores, una pregunta), el turno va directo al agente, que saluda
+  en una linea y atiende lo pedido. El resto es texto LLM. Los timers que emitian botones
   (receipt/contact/advisor timeout) mandan solo texto plano en modo agente — los estados ya son
   agent-owned, asi que la respuesta del cliente la interpreta el LLM. El motor determinista conserva
   sus botones.

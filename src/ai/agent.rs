@@ -302,9 +302,12 @@ Reglas que no puedes romper:
 - No prometas nada que no puedas confirmar con una herramienta.
 - FORMATO WhatsApp: para negrilla usa UN solo asterisco (*así*), nunca dobles (**así** se ve mal \
   en WhatsApp). Para resúmenes y pedidos usa listas con guiones, queda más ordenado.
-- El cliente YA recibió un saludo de bienvenida automático antes de que tú entraras, así que no \
-  vuelvas a saludar con un mensaje de bienvenida largo ni repitas el menú de opciones: responde \
-  directo a lo que pide. Toda la conversación es por texto natural; NUNCA uses botones ni listas.
+- BIENVENIDA: si en el historial ya aparece el saludo de bienvenida automático, no vuelvas a \
+  saludar con un mensaje largo ni repitas el menú de opciones. Si NO aparece (el cliente abrió la \
+  conversación pidiendo algo concreto), saluda en UNA línea corta ("¡Hola! 👋 Bienvenid@ a Trabix \
+  Granizados 🍧") y en el mismo mensaje atiende de una vez lo que pidió, llamando las herramientas \
+  que haga falta; nunca le muestres el menú de opciones ni le hagas repetir el pedido. Toda la \
+  conversación es por texto natural; NUNCA uses botones ni listas.
 - DESPUÉS DE CONFIRMAR: si el bloque ESTADO ACTUAL DEL CASO muestra un pedido ya confirmado y el \
   cliente escribe otra vez, hay solo dos caminos y tienes que elegir uno explícitamente:
   · modify_confirmed_order — SOLO si el cliente quiere corregir ESE mismo pedido, que todavía no \
@@ -795,6 +798,42 @@ fn normalize_for_match(text: &str) -> String {
             other => other,
         })
         .collect()
+}
+
+/// Palabras que caben en un saludo sin pedir nada. Un primer mensaje hecho
+/// solo de estas recibe la bienvenida fija; cualquier otra palabra lo manda al
+/// agente, que saluda en una línea y atiende lo pedido.
+const GREETING_WORDS: &[&str] = &[
+    "hola", "ola", "holi", "holis", "hi", "hello", "hey", "buenas", "buenos", "buena", "buen",
+    "dia", "dias", "tarde", "tardes", "noche", "noches", "saludos", "saludo", "que", "tal", "como",
+    "estas", "esta", "estan", "va", "todo", "bien", "muy", "y", "amigo", "amiga", "amigos",
+    "senor", "senora", "joven", "vecino", "vecina", "trabix", "granizados", "info", "informacion",
+    "mas", "por", "favor", "porfa", "porfavor",
+];
+
+/// `true` si el primer mensaje es solo un saludo. Antes la bienvenida salía
+/// ante cualquier primer mensaje y se tragaba el pedido: "hola quiero 3
+/// maracumango a tal dirección" recibía el menú y el cliente tenía que repetir
+/// todo. Lo mismo pasaba con el mensaje que arma la carta del sitio con los
+/// sabores elegidos. Un falso negativo solo cuesta una llamada al LLM; un
+/// falso positivo le hace repetir el pedido al cliente, así que la lista es
+/// corta a propósito.
+pub(crate) fn is_bare_greeting(input: &UserInput) -> bool {
+    let UserInput::TextMessage(text) = input else {
+        return false;
+    };
+    normalize_for_match(text)
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .all(|word| {
+            let mut collapsed = String::with_capacity(word.len());
+            for c in word.chars() {
+                if !collapsed.ends_with(c) {
+                    collapsed.push(c);
+                }
+            }
+            GREETING_WORDS.contains(&word) || GREETING_WORDS.contains(&collapsed.as_str())
+        })
 }
 
 /// El cliente pide hablar con una persona. El menú de bienvenida ofrece
@@ -3409,6 +3448,31 @@ fn tool_definitions() -> Vec<ToolDefinition> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bare_greeting_gets_the_welcome_and_a_real_request_does_not() {
+        let text = |s: &str| UserInput::TextMessage(s.to_string());
+        for greeting in [
+            "Hola",
+            "holaaa!!",
+            "Buenas tardes 👋",
+            "Hola, buenos días, cómo estás?",
+            "hola info por favor",
+            "",
+        ] {
+            assert!(is_bare_greeting(&text(greeting)), "{greeting:?}");
+        }
+        for request in [
+            "hola quiero 3 maracumango a la calle 10 # 5-20",
+            "Hola, quiero pedir granizados\n\nMe interesan:\n• Maracumango",
+            "Hola, me interesa el modelo de alianzas de Trabix",
+            "buenas, cuánto vale el de whiskey?",
+            "hola quiero hablar con un asesor",
+        ] {
+            assert!(!is_bare_greeting(&text(request)), "{request:?}");
+        }
+        assert!(!is_bare_greeting(&UserInput::ImageMessage("media".to_string())));
+    }
 
     fn text_message(role: &str, text: &str) -> Message {
         Message {

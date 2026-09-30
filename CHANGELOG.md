@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-09-30
+
+### Changed
+
+- **La bienvenida fija solo sale ante un saludo puro.** Antes salía ante cualquier primer mensaje y
+  se tragaba lo que el cliente pedía: "hola quiero 3 maracumango a tal dirección" recibía el menú y
+  había que repetir el pedido. Lo mismo le pasaba al mensaje que arma la carta del sitio con los
+  sabores elegidos, y a "me interesa el modelo de alianzas", que no llegaba al handoff. Ahora, si el
+  primer mensaje trae algo más que palabras de saludo (`ai::agent::is_bare_greeting`), el turno va
+  directo al agente, que saluda en una línea y toma el pedido de una vez. Un adjunto como primer
+  mensaje también va al agente (y por ahí al handoff).
+
 ## [1.32.0] - 2026-09-23
 
 ### Added
