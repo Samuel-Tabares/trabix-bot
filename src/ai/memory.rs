@@ -81,6 +81,13 @@ pub async fn append_transcript_entry(
     save_messages(pool, phone_number, &messages).await
 }
 
+/// Lo que ve el modelo cuando le devuelven un caso: todo lo de antes ya lo
+/// resolvio el equipo (`engine::return_case_to_bot`).
+pub const CASE_RETURNED_LINE: &str = "[SISTEMA] Una persona del equipo atendio este caso a mano y \
+    ya lo cerro. Todo lo de antes de esta linea quedo resuelto por el equipo: empieza de cero con \
+    este cliente, no retomes ese pedido ni repitas sus cifras. Si pregunta por algo que hablo con el \
+    asesor (su pedido, un pago, un envio), usa hand_off_to_human.";
+
 /// Marcador de un mensaje que el ASESOR le escribio al cliente durante un
 /// handoff. Lo pone el sistema en `routes::internal::advisor_send`.
 pub fn advisor_transcript_line(body: &str) -> String {

@@ -394,8 +394,7 @@ pub enum BotAction {
     ///
     /// El bot vuelve cuando el asesor pulsa "Devolver al bot"
     /// (`POST /internal/advisor/release`) o cuando la ventana vence sola; ahí
-    /// corre el turno de recuperación, que lee lo que se dijo durante el
-    /// handoff y sigue el pedido desde ese punto.
+    /// empieza de cero con el cliente (`engine::return_case_to_bot`).
     HandOffToHuman {
         reason: crate::db::models::HandoffReason,
         /// Resumen del caso para la nota del asesor.

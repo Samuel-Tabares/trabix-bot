@@ -62,21 +62,6 @@ pub fn current_bogota_now() -> DateTime<FixedOffset> {
     now_bogota()
 }
 
-/// La próxima apertura (hoy a las 8:00 si todavía no abrimos, si no mañana).
-pub fn next_business_opening_utc(now: DateTime<Utc>) -> DateTime<Utc> {
-    let offset = FixedOffset::west_opt(5 * 3600).expect("valid offset");
-    let local = now.with_timezone(&offset);
-    let mut date = local.date_naive();
-    if local.time() >= business_hours_start() {
-        date = date.succ_opt().expect("valid date");
-    }
-    date.and_time(business_hours_start())
-        .and_local_timezone(offset)
-        .single()
-        .expect("fixed offset is unambiguous")
-        .with_timezone(&Utc)
-}
-
 fn reply_button(id: &str, title: &str) -> Button {
     Button {
         kind: "reply".to_string(),
@@ -89,31 +74,9 @@ fn reply_button(id: &str, title: &str) -> Button {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{NaiveTime, TimeZone, Utc};
+    use chrono::NaiveTime;
 
-    use super::{is_within_business_hours, next_business_opening_utc};
-
-    #[test]
-    fn next_opening_is_the_same_morning_after_midnight_and_tomorrow_late_at_night() {
-        // 23:05 Bogotá del 19 = 04:05 UTC del 20 → abre el 20 a las 8:00 (13:00 UTC).
-        let late_night = Utc.with_ymd_and_hms(2026, 10, 20, 4, 5, 0).unwrap();
-        assert_eq!(
-            next_business_opening_utc(late_night),
-            Utc.with_ymd_and_hms(2026, 10, 20, 13, 0, 0).unwrap()
-        );
-        // 3:00 Bogotá del 20 = 08:00 UTC → mismo día a las 8:00.
-        let early = Utc.with_ymd_and_hms(2026, 10, 20, 8, 0, 0).unwrap();
-        assert_eq!(
-            next_business_opening_utc(early),
-            Utc.with_ymd_and_hms(2026, 10, 20, 13, 0, 0).unwrap()
-        );
-        // 23:30 Bogotá del 20 = 04:30 UTC del 21 → el 21 a las 8:00.
-        let after_close = Utc.with_ymd_and_hms(2026, 10, 21, 4, 30, 0).unwrap();
-        assert_eq!(
-            next_business_opening_utc(after_close),
-            Utc.with_ymd_and_hms(2026, 10, 21, 13, 0, 0).unwrap()
-        );
-    }
+    use super::is_within_business_hours;
 
     #[test]
     fn validates_business_hours() {

@@ -45,6 +45,7 @@ pub fn internal_router() -> Router<AppState> {
             "/internal/referral-codes/:code/boost",
             post(internal::boost_referral_code),
         )
+        .route("/internal/customers/:phone", patch(internal::update_customer))
         .route("/internal/pricing/refresh", post(internal::refresh_pricing))
         .route("/internal/flavors/refresh", post(internal::refresh_flavors))
 }

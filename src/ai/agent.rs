@@ -5,10 +5,10 @@
 //! (ese carril se elimino en v1.27.0): cuando hay algo que el bot no puede
 //! resolver -- cotizar un envio a un destino sin tarifa, verificar que una
 //! transferencia llego al banco -- el caso sale de sus manos con un handoff
-//! determinista (`BotAction::HandOffToHuman`) y vuelve con el turno de
-//! recuperacion (`run_resume_turn`), que lee el transcript de lo que paso
-//! mientras el bot estuvo afuera. `message_advisor` sigue existiendo, pero como
-//! NOTA de una via hacia la consola, no como pregunta.
+//! determinista (`BotAction::HandOffToHuman`). Cuando se lo devuelven empieza
+//! de cero (`engine::return_case_to_bot`): lo que se hablo durante el handoff ya
+//! lo resolvio una persona. `message_advisor` sigue existiendo, pero como NOTA
+//! de una via hacia la consola, no como pregunta.
 //!
 //! Guardrail de diseno (no negociable): el modelo nunca calcula precios ni
 //! decide reglas de negocio a mano. Cada tool delega en `src/ai/tools.rs`,
@@ -17,10 +17,8 @@
 //! llamar, con que argumentos, y como redactar el mensaje alrededor del
 //! resultado.
 //!
-//! Los timers que quedan (comprobante, reapertura de horario) no invocan al
-//! LLM: disparan mensajes fijos para ahorrar llamadas al modelo. La excepcion es
-//! el barrido de handoffs vencidos, que si corre un turno de recuperacion
-//! completo -- sin eso, un handoff que nadie devuelve deja el pedido colgado.
+//! Los timers que quedan (comprobante, reapertura de horario, handoff vencido)
+//! no invocan al LLM.
 
 use std::error::Error;
 
@@ -76,18 +74,6 @@ const LLM_HISTORY_WINDOW: usize = 40;
 // texto completo igual queda en el transcript del webhook/simulador).
 const MAX_INBOUND_CHARS: usize = 1500;
 
-/// Qué originó este turno del agente. El asesor ya no tiene un carril propio
-/// hacia el bot (se eliminó en v1.27.0): o escribe el cliente, o el bot está
-/// retomando un caso que un humano atendió a mano.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TurnKind {
-    /// Llegó un mensaje del cliente por el webhook.
-    Customer,
-    /// El asesor devolvió la conversación y el bot retoma leyendo lo que pasó
-    /// durante el handoff (`run_resume_turn`).
-    Resume,
-}
-
 const SYSTEM_PROMPT: &str = r#"Eres quien atiende WhatsApp para Trabix Granizados, una marca de \
 granizados sellados listos para consumir (con licor 12% y sin licor) en Armenia, Quindio, \
 Colombia. Hablas como una persona real del negocio: en espanol colombiano sin acento, texto \
@@ -114,9 +100,8 @@ ni le prometas al cliente que "le preguntas al asesor y le cuentas".
 
 message_advisor NO es una pregunta: es una NOTA que queda en la consola del equipo. Nadie te va a \
 responder por ahi. Usala para:
-1. Dejar constancia de algo que el equipo debe saber o revisar (un caso fuera de tema, algo que \
+- Dejar constancia de algo que el equipo debe saber o revisar (un caso fuera de tema, algo que \
    pide criterio comercial, un cliente molesto).
-2. Reportar lo que concluiste al retomar un caso que un humano atendio a mano.
 Su parametro requires_action marca si alguien tiene que HACER algo en la consola (true) o si es solo \
 un aviso (false). crm-app arma su cola de pendientes con eso: se preciso, no lo pongas en true por \
 default.
@@ -141,11 +126,10 @@ algo que ninguna herramienta resuelve, esta molesto, o pregunta por el modelo de
 palabras. La herramienta le avisa al cliente sola, asi que en ese turno NO escribas texto: solo \
 llamala.
 
-CUANDO TE DEVUELVEN EL CASO: vas a recibir un mensaje marcado [SISTEMA] diciendo que un humano \
-atendio el caso y ya te lo devolvio. Arriba veras, marcados por el sistema con [Durante el handoff, \
-...], los mensajes que se cruzaron mientras no estabas. Leelos, saca de ahi los datos duros que \
-falten, llama las herramientas para dejar el pedido al dia, y sigue la conversacion desde donde la \
-dejo el humano. Si un dato no aparece claro y explicito en lo que se dijo, NO lo asumas.
+CUANDO TE DEVUELVEN EL CASO: en el historial aparece una linea [SISTEMA] diciendo que una persona \
+del equipo atendio el caso y lo cerro. Todo lo de antes de esa linea ya lo resolvio el equipo: \
+empiezas de cero. No retomes ese pedido ni repitas sus cifras. Si el cliente pregunta por algo que \
+hablo con el asesor (su pedido, un pago, un envio), entregaselo al equipo con hand_off_to_human.
 
 REGLA MAYORISTA + REFERRAL:
 - Un pedido es mayorista si tiene 20+ unidades del MISMO tipo (con o sin licor).
@@ -290,13 +274,10 @@ Reglas que no puedes romper:
 - CONTRA ENTREGA confirma el pedido de una vez (set_payment_method basta). TRANSFERENCIA es distinta \
   y tiene DOS pasos, no uno: cuando llega la imagen del comprobante el sistema la registra solo \
   (no llames ninguna tool para eso), le avisa al cliente y entrega el caso a un humano para que \
-  verifique en el banco — pero el pedido SIGUE SIN CONFIRMAR en ese momento. No le escribas nada mas \
-  ahi. Solo se confirma cuando te devuelvan el caso y en lo que se dijo durante el handoff el humano \
-  haya dicho explícitamente que el pago SI llegó (ej. "confirmado", "sí llegó", "listo pagó") — ahí \
-  llamas confirm_payment_received, nunca antes. Una imagen de comprobante NO es un pago verificado.
-- El pedido NO queda confirmado hasta que set_payment_method (contra entrega) o \
-  confirm_payment_received (transferencia, verificada por un humano) retornen éxito. Nunca le digas \
-  al cliente que su pedido esta "confirmado", "listo" o "en camino" antes de eso. Si el cliente ya \
+  verifique en el banco. Desde ahi el pedido lo cierra esa persona: no le escribas nada mas. Una \
+  imagen de comprobante NO es un pago verificado.
+- Contra entrega, el pedido NO queda confirmado hasta que set_payment_method retorne éxito. Nunca le \
+  digas al cliente que su pedido esta "confirmado", "listo" o "en camino" antes de eso. Si el cliente ya \
   te habia dicho el metodo de pago antes de que el pedido quedara aceptado, cuando vuelva \
   a escribir DEBES llamar set_payment_method con ese metodo (no asumas que ya quedo registrado).
 - No prometas nada que no puedas confirmar con una herramienta.
@@ -379,88 +360,13 @@ pub async fn run_customer_turn(
     saved_addresses: &[CustomerAddress],
     customer_notes: Option<&str>,
 ) -> Result<(ConversationState, Vec<BotAction>), Box<dyn Error + Send + Sync>> {
-    run_case_turn(
-        state,
-        context,
-        current_state,
-        TurnKind::Customer,
-        input,
-        saved_addresses,
-        customer_notes,
-    )
-    .await
-}
-
-/// El asesor cerró el handoff y le devolvió la conversación al bot (botón
-/// "Devolver al bot", o la ventana de toma de control venció sola). El bot no
-/// recibe una respuesta estructurada —ese carril ya no existe—: **lee lo que se
-/// dijo mientras estuvo afuera** y sigue el pedido desde ahí.
-///
-/// El transcript del handoff ya está en la memoria del agente porque se fue
-/// apendando en vivo (`ai::memory::append_transcript_entry`, desde
-/// `engine::process_customer_input` y `routes::internal::advisor_send`); lo que
-/// agrega este turno es la instrucción de qué hacer con él.
-///
-/// Riesgo asumido del diseño: el modelo va a leer cifras de dinero de un chat
-/// en prosa. El ancla es el aviso de cierre —el prompt le exige reportar con
-/// `message_advisor` lo que concluyó—, que aterriza en Pendientes y deja
-/// visible de inmediato una lectura equivocada.
-pub async fn run_resume_turn(
-    state: &AppState,
-    context: &mut ConversationContext,
-    current_state: &ConversationState,
-    saved_addresses: &[CustomerAddress],
-    customer_notes: Option<&str>,
-) -> Result<(ConversationState, Vec<BotAction>), Box<dyn Error + Send + Sync>> {
-    let hint = context
-        .handoff_reason
-        .map(|reason| reason.resume_hint())
-        .unwrap_or(
-            "No hay un motivo de handoff registrado: revisa en qué quedó el pedido y sigue desde ahí.",
-        );
-
-    let instruction = format!(
-        "[SISTEMA] Un asesor humano atendió este caso a mano y acaba de devolverte la \
-         conversación. Arriba están, marcados por el sistema, los mensajes que se cruzaron \
-         mientras estuviste afuera.\n\n{hint}\n\nQué tienes que hacer ahora:\n\
-         1. Lee ese intercambio y saca de ahí los datos duros que falten (costo del envío, si el \
-         pago quedó verificado, dirección, nombre, cantidades, con o sin licor).\n\
-         2. Llama las tools que correspondan para dejar el pedido al día. Si un dato no aparece \
-         de forma clara y explícita en lo que se dijo, NO lo inventes ni lo asumas.\n\
-         Si el asesor ya CERRÓ la venta a mano (acordó el total y el método de pago, o el \
-         pedido ya salió o ya se entregó), regístrala tal cual: finalize_checkout y luego \
-         set_payment_method con el método acordado. Eso deja el pedido en Pendientes para que \
-         el asesor lo acepte. En ese caso NO le escribas nada al cliente: ya fue atendido. Si el \
-         cliente al final no compró, llama cancel_order.\n\
-         3. Si quedó algo pendiente del PEDIDO, continúa la conversación con el cliente desde \
-         donde la dejó el asesor: no repitas lo que él ya dijo, no vuelvas a saludar y no le pidas \
-         de nuevo algo que ya entregó. Si el handoff no era de un pedido (el cliente pidió hablar \
-         con alguien, preguntó por alianzas, mandó un adjunto) y el asesor ya lo resolvió, NO le \
-         escribas nada al cliente: pasa directo al punto 4.\n\
-         4. Cierra SIEMPRE avisándole al asesor con message_advisor (requires_action=false) qué \
-         concluiste y con qué cifras te quedaste, para que pueda corregirte si leíste mal. Por \
-         ejemplo: \"Retomé el caso: domicilio $28.000, total $271.000, falta método de pago\"."
-    );
-
-    context.handoff_reason = None;
-
-    run_case_turn(
-        state,
-        context,
-        current_state,
-        TurnKind::Resume,
-        &UserInput::TextMessage(instruction),
-        saved_addresses,
-        customer_notes,
-    )
-    .await
+    run_case_turn(state, context, current_state, input, saved_addresses, customer_notes).await
 }
 
 async fn run_case_turn(
     state: &AppState,
     context: &mut ConversationContext,
     current_state: &ConversationState,
-    turn_kind: TurnKind,
     input: &UserInput,
     saved_addresses: &[CustomerAddress],
     customer_notes: Option<&str>,
@@ -473,7 +379,7 @@ async fn run_case_turn(
     release_delivered_order_binding(context);
 
     if let Some((next_state, actions)) =
-        try_handle_receipt_shortcut(context, current_state, turn_kind, input)
+        try_handle_receipt_shortcut(context, current_state, input)
     {
         return Ok((next_state, actions));
     }
@@ -481,7 +387,7 @@ async fn run_case_turn(
     let phone = context.phone_number.clone();
 
     if let Some((next_state, actions)) =
-        try_handle_handoff_shortcut(context, current_state, turn_kind, input)
+        try_handle_handoff_shortcut(context, current_state, input)
     {
         if let Err(err) = memory::append_transcript_entry(
             &state.pool,
@@ -502,13 +408,12 @@ async fn run_case_turn(
     if budget_check != BudgetCheck::Allowed {
         tracing::warn!(
             phone = %crate::logging::mask_phone(&phone),
-            turn_kind = ?turn_kind,
             first_notice = (budget_check == BudgetCheck::DeniedFirstNotice),
             "LLM daily budget exhausted, degrading to fixed message"
         );
         return Ok((
             current_state.clone(),
-            budget_denied_actions(context, turn_kind, budget_check),
+            budget_denied_actions(context, budget_check),
         ));
     }
 
@@ -518,12 +423,12 @@ async fn run_case_turn(
     history.push(Message {
         role: "user".to_string(),
         content: vec![ContentBlock::Text {
-            text: format_inbound_message(turn_kind, input),
+            text: format_inbound_message(input),
         }],
     });
     let window_start = llm_window_start(&history);
 
-    let dynamic_system = build_dynamic_case_state(context, turn_kind, current_state, customer_notes);
+    let dynamic_system = build_dynamic_case_state(context, current_state, customer_notes);
     let tool_defs = tool_definitions();
 
     let mut actions: Vec<BotAction> = Vec::new();
@@ -602,7 +507,6 @@ async fn run_case_turn(
         for (id, name, tool_input) in tool_uses {
             tracing::info!(
                 phone = %crate::logging::mask_phone(&context.phone_number),
-                turn_kind = ?turn_kind,
                 tool = %name,
                 input = %tool_input,
                 "agent tool call"
@@ -612,7 +516,6 @@ async fn run_case_turn(
                 &name,
                 &tool_input,
                 context,
-                turn_kind,
                 &effective_state,
                 saved_addresses,
             ) {
@@ -717,7 +620,7 @@ async fn run_case_turn(
     // algo que el bot no puede resolver: se entrega el caso. El texto de
     // reemplazo ya salio, asi que el cliente queda avisado dos veces, pero
     // prefiero eso a dejarlo esperando.
-    if !blocked_amounts.is_empty() && turn_kind == TurnKind::Customer {
+    if !blocked_amounts.is_empty() {
         actions.push(BotAction::HandOffToHuman {
             reason: HandoffReason::BlockedAmount,
             advisor_note: format!(
@@ -747,12 +650,8 @@ async fn run_case_turn(
 fn try_handle_receipt_shortcut(
     context: &mut ConversationContext,
     current_state: &ConversationState,
-    turn_kind: TurnKind,
     input: &UserInput,
 ) -> Option<(ConversationState, Vec<BotAction>)> {
-    if turn_kind != TurnKind::Customer {
-        return None;
-    }
     let UserInput::ImageMessage(media_id) = input else {
         return None;
     };
@@ -912,13 +811,8 @@ fn matches_any(haystack: &str, patterns: &[&str]) -> bool {
 fn try_handle_handoff_shortcut(
     context: &ConversationContext,
     current_state: &ConversationState,
-    turn_kind: TurnKind,
     input: &UserInput,
 ) -> Option<(ConversationState, Vec<BotAction>)> {
-    if turn_kind != TurnKind::Customer {
-        return None;
-    }
-
     // Adjunto que el modelo no puede leer. El agente es ciego: una imagen le
     // llega como el texto "[envió una imagen: <media_id>]", así que cualquier
     // respuesta suya sobre su contenido es inventada.
@@ -1001,7 +895,7 @@ pub(crate) async fn record_greeting_turn(
         Message {
             role: "user".to_string(),
             content: vec![ContentBlock::Text {
-                text: format_inbound_message(TurnKind::Customer, input),
+                text: format_inbound_message(input),
             }],
         },
         Message {
@@ -1083,21 +977,8 @@ fn confirmed_order_already_delivered(
     }
 }
 
-fn format_inbound_message(turn_kind: TurnKind, input: &UserInput) -> String {
-    match turn_kind {
-        TurnKind::Customer => format!("Mensaje del CLIENTE: {}", render_inbound_body(input)),
-        // El turno de recuperación ya viene redactado como instrucción del
-        // sistema (`run_resume_turn`): no se disfraza de mensaje del cliente,
-        // que es justo lo que confundiría al modelo, y NO se trunca. El cap de
-        // `MAX_INBOUND_CHARS` existe para acotar texto que escribe un
-        // desconocido; acá el texto lo escribimos nosotros y el último punto de
-        // la instrucción (reportar lo que concluyó) es el ancla de seguridad del
-        // handoff — perderlo por un recorte sería silencioso y caro.
-        TurnKind::Resume => match input {
-            UserInput::TextMessage(text) => text.clone(),
-            other => render_inbound_body(other),
-        },
-    }
+fn format_inbound_message(input: &UserInput) -> String {
+    format!("Mensaje del CLIENTE: {}", render_inbound_body(input))
 }
 
 /// Cuerpo legible de un `UserInput`, sin el prefijo de quién habla. Lo reusa el
@@ -1156,22 +1037,16 @@ fn llm_window_start(history: &[Message]) -> usize {
 /// entera una sola vez por día por caso.
 fn budget_denied_actions(
     context: &ConversationContext,
-    turn_kind: TurnKind,
     check: BudgetCheck,
 ) -> Vec<BotAction> {
-    let mut actions = Vec::new();
-    if turn_kind == TurnKind::Customer {
-        actions.push(BotAction::SendText {
-            to: context.phone_number.clone(),
-            body: crate::messages::client_messages()
-                .agent
-                .daily_limit_customer
-                .clone(),
-        });
-    }
-    // En un turno de recuperación siempre se avisa: el caso viene de un handoff
-    // y quedarse callado ahí lo deja colgado sin que nadie se entere.
-    if check == BudgetCheck::DeniedFirstNotice || turn_kind == TurnKind::Resume {
+    let mut actions = vec![BotAction::SendText {
+        to: context.phone_number.clone(),
+        body: crate::messages::client_messages()
+            .agent
+            .daily_limit_customer
+            .clone(),
+    }];
+    if check == BudgetCheck::DeniedFirstNotice {
         actions.push(BotAction::NotifyAdvisor {
             body: format!(
                 "⚠️ El caso del cliente {} ({}) alcanzó el límite diario de mensajes con el \
@@ -1191,7 +1066,6 @@ fn budget_denied_actions(
 /// cacheable — ver `AnthropicClient::send_message`.
 fn build_dynamic_case_state(
     context: &ConversationContext,
-    turn_kind: TurnKind,
     current_state: &ConversationState,
     customer_notes: Option<&str>,
 ) -> String {
@@ -1217,18 +1091,14 @@ fn build_dynamic_case_state(
                 .to_string()
         }
         ConversationState::WaitReceipt if context.receipt_media_id.is_some() => {
-            "\nFase del flujo: el comprobante YA llegó, el sistema ya le avisó al cliente y el \
-             caso está en manos de un humano que verifica el pago en el banco — no le repitas el \
-             aviso ni le escribas nada más. El pedido SIGUE SIN CONFIRMAR: solo se confirma cuando \
-             te devuelvan el caso y en el transcript del handoff el humano haya dicho que el pago \
-             sí llegó (ahí llamas confirm_payment_received). Una imagen de comprobante no es lo \
-             mismo que un pago verificado."
+            "\nFase del flujo: el comprobante YA llegó y el caso está en manos de una persona que \
+             verifica el pago en el banco y cierra el pedido. No le repitas el aviso ni le escribas \
+             nada más. Una imagen de comprobante no es un pago verificado."
                 .to_string()
         }
         ConversationState::WaitReceipt => {
             "\nFase del flujo: esperando el comprobante de transferencia del cliente. El pedido \
-             NO está confirmado hasta que llegue Y un humano verifique el pago — ahí se cierra con \
-             confirm_payment_received."
+             NO está confirmado: cuando llegue, lo verifica y lo cierra una persona del equipo."
                 .to_string()
         }
         _ => String::new(),
@@ -1255,13 +1125,6 @@ fn build_dynamic_case_state(
             .join(", ")
     };
 
-    let actor_label = match turn_kind {
-        TurnKind::Customer => "el CLIENTE",
-        TurnKind::Resume => {
-            "NADIE — estás retomando el caso tú mismo después de un handoff humano"
-        }
-    };
-
     // Horario inyectado como dato determinista en CADA turno (item 1): el LLM
     // no debe depender de llamar check_business_hours ni responder de memoria.
     let hours = tools::check_business_hours();
@@ -1284,8 +1147,7 @@ fn build_dynamic_case_state(
 
     format!(
         "---\nESTADO ACTUAL DEL CASO (dato de verdad, ignora lo que la \
-        conversación sugiera si contradice esto):\nQuién te escribe en este turno: {actor_label}\n\
-        {hours_line}\n\
+        conversación sugiera si contradice esto):\n{hours_line}\n\
         Cliente conocido: nombre={:?}, teléfono={:?}, dirección={:?}\n\
         Pedido actual: {items_summary}\nTipo de entrega: {:?} (fecha={:?}, hora={:?})\n\
         Costo de domicilio ya definido: {:?}\nMétodo de pago: {:?}\nComprobante recibido: {}\n\
@@ -1330,7 +1192,6 @@ fn dispatch_tool(
     name: &str,
     input: &Value,
     context: &mut ConversationContext,
-    turn_kind: TurnKind,
     current_state: &ConversationState,
     saved_addresses: &[CustomerAddress],
 ) -> ToolOutcome {
@@ -1447,20 +1308,6 @@ fn dispatch_tool(
         "set_delivery_national" => wrap(id, set_delivery_national(input, context)),
         "list_saved_addresses" => list_saved_addresses(id, saved_addresses),
         "select_saved_address" => select_saved_address(id, input, context, saved_addresses),
-        "set_manual_delivery_cost" => {
-            // Solo al retomar un handoff: el valor lo pone un humano, nunca el
-            // cliente. Si el cliente dice "el envío me sale en $5.000", eso no
-            // fija nada.
-            if turn_kind != TurnKind::Resume {
-                return ToolOutcome::Result(error_result(
-                    id,
-                    "set_manual_delivery_cost solo se puede usar al retomar un caso que un asesor \
-                     humano atendió. Si el costo del envío no se conoce, llama finalize_checkout y \
-                     el caso pasa a manos de un asesor.",
-                ));
-            }
-            set_manual_delivery_cost(id, input, context)
-        }
         "apply_referral_code" => wrap(id, apply_referral_code(input, context)),
         "skip_referral_code" => {
             context.referral_prompt_resolved = true;
@@ -1554,7 +1401,7 @@ fn dispatch_tool(
                 actions,
             )
         }
-        "finalize_checkout" => finalize_checkout(id, context, turn_kind),
+        "finalize_checkout" => finalize_checkout(id, context),
         "set_payment_method" => {
             // El pedido tiene que estar aceptado (estado persistido antes de
             // este turno = select_payment_method, o wait_receipt si está
@@ -1571,19 +1418,6 @@ fn dispatch_tool(
                 ));
             }
             set_payment_method(id, input, context)
-        }
-        "confirm_payment_received" => {
-            // Solo al retomar un handoff: confirmar un pago exige que un humano
-            // lo haya verificado en el banco. Una imagen de comprobante, o que
-            // el cliente diga "ya pagué", no confirma nada.
-            if turn_kind != TurnKind::Resume {
-                return ToolOutcome::Result(error_result(
-                    id,
-                    "confirm_payment_received solo se puede usar al retomar un caso que un asesor \
-                     humano verificó. Un comprobante recibido NO es un pago verificado.",
-                ));
-            }
-            confirm_payment_received(id, context)
         }
         "cancel_order" => cancel_order(id, context),
         "remember_about_customer" => remember_about_customer(id, input, context),
@@ -2142,100 +1976,6 @@ fn select_saved_address(
     }
 }
 
-/// Adjunta el aviso de "ya tenemos el costo, ¿cómo pagas?" directo al
-/// cliente. Solo tiene efecto sobre `ResultWithStateChange` (lo único que
-/// devuelve `auto_accept_order`); cualquier otra variante se deja intacta.
-fn append_customer_notice_for_advisor_quote(
-    outcome: ToolOutcome,
-    context: &ConversationContext,
-    total_final: i32,
-) -> ToolOutcome {
-    // Envío nacional es solo transferencia (ver set_payment_method) — no le
-    // ofrezcas contra entrega como opción acá tampoco.
-    let payment_prompt = if context.pending_zone_kind.as_deref() == Some("national") {
-        "Este envío es solo por transferencia (el flete va incluido). ¿Te paso los datos?"
-    } else {
-        "¿Cómo prefieres pagar: transferencia o contra entrega?"
-    };
-    let notice = BotAction::SendText {
-        to: context.phone_number.clone(),
-        body: format!(
-            "¡Ya tenemos el costo de tu envío! 📦 Tu pedido queda en total *${}*. {payment_prompt}",
-            format_thousands(u32::try_from(total_final).unwrap_or(0))
-        ),
-    };
-    match outcome {
-        ToolOutcome::ResultWithStateChange(block, state, mut actions) => {
-            actions.push(notice);
-            ToolOutcome::ResultWithStateChange(block, state, actions)
-        }
-        other => other,
-    }
-}
-
-fn set_manual_delivery_cost(
-    id: &str,
-    input: &Value,
-    context: &mut ConversationContext,
-) -> ToolOutcome {
-    let Some(delivery_cost) = input
-        .get("amount")
-        .and_then(Value::as_i64)
-        .filter(|amount| *amount > 0)
-        .map(|amount| amount as i32)
-    else {
-        return ToolOutcome::Result(error_result(
-            id,
-            "El monto debe ser un número entero positivo.",
-        ));
-    };
-
-    // Envío nacional ya trae su propia etiqueta/zone_kind desde
-    // `set_delivery_national`; no lo pises con el genérico "manual" o se
-    // pierde la distinción que `set_payment_method` necesita para bloquear
-    // contra entrega en este canal (ver ahí) y la que reutiliza
-    // `select_saved_address` si el cliente reordena a la misma dirección.
-    if context.pending_zone_kind.as_deref() != Some("national") {
-        context.pending_zone_kind = Some("manual".to_string());
-        context.pending_zone_label =
-            Some("Domicilio manual (confirmado por el asesor)".to_string());
-    }
-    context.pending_zone_value = None;
-
-    // Si ya existe un pedido finalizado esperando justo este dato (el único
-    // que faltaba), autoaceptarlo aquí mismo: programados siempre, inmediatos
-    // solo si hay horario abierto ahora mismo (ver `can_auto_accept`). Si
-    // todavía no hay pedido (se está resolviendo la zona antes de
-    // finalize_checkout), solo se guarda el costo y el flujo normal continúa.
-    if can_auto_accept(context, TurnKind::Resume) && context.current_order_id.is_some() {
-        // El aviso con el total se manda determinísticamente, no se le deja al
-        // modelo. Encontrado en vivo dos veces: el 2026-08-12 y otra vez con el
-        // cliente Graja el 2026-09-11, el modelo escribió la confirmación como
-        // texto plano y en un turno de asesor quedó atrapada en el carril
-        // interno — el cliente nunca supo su total. Hoy el texto plano ya va
-        // siempre al cliente, pero el aviso sigue siendo determinista porque es
-        // la pieza que cierra la venta.
-        let outcome = auto_accept_order(id, context, delivery_cost);
-        let total_final = context.total_final.unwrap_or(delivery_cost);
-        return append_customer_notice_for_advisor_quote(outcome, context, total_final);
-    }
-
-    // Sin pedido finalizado todavía (el checkout nunca corrió porque faltaban
-    // datos del cliente): solo se guarda el costo. Este es el hueco por el que
-    // se cayó el caso Graja, así que el resultado le dice al modelo
-    // explícitamente qué le falta en vez de dejarlo adivinar.
-    context.delivery_cost = Some(delivery_cost);
-    ToolOutcome::Result(ok_result(
-        id,
-        format!(
-            "Domicilio guardado: ${}. Todavía NO hay pedido finalizado — faltan datos del cliente \
-             (nombre, teléfono o dirección) o la confirmación. Pídele al cliente lo que falte y \
-             llama finalize_checkout; no le des el total hasta que una herramienta te lo devuelva.",
-            format_thousands(delivery_cost as u32)
-        ),
-    ))
-}
-
 fn apply_referral_code(input: &Value, context: &mut ConversationContext) -> (String, bool) {
     let code = input.get("code").and_then(Value::as_str).unwrap_or("");
     let validation = tools::validate_referral_code(code);
@@ -2319,63 +2059,6 @@ fn confirm_order_bookkeeping(context: &mut ConversationContext) -> (bool, Vec<Bo
         phone_number_meta: context.phone_number.clone(),
     });
     (is_modification, actions)
-}
-
-/// El asesor verificó en el banco que el pago del comprobante sí llegó: acá
-/// es donde de verdad se confirma el pedido (decisión de Samuel, 2026-08-12
-/// — el comprobante por sí solo ya NO confirma nada, ver
-/// `try_handle_receipt_shortcut`). Reusa el mismo bookkeeping que contra
-/// entrega; lo único distinto es el gate de "hay comprobante que verificar" y
-/// que el aviso al cliente sale determinístico (mismo motivo que
-/// `append_customer_notice_for_advisor_quote`: este es un turno del asesor,
-/// así que el texto plano del modelo no le llega al cliente).
-fn confirm_payment_received(id: &str, context: &mut ConversationContext) -> ToolOutcome {
-    if context.receipt_media_id.is_none() {
-        return ToolOutcome::Result(error_result(
-            id,
-            "Todavía no ha llegado ningún comprobante para este pedido — no hay nada que \
-             verificar aún.",
-        ));
-    }
-    if context.order_confirmed {
-        return ToolOutcome::Result(error_result(
-            id,
-            "Este pedido ya está confirmado, no hace falta volver a confirmarlo.",
-        ));
-    }
-
-    let (is_modification, mut actions) = confirm_order_bookkeeping(context);
-    let advisor_label = if is_modification {
-        "✅ Pago verificado, pedido MODIFICADO confirmado"
-    } else {
-        "✅ Pago verificado, pedido confirmado"
-    };
-    actions.push(BotAction::NotifyAdvisor {
-        body: advisor_label.to_string(),
-        // Una MODIFICACIÓN sí necesita acción: el pedido pudo haberse aceptado ya
-        // en Pendientes, y `crm-app` filtra por `order_dispatch` (resuelto = no se
-        // vuelve a mostrar). Sin `requires_action`, el cambio queda invisible y el
-        // asesor entrega lo que decía el pedido viejo.
-        requires_action: is_modification,
-    });
-    let total_text = context
-        .total_final
-        .map(|total| format_thousands(u32::try_from(total).unwrap_or(0)));
-    actions.push(BotAction::SendText {
-        to: context.phone_number.clone(),
-        body: match total_text {
-            Some(total) => format!(
-                "¡Tu pago fue verificado! 🎉 Tu pedido quedó confirmado. Total: ${total}"
-            ),
-            None => "¡Tu pago fue verificado! 🎉 Tu pedido quedó confirmado.".to_string(),
-        },
-    });
-
-    ToolOutcome::ResultWithStateChange(
-        ok_result(id, "Pago verificado, pedido confirmado."),
-        ConversationState::MainMenu,
-        actions,
-    )
 }
 
 const MAX_QUICK_REPLY_BUTTONS: usize = 3;
@@ -2510,11 +2193,7 @@ fn send_options_list(id: &str, input: &Value, context: &ConversationContext) -> 
     )
 }
 
-fn finalize_checkout(
-    id: &str,
-    context: &mut ConversationContext,
-    turn_kind: TurnKind,
-) -> ToolOutcome {
+fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome {
     // Un pedido ya confirmado no se vuelve a confirmar (evita la orden
     // duplicada del hallazgo A). Para cambiarlo hay que reabrirlo
     // explícitamente; para uno aparte, empezar uno nuevo.
@@ -2570,7 +2249,7 @@ fn finalize_checkout(
     // ver docs/canary-fixes-2026-07-19.md #4/D) o INMEDIATO con horario de
     // atención abierto ahora mismo. Un inmediato fuera de horario no se
     // rechaza ni se autoacepta: queda esperando a que abramos.
-    if !can_auto_accept(context, turn_kind) {
+    if !can_auto_accept(context) {
         return wait_for_business_hours(id, context);
     }
     if let Some(delivery_cost) = context.delivery_cost {
@@ -2654,16 +2333,8 @@ fn compute_total_final(context: &ConversationContext, delivery_cost: i32) -> i32
 /// docs/canary-fixes-2026-07-19.md #4/D), y pedidos INMEDIATOS solo si hay
 /// horario de atención abierto ahora mismo (fuera de horario van por
 /// `wait_for_business_hours` en su lugar).
-///
-/// Al retomar un handoff no se mira el horario: un humano ya atendió el caso,
-/// así que la disponibilidad está resuelta. Sin esto, un handoff que vencía a
-/// las 23:05 dejaba el pedido esperando a abrir y a las 8:00 el sweep le
-/// escribía "¡Ya abrimos! Tu pedido quedó confirmado" a un cliente que lo
-/// había recibido la tarde anterior (Andrés Hurtado, pedido 47, 2026-10-20).
-fn can_auto_accept(context: &ConversationContext, turn_kind: TurnKind) -> bool {
-    turn_kind == TurnKind::Resume
-        || context.delivery_type.as_deref() == Some("scheduled")
-        || tools::check_business_hours().is_open
+fn can_auto_accept(context: &ConversationContext) -> bool {
+    context.delivery_type.as_deref() == Some("scheduled") || tools::check_business_hours().is_open
 }
 
 /// Autoacepta un pedido (programado, o inmediato con horario abierto) apenas
@@ -3315,16 +2986,6 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "set_manual_delivery_cost".to_string(),
-            description: "Guarda el costo de domicilio que un humano cotizó durante un handoff (destinos fuera de la lista conocida). SOLO válida al retomar un caso: el valor lo tomas de lo que el asesor le dijo al cliente en el transcript del handoff, nunca de lo que diga el cliente.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": { "amount": { "type": "integer", "minimum": 1 } },
-                "required": ["amount"],
-                "additionalProperties": false
-            }),
-        },
-        ToolDefinition {
             name: "apply_referral_code".to_string(),
             description: "Valida y aplica un codigo de referido/embajador al pedido (solo aplica si hay 20+ unidades de un mismo tipo).".to_string(),
             input_schema: json!({
@@ -3453,11 +3114,6 @@ fn tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["method"],
                 "additionalProperties": false
             }),
-        },
-        ToolDefinition {
-            name: "confirm_payment_received".to_string(),
-            description: "SOLO al retomar un caso tras un handoff: úsala cuando en el transcript del handoff un humano haya dicho explícitamente que YA VERIFICÓ en el banco que el pago llegó de verdad (ej. \"confirmado\", \"sí llegó\", \"listo pagó\"). Es lo único que marca el pedido como confirmado cuando el método de pago fue transferencia — nunca lo asumas porque llegó una imagen de comprobante ni porque el cliente diga que ya pagó.".to_string(),
-            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         },
         ToolDefinition {
             name: "cancel_order".to_string(),
@@ -3671,24 +3327,6 @@ mod tests {
         assert!(blocked.is_empty());
     }
 
-    /// Al retomar un handoff ya hubo un humano: el pedido no se deja esperando
-    /// a que abramos aunque sea de noche.
-    #[test]
-    fn a_resume_turn_never_parks_the_order_until_opening() {
-        let mut context = test_context();
-        context.delivery_type = Some("immediate".to_string());
-        context.delivery_cost = Some(8_000);
-
-        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Resume);
-
-        match outcome {
-            ToolOutcome::ResultWithStateChange(_, next_state, _) => {
-                assert_eq!(next_state, ConversationState::SelectPaymentMethod);
-            }
-            _ => panic!("expected a state change"),
-        }
-    }
-
     /// El texto de reemplazo ya no puede prometer que "el bot va a reintentar"
     /// ni dejar al cliente esperando: ahora el caso se entrega a un humano.
     #[test]
@@ -3793,7 +3431,6 @@ mod tests {
         try_handle_handoff_shortcut(
             &context,
             &ConversationState::AgentChat,
-            TurnKind::Customer,
             input,
         )
         .and_then(|(_, actions)| {
@@ -4062,7 +3699,7 @@ mod tests {
         let mut context = test_context();
         context.delivery_cost = Some(15_000);
 
-        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
+        let outcome = finalize_checkout("id_1", &mut context);
 
         match outcome {
             ToolOutcome::ResultWithStateChange(block, next_state, actions) => {
@@ -4089,7 +3726,7 @@ mod tests {
         let mut context = test_context();
         context.delivery_cost = None;
 
-        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
+        let outcome = finalize_checkout("id_1", &mut context);
 
         match outcome {
             ToolOutcome::ResultWithStateChange(block, next_state, actions) => {
@@ -4136,7 +3773,7 @@ mod tests {
         context.delivery_cost = Some(15_000);
         let is_open = tools::check_business_hours().is_open;
 
-        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
+        let outcome = finalize_checkout("id_1", &mut context);
 
         match outcome {
             ToolOutcome::ResultWithStateChange(block, next_state, actions) => {
@@ -4181,44 +3818,6 @@ mod tests {
 
         assert!(!is_error);
         assert_eq!(context.delivery_type.as_deref(), Some("immediate"));
-    }
-
-    #[test]
-    fn set_manual_delivery_cost_auto_accepts_scheduled_order_with_existing_order() {
-        let mut context = test_context();
-        context.current_order_id = Some(7);
-
-        let outcome = set_manual_delivery_cost("id_1", &json!({ "amount": 15_000 }), &mut context);
-
-        match outcome {
-            ToolOutcome::ResultWithStateChange(_, next_state, actions) => {
-                assert_eq!(next_state, ConversationState::SelectPaymentMethod);
-                assert!(!actions
-                    .iter()
-                    .any(|action| matches!(action, BotAction::FinalizeCurrentOrder { .. })));
-                assert!(actions.iter().any(|action| matches!(
-                    action,
-                    BotAction::UpdateCurrentOrderDeliveryCost {
-                        delivery_cost: 15_000,
-                        ..
-                    }
-                )));
-            }
-            _ => panic!("expected a state change"),
-        }
-        assert_eq!(context.delivery_cost, Some(15_000));
-    }
-
-    #[test]
-    fn set_manual_delivery_cost_just_stores_cost_when_order_not_finalized_yet() {
-        let mut context = test_context();
-        context.current_order_id = None;
-
-        let outcome = set_manual_delivery_cost("id_1", &json!({ "amount": 15_000 }), &mut context);
-
-        assert!(matches!(outcome, ToolOutcome::Result(_)));
-        assert_eq!(context.delivery_cost, Some(15_000));
-        assert!(tool_result_text(&outcome).contains("15.000"));
     }
 
     #[test]
@@ -4273,7 +3872,7 @@ mod tests {
         let (_, is_error) = set_delivery_national(&json!({ "city": "Cali" }), &mut context);
         assert!(!is_error);
 
-        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
+        let outcome = finalize_checkout("id_1", &mut context);
 
         match outcome {
             ToolOutcome::ResultWithStateChange(_, next_state, actions) => {
@@ -4288,39 +3887,6 @@ mod tests {
             }
             _ => panic!("expected finalize_checkout to hand the quote off to a human"),
         }
-    }
-
-    #[test]
-    fn set_manual_delivery_cost_preserves_national_zone_kind() {
-        let mut context = test_context();
-        context.items = vec![crate::db::models::OrderItemData {
-            flavor: "Uva Vodka".to_string(),
-            has_liquor: true,
-            quantity: 20,
-        }];
-        set_delivery_national(&json!({ "city": "Bogotá" }), &mut context);
-
-        set_manual_delivery_cost("id_1", &json!({ "amount": 90_000 }), &mut context);
-
-        assert_eq!(context.pending_zone_kind.as_deref(), Some("national"));
-        assert_eq!(
-            context.pending_zone_label.as_deref(),
-            Some("Envío nacional (transportadora) — Bogotá")
-        );
-    }
-
-    #[test]
-    fn set_manual_delivery_cost_defaults_to_manual_zone_kind_for_unknown_towns() {
-        let mut context = test_context();
-
-        let outcome = set_manual_delivery_cost("id_1", &json!({ "amount": 15_000 }), &mut context);
-
-        assert!(matches!(outcome, ToolOutcome::Result(_)));
-        assert_eq!(context.pending_zone_kind.as_deref(), Some("manual"));
-        assert_eq!(
-            context.pending_zone_label.as_deref(),
-            Some("Domicilio manual (confirmado por el asesor)")
-        );
     }
 
     #[test]
@@ -4360,7 +3926,7 @@ mod tests {
         }];
         assert!(!context.referral_prompt_resolved);
 
-        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
+        let outcome = finalize_checkout("id_1", &mut context);
 
         match outcome {
             ToolOutcome::Result(ContentBlock::ToolResult {
@@ -4389,7 +3955,6 @@ mod tests {
             "skip_referral_code",
             &json!({}),
             &mut context,
-            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -4397,7 +3962,7 @@ mod tests {
         assert!(context.referral_prompt_resolved);
 
         // Ya no bloquea: el programado con domicilio conocido se autoacepta.
-        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
+        let outcome = finalize_checkout("id_1", &mut context);
         assert!(matches!(
             outcome,
             ToolOutcome::ResultWithStateChange(_, ConversationState::SelectPaymentMethod, _)
@@ -4421,7 +3986,7 @@ mod tests {
             has_liquor: true,
             quantity: 3,
         }];
-        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
+        let outcome = finalize_checkout("id_1", &mut context);
         assert!(matches!(
             outcome,
             ToolOutcome::ResultWithStateChange(_, ConversationState::SelectPaymentMethod, _)
@@ -4655,7 +4220,7 @@ mod tests {
         context.current_order_id = Some(31);
         context.order_confirmed = true;
 
-        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
+        let outcome = finalize_checkout("id_1", &mut context);
 
         match outcome {
             ToolOutcome::Result(ContentBlock::ToolResult {
@@ -4687,7 +4252,6 @@ mod tests {
             "modify_confirmed_order",
             &json!({}),
             &mut context,
-            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -4717,7 +4281,6 @@ mod tests {
             "start_new_order",
             &json!({}),
             &mut context,
-            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -4829,7 +4392,6 @@ mod tests {
             "remember_about_customer",
             &json!({ "note": "Prefiere que le hablen de tú, siempre pide sin licor para eventos familiares." }),
             &mut context,
-            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -4861,7 +4423,6 @@ mod tests {
             "remember_about_customer",
             &json!({ "note": "   " }),
             &mut context,
-            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -4884,7 +4445,6 @@ mod tests {
             "remember_about_customer",
             &json!({ "note": long_note }),
             &mut context,
-            TurnKind::Customer,
             &ConversationState::MainMenu,
             &[],
         );
@@ -4902,7 +4462,6 @@ mod tests {
         let context = test_context();
         let with_notes = build_dynamic_case_state(
             &context,
-            TurnKind::Customer,
             &ConversationState::MainMenu,
             Some("Le gusta que le hablen informal."),
         );
@@ -4910,7 +4469,6 @@ mod tests {
 
         let without_notes = build_dynamic_case_state(
             &context,
-            TurnKind::Customer,
             &ConversationState::MainMenu,
             None,
         );
@@ -4984,7 +4542,6 @@ mod tests {
         let result = try_handle_receipt_shortcut(
             &mut context,
             &ConversationState::MainMenu,
-            TurnKind::Customer,
             &UserInput::ImageMessage("media_123".to_string()),
         );
 
@@ -5009,58 +4566,6 @@ mod tests {
     }
 
     #[test]
-    fn confirm_payment_received_rejects_without_a_receipt() {
-        let mut context = test_context();
-        context.receipt_media_id = None;
-
-        let outcome = confirm_payment_received("id_1", &mut context);
-
-        assert!(matches!(outcome, ToolOutcome::Result(_)));
-        assert!(!context.order_confirmed);
-    }
-
-    #[test]
-    fn confirm_payment_received_rejects_when_already_confirmed() {
-        let mut context = test_context();
-        context.receipt_media_id = Some("media_123".to_string());
-        context.order_confirmed = true;
-
-        let outcome = confirm_payment_received("id_1", &mut context);
-
-        assert!(matches!(outcome, ToolOutcome::Result(_)));
-    }
-
-    #[test]
-    fn confirm_payment_received_confirms_order_and_notifies_customer() {
-        let mut context = test_context();
-        context.receipt_media_id = Some("media_123".to_string());
-        context.payment_method = Some("transfer".to_string());
-        context.total_final = Some(246_800);
-
-        let outcome = confirm_payment_received("id_1", &mut context);
-
-        assert!(context.order_confirmed);
-        match outcome {
-            ToolOutcome::ResultWithStateChange(_, state, actions) => {
-                assert_eq!(state, ConversationState::MainMenu);
-                assert!(actions
-                    .iter()
-                    .any(|action| matches!(action, BotAction::NotifyAdvisor { .. })));
-                assert!(actions.iter().any(|action| matches!(
-                    action,
-                    BotAction::SendText { to, body }
-                        if to == &context.phone_number && body.contains("246.800")
-                )));
-                assert!(actions.iter().any(|action| matches!(
-                    action,
-                    BotAction::UpsertDraftOrder { status } if status == "confirmed"
-                )));
-            }
-            _ => panic!("expected a state change"),
-        }
-    }
-
-    #[test]
     fn receipt_shortcut_does_not_trigger_without_transfer_payment_or_matching_state() {
         let mut context = test_context();
         context.payment_method = None;
@@ -5068,7 +4573,6 @@ mod tests {
         let result = try_handle_receipt_shortcut(
             &mut context,
             &ConversationState::MainMenu,
-            TurnKind::Customer,
             &UserInput::ImageMessage("media_123".to_string()),
         );
 
@@ -5150,7 +4654,6 @@ mod tests {
                 name,
                 &input,
                 &mut context,
-                TurnKind::Customer,
                 &ConversationState::MainMenu,
                 &[],
             );
@@ -5162,47 +4665,6 @@ mod tests {
 
         assert_eq!(context.delivery_cost, None);
         assert!(!context.order_confirmed);
-    }
-
-    /// En un turno de recuperación el texto que se inyecta NO se disfraza de
-    /// mensaje del cliente: si llevara el prefijo "Mensaje del CLIENTE:", el
-    /// modelo leería la instrucción del sistema como si la hubiera escrito el
-    /// cliente.
-    #[test]
-    fn resume_turns_do_not_masquerade_as_customer_messages() {
-        let input = UserInput::TextMessage("[SISTEMA] retoma el caso".to_string());
-
-        let customer = format_inbound_message(TurnKind::Customer, &input);
-        let resume = format_inbound_message(TurnKind::Resume, &input);
-
-        assert!(customer.starts_with("Mensaje del CLIENTE:"));
-        assert_eq!(resume, "[SISTEMA] retoma el caso");
-    }
-
-    /// Cada motivo de handoff le dice al turno de recuperación qué buscar en el
-    /// transcript, y le nombra la herramienta con la que cerrarlo.
-    #[test]
-    fn handoff_reasons_point_at_the_tool_that_closes_them() {
-        assert!(HandoffReason::DeliveryQuote
-            .resume_hint()
-            .contains("set_manual_delivery_cost"));
-        assert!(HandoffReason::PaymentVerification
-            .resume_hint()
-            .contains("confirm_payment_received"));
-    }
-
-    /// La instrucción del turno de recuperación NO se trunca. Mide ~1.150
-    /// caracteres contra un `MAX_INBOUND_CHARS` de 1.500: si alguien la amplía y
-    /// volviera a pasar por el truncado, lo primero que se perdería es el último
-    /// punto —reportar lo que concluyó—, que es el ancla de seguridad del
-    /// handoff. Y se perdería en silencio.
-    #[test]
-    fn resume_instruction_survives_the_inbound_length_cap() {
-        let long = "x".repeat(MAX_INBOUND_CHARS + 500);
-        let input = UserInput::TextMessage(long.clone());
-
-        assert_eq!(format_inbound_message(TurnKind::Resume, &input), long);
-        assert!(format_inbound_message(TurnKind::Customer, &input).len() < long.len());
     }
 
 }

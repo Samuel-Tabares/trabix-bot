@@ -4,10 +4,9 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-/// Por qué el bot le entregó el caso a un humano. Se persiste para que el
-/// turno de recuperación (`ai::agent::run_resume_turn`), cuando el asesor
-/// devuelve la conversación, sepa qué venía a resolver y lo busque en lo que
-/// se dijo durante el handoff.
+/// Por qué el bot le entregó el caso a un humano. Se persiste mientras dura el
+/// handoff: el barrido de ventanas vencidas solo devuelve al bot los casos que
+/// lo tienen puesto (`db::queries::list_expired_handoffs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HandoffReason {
@@ -42,40 +41,6 @@ impl HandoffReason {
             Self::CustomerRequest => "customer_request",
             Self::BlockedAmount => "blocked_amount",
             Self::PartnershipInquiry => "partnership_inquiry",
-        }
-    }
-
-    /// Lo que el turno de recuperación tiene que buscar en el transcript.
-    pub fn resume_hint(&self) -> &'static str {
-        match self {
-            Self::DeliveryQuote => {
-                "El asesor tenía que cotizarle al cliente el costo del envío. Busca ese valor en \
-                 lo que se dijo y, si está, fíjalo con set_manual_delivery_cost."
-            }
-            Self::PaymentVerification => {
-                "El asesor tenía que verificar en el banco que la transferencia llegó. Si dijo \
-                 explícitamente que el pago sí llegó, confírmalo con confirm_payment_received."
-            }
-            Self::UnreadableMedia => {
-                "El cliente mandó un adjunto que tú no puedes leer y un humano lo revisó. Lo que \
-                 decía está en lo que se dijo durante el handoff: sácalo de ahí, no supongas qué \
-                 contenía el archivo."
-            }
-            Self::CustomerRequest => {
-                "El cliente pidió hablar con una persona y un humano lo atendió. Retoma desde lo \
-                 que quedó resuelto; si el tema no era del pedido, no lo revivas."
-            }
-            Self::PartnershipInquiry => {
-                "El cliente preguntó por Emprende con Trabix / alianzas. Ese tema lo maneja el \
-                 equipo, tú no lo explicas ni lo cotizas. Retoma solo si quedó pendiente un pedido \
-                 de granizados."
-            }
-            Self::BlockedAmount => {
-                "Tu mensaje anterior se bloqueó porque mencionaba una cifra sin respaldo de una \
-                 herramienta, y un humano le dio el valor al cliente. Toma la cifra de lo que se \
-                 dijo durante el handoff, NO la recalcules tú, y vuelve a llamar las herramientas \
-                 del pedido antes de repetirle cualquier total."
-            }
         }
     }
 }

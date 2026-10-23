@@ -22,6 +22,17 @@ Header `X-Internal-Token` con el valor de la variable de entorno `INTERNAL_API_T
 - El token debe ser el mismo valor en Railway (bot) y en `crm-app` (`TRABIX_BOT_INTERNAL_TOKEN`).
   Generar con `openssl rand -hex 32`.
 
+## `PATCH /internal/customers/:phone` — corregir el contacto (v1.36.0)
+
+```jsonc
+{ "name": "Andrés Hurtado", "phone": "3001234567", "address": "Unicentro" }  // todos opcionales
+```
+
+Actualiza `customers` (`customer_name_manual`, `phone_number_manual`, `delivery_address_last`) y
+`conversations` (`customer_name`, `customer_phone`, `delivery_address`), en una transacción y con
+el lock de la conversación. Un campo ausente o vacío no se toca. `404 unknown_case` si el número no
+tiene ni contacto ni conversación. Lo usa Contactos → "Editar contacto" en `crm-app`.
+
 ## Request
 
 ```http
@@ -85,10 +96,8 @@ directo a UI.
    `payload = {"source":"crm-app","sent_by":...}`.
 5. **Apenda el mensaje a la memoria del agente** (`agent_case_messages`) como una línea de
    transcript marcada por el sistema, sin llamar al LLM — ver
-   `ai::memory::append_transcript_entry`. Es la mitad que faltaba del transcript del handoff: aquí
-   es donde se dice el valor del envío o que el pago sí llegó, y es lo que el turno de recuperación
-   lee cuando le devuelven la conversación. Sin esto el bot volvía con un hueco justo donde se
-   resolvió lo importante.
+   `ai::memory::append_transcript_entry`. Desde v1.36.0 el bot no retoma el pedido desde ahí
+   (empieza de cero), pero si el cliente vuelve a escribir, el modelo sabe de qué se habló.
 6. Toca `conversations.last_message_at`.
 
 La traza y el `last_message_at` son **best-effort**: si fallan, el endpoint igual responde `200`
@@ -109,7 +118,7 @@ acumula). El bot también se la pone a sí mismo cuando hace un handoff
   `expire_business_hours_timer`) se vuelven no-op mientras dure la pausa, igual que la
   reconciliación de timers vencidos al boot.
 
-### `POST /internal/advisor/release` — y el turno de recuperación
+### `POST /internal/advisor/release` — el bot empieza de cero
 
 Devuelve la conversación al bot antes de que venza la ventana, sin esperar las 6h. Mismo header
 `X-Internal-Token`.
@@ -118,27 +127,28 @@ Devuelve la conversación al bot antes de que venza la ventana, sin esperar las 
 { "case_phone": "573001234567", "sent_by": "user_id del CRM" }
 ```
 
-**Desde v1.27.0 esto hace dos cosas, no una:**
+**Desde v1.36.0** (`engine::return_case_to_bot`):
 
-1. Limpia `human_takeover_until`.
-2. **Dispara el turno de recuperación** (`engine::process_resume_for_case` →
-   `ai::agent::run_resume_turn`). El bot lee el transcript del handoff —que se fue apendando en
-   vivo por los dos lados— y sigue el pedido desde ahí: fija con `set_manual_delivery_cost` el
-   costo que cotizó el asesor, confirma con `confirm_payment_received` el pago que verificó, cierra
-   el checkout, y le reporta al asesor por `message_advisor` qué concluyó.
+1. Limpia `human_takeover_until` y `handoff_reason`.
+2. Si el bot tenía un carrito sin pedido, lo guarda como pedido `pending_advisor`: queda en
+   Pendientes para Aceptar (registra la venta) o Cancelar. Un pedido que ya existía no se toca.
+3. Suelta el pedido de la conversación (`start_new_order`), salvo que ya estuviera confirmado.
+4. Deja en la memoria del agente una línea `[SISTEMA]`: lo anterior ya lo resolvió el equipo.
+5. Deja una nota informativa en el carril del asesor.
 
-Ese reporte de cierre es el ancla contra el riesgo del diseño: el modelo lee cifras de dinero de un
-chat en prosa, así que si leyó mal aparece de inmediato en Pendientes.
+No corre el modelo y no le escribe al cliente. Hasta v1.35.0 acá corría un turno de recuperación
+que leía el transcript y cerraba el pedido solo: leía plata de un chat en prosa y le escribía al
+cliente a cualquier hora. El 2026-10-20 le confirmó a las 8:00 a Andrés Hurtado un pedido que el
+asesor le había entregado la tarde anterior.
 
-Un fallo del agente **no** hace fallar la liberación: la toma de control ya quedó levantada, que es
-lo que pidió el asesor, y `degrade_agent_failure` deja el aviso en el carril del asesor. Por eso
-`crm-app` llama este endpoint con el timeout largo de turno de agente (60s), no con el de un POST a
-Meta.
+Lo que se pierde a propósito: en un pedido que pasó por un handoff, el bot ya no escribe la
+contabilidad de `confirm_order_bookkeeping` (totales del cliente, dirección guardada, analítica de
+referidos, evento `Purchase` a la CAPI). La venta sí se registra al Aceptar en Pendientes.
 
-Si nadie pulsa "Devolver al bot", la ventana vence sola a las 6h y el barrido de 60s
-(`bot::timers::sweep_expired_handoffs`) corre el mismo turno de recuperación — pero solo para los
-casos con `state_data.handoff_reason` puesto, o sea los que el bot entregó. Una toma de control que
-un humano inició por su cuenta no tiene nada que retomar.
+Si nadie pulsa "Devolver al bot", la ventana vence sola 6h después del último mensaje del asesor y
+el barrido de 60s (`bot::timers::sweep_expired_handoffs`) hace lo mismo, a cualquier hora (no le
+escribe a nadie). Solo para los casos con `state_data.handoff_reason` puesto: una toma de control
+que un humano inició por su cuenta no tiene nada que devolver.
 
 Responde `{"ok": true}`, mismos códigos de error que `/send` (`unauthorized`, `unknown_case`,
 `invalid_request`, `internal_error`).
@@ -186,8 +196,8 @@ vio y la venta se cerró a mano. El primer parche (2026-08-12) solo cubrió la r
 existe un pedido finalizado.
 
 **El modelo nuevo:** el asesor solo le habla al cliente. El bot, cuando se topa con algo que no
-puede resolver, hace un handoff determinista y se sale; cuando le devuelven la conversación, lee lo
-que se dijo y sigue. Detalle en la sección de `/release` arriba.
+puede resolver, hace un handoff determinista y se sale; cuando le devuelven la conversación,
+empieza de cero (v1.36.0). Detalle en la sección de `/release` arriba.
 
 ## El asesor no tiene canal directo de WhatsApp
 
@@ -231,8 +241,8 @@ traer separadores de ruta, y el archivo no puede pasar de 1 MB ya decodificado.
 1. **No marca toma de control humana.** Mandar una factura es un acto automático del sistema, no un
    asesor entrando a la conversación. Con la ventana de 6h, aceptar un pedido dejaría al bot mudo
    con ese cliente sin que nadie lo haya pedido.
-2. **No entra a la memoria del agente.** Las líneas de transcript existen para que el turno de
-   recuperación sepa qué se dijo durante un handoff, y esto no es un handoff.
+2. **No entra a la memoria del agente.** Las líneas de transcript existen para que el modelo sepa
+   qué se dijo durante un handoff, y esto no es un handoff.
 
 Sí escribe `message_events` (`content_type='document'`, `actor='advisor'`, con `filename` y
 `media_id` en el payload) y sí actualiza `last_message_at`.

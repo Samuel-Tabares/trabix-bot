@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-10-23
+
+### Changed
+
+- **Al devolver un caso, el bot empieza de cero** (decisión de Samuel). Botón "Devolver al bot" y
+  ventana de 6h vencida hacen lo mismo (`engine::return_case_to_bot`): no corre el modelo, no le
+  escribe al cliente y puede pasar a cualquier hora. Si el bot tenía un carrito sin pedido, lo guarda
+  como pedido `pending_advisor` para que quede en Pendientes (Aceptar registra la venta). Una línea
+  `[SISTEMA]` en la memoria del agente le dice al modelo que lo anterior ya lo cerró el equipo.
+  Costo asumido: los pedidos que pasan por un handoff ya no escriben totales del cliente, dirección
+  guardada ni el `Purchase` a la CAPI.
+
+### Removed
+
+- El turno de recuperación (`run_resume_turn`, `process_resume_for_case`, `TurnKind`) y las tools
+  que solo existían para él: `set_manual_delivery_cost` y `confirm_payment_received`. Leía cifras de
+  un chat en prosa y le escribía al cliente a destiempo (pedido 47).
+- La espera hasta las 8:00 para retomar handoffs vencidos de noche (v1.35.0): ya no hace falta.
+
+### Added
+
+- `PATCH /internal/customers/:phone`: corrige nombre, celular y dirección del cliente en `customers`
+  y `conversations`. Lo usa "Editar contacto" en `crm-app`.
+
 ## [1.35.0] - 2026-10-23
 
 ### Fixed

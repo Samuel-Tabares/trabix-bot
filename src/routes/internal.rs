@@ -28,7 +28,8 @@ use crate::{
         queries::{
             clear_human_takeover, create_referral_code as db_create_referral_code, get_conversation,
             record_message_event, set_human_takeover, set_referral_code_active as db_set_referral_code_active,
-            set_referral_code_boost as db_set_referral_code_boost, update_last_message,
+            set_referral_code_boost as db_set_referral_code_boost, update_customer_contact,
+            update_last_message,
         },
     },
     logging::{mask_phone, preview_text},
@@ -241,10 +242,9 @@ pub async fn advisor_send(
     }
 
     // Lo que el asesor le escribe al cliente entra a la memoria del agente sin
-    // gastar una llamada al LLM. Es la mitad que faltaba del transcript del
-    // handoff: aquí es donde se dice el valor del envío o que el pago sí llegó,
-    // y es lo que el turno de recuperación va a leer cuando le devuelvan la
-    // conversación (ver `ai::memory::append_transcript_entry`).
+    // gastar una llamada al LLM. El bot no retoma el pedido desde ahí (empieza
+    // de cero, ver `engine::return_case_to_bot`), pero si el cliente vuelve a
+    // escribir, el modelo tiene el contexto de lo que se habló.
     if let Err(err) = crate::ai::memory::append_transcript_entry(
         &state.pool,
         &case_phone,
@@ -286,8 +286,8 @@ pub async fn advisor_send(
 ///    pusiera la ventana de 6h, aceptar un pedido dejaría al bot mudo con ese
 ///    cliente sin que nadie lo haya pedido.
 /// 2. **No entra a la memoria del agente.** Las líneas de transcript existen
-///    para que el turno de recuperación sepa qué se dijo durante un handoff, y
-///    esto no es un handoff.
+///    para que el modelo sepa qué se dijo durante un handoff, y esto no es un
+///    handoff.
 ///
 /// Sigue siendo el bot el que habla con Meta y el que escribe `message_events`,
 /// igual que todo lo demás de este archivo.
@@ -402,14 +402,9 @@ pub async fn advisor_send_document(
 /// Devuelve la conversación al bot antes de que venza la ventana de
 /// `set_human_takeover`. Lo usa el botón "Devolver al bot" de `crm-app`.
 ///
-/// Desde v1.27.0 no solo limpia `human_takeover_until`: **dispara el turno de
-/// recuperación**. El bot lee lo que se dijo durante el handoff —el transcript
-/// se fue apendando en vivo a `agent_case_messages`— y sigue el pedido desde
-/// ahí: fija el costo del envío que cotizó el asesor, confirma el pago que
-/// verificó, cierra el checkout. Sin esto, un pedido que pasó por un handoff no
-/// llegaría nunca a `confirmed` y se perdería toda la contabilidad que cuelga
-/// de `confirm_order_bookkeeping` (direcciones guardadas, `/lifecycle`,
-/// analytics de referidos y el evento `Purchase` a la CAPI de Meta).
+/// El bot empieza de cero con el cliente (`engine::return_case_to_bot`): no lee
+/// el handoff ni le escribe a nadie. Si tenía un carrito armado, queda como
+/// pedido en Pendientes para aceptarlo o cancelarlo.
 pub async fn advisor_release(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -439,15 +434,13 @@ pub async fn advisor_release(
         "conversation released back to bot from crm-app"
     );
 
-    // El turno toma el lock de la conversación por dentro; acá no se toma para
-    // no bloquearse contra sí mismo. Un fallo del agente NO hace fallar la
-    // liberación: la toma de control ya quedó levantada, que es lo que pidió el
-    // asesor, y `degrade_agent_failure` deja el aviso en el carril del asesor.
-    if let Err(err) = crate::engine::process_resume_for_case(&state, &case_phone).await {
+    // Un fallo acá NO hace fallar la liberación: la toma de control ya quedó
+    // levantada, que es lo que pidió el asesor.
+    if let Err(err) = crate::engine::return_case_to_bot(&state, &case_phone, "release").await {
         tracing::error!(
             case_phone = %mask_phone(&case_phone),
             error = %err,
-            "resume turn failed after advisor release"
+            "failed to reset the case after advisor release"
         );
     }
 
@@ -494,6 +487,83 @@ pub async fn media(
 #[derive(Debug, Deserialize)]
 pub struct CreateReferralCodeRequest {
     pub code: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateCustomerRequest {
+    pub name: Option<String>,
+    pub phone: Option<String>,
+    pub address: Option<String>,
+}
+
+/// Corrige a mano el nombre, el celular o la dirección de un cliente desde
+/// `crm-app`. Existe porque lo que el cliente le dice a un asesor durante un
+/// handoff no lo lee nadie: el contacto se quedaba con el nombre del perfil de
+/// WhatsApp (un "." en el caso de Andrés Hurtado, 2026-10-19).
+///
+/// Toma el lock de la conversación para que un turno en curso no pise el dato
+/// corregido con el que tenía cargado.
+pub async fn update_customer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(case_phone): Path<String>,
+    payload: Result<Json<UpdateCustomerRequest>, JsonRejection>,
+) -> Result<Json<AdvisorReplyResponse>, ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+
+    let Json(payload) = payload
+        .map_err(|err| ApiError::InvalidRequest(format!("cuerpo JSON inválido: {err}")))?;
+    let case_phone = validate_phone(&case_phone)?;
+
+    let name = validate_contact_text(payload.name.as_deref(), "name", 80)?;
+    let address = validate_contact_text(payload.address.as_deref(), "address", 200)?;
+    let phone = match payload.phone.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(raw) => {
+            let digits: String = raw.chars().filter(|ch| !matches!(ch, ' ' | '-' | '+')).collect();
+            if !(7..=15).contains(&digits.len()) || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+                return Err(ApiError::InvalidRequest(
+                    "phone debe tener entre 7 y 15 dígitos".into(),
+                ));
+            }
+            Some(digits)
+        }
+    };
+    if name.is_none() && phone.is_none() && address.is_none() {
+        return Err(ApiError::InvalidRequest("no hay nada que actualizar".into()));
+    }
+
+    let _case_lock = crate::lock_conversation(&state.conversation_locks, &case_phone).await;
+    let found = update_customer_contact(
+        &state.pool,
+        &case_phone,
+        name.as_deref(),
+        phone.as_deref(),
+        address.as_deref(),
+    )
+    .await
+    .map_err(|err| ApiError::Internal(format!("error actualizando el contacto: {err}")))?;
+    if !found {
+        return Err(ApiError::UnknownCase);
+    }
+
+    tracing::info!(case_phone = %mask_phone(&case_phone), "customer contact edited from crm-app");
+
+    Ok(Json(AdvisorReplyResponse { ok: true }))
+}
+
+fn validate_contact_text(
+    raw: Option<&str>,
+    field: &str,
+    max_chars: usize,
+) -> Result<Option<String>, ApiError> {
+    match raw.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(text) if text.chars().count() > max_chars => Err(ApiError::InvalidRequest(format!(
+            "{field} excede {max_chars} caracteres"
+        ))),
+        Some(text) => Ok(Some(text.to_string())),
+    }
 }
 
 #[derive(Debug, Deserialize)]

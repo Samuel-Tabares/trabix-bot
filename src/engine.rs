@@ -23,8 +23,8 @@ use crate::{
     db::{
         models::{Conversation, ConversationStateData},
         queries::{
-            create_conversation, create_order, create_or_update_customer, create_or_update_referral_analytics, get_conversation, get_customer_notes, list_customer_addresses, replace_order_items,
-            reset_conversation, touch_customer_address, update_customer_data, update_customer_identity, update_customer_notes, update_customer_totals, update_last_message, update_order,
+            clear_human_takeover, create_conversation, create_order, create_or_update_customer, create_or_update_referral_analytics, get_conversation, get_customer_notes, list_customer_addresses, replace_order_items,
+            reset_conversation, touch_customer_address, update_customer_data, update_customer_notes, update_customer_totals, update_last_message, update_order,
             update_order_delivery_cost, update_order_status, update_state, upsert_customer_address,
         },
     },
@@ -415,112 +415,89 @@ async fn log_outbound_text(state: &AppState, case_phone: &str, to: &str, body: &
     }
 }
 
-/// El asesor cerró el handoff y le devuelve la conversación al bot, o la ventana
-/// de toma de control venció sola. El bot retoma el caso leyendo lo que se dijo
-/// mientras estuvo afuera (`ai::agent::run_resume_turn`) y sigue el pedido desde
-/// ahí: fija el costo del envío, confirma el pago, cierra el checkout.
+/// El asesor devolvió la conversación (botón "Devolver al bot" o la ventana de
+/// toma de control venció sola). Lo que se habló durante el handoff ya lo
+/// resolvió una persona, así que el bot **empieza de cero** con ese cliente: no
+/// corre ningún turno del modelo, no le escribe al cliente y no lee cifras del
+/// chat.
 ///
-/// Reemplaza a `process_advisor_turn_for_case` (v1.27.0). El carril en el que el
-/// asesor le contestaba al bot ya no existe: el asesor solo le habla al cliente.
-pub async fn process_resume_for_case(
+/// Hasta v1.35.0 acá corría un turno de recuperación que leía el transcript y
+/// cerraba el pedido. Leía plata de un chat en prosa y le escribía al cliente
+/// a cualquier hora: el 2026-10-20 le confirmó a las 8:00 a Andrés Hurtado un
+/// pedido que el asesor ya le había entregado la tarde anterior.
+///
+/// Lo que el bot ya tenía armado no se pierde: si había un carrito sin pedido,
+/// se guarda como pedido y queda en Pendientes, que es donde el asesor acepta
+/// (y con eso registra la venta) o cancela. Un pedido ya confirmado conserva su
+/// vínculo para que una corrección del cliente no cree un duplicado.
+pub async fn return_case_to_bot(
     state: &AppState,
-    target_phone: &str,
+    phone: &str,
+    source: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let state = state.clone();
-    let target_phone = target_phone.to_string();
+    let _case_lock = crate::lock_conversation(&state.conversation_locks, phone).await;
 
-    let _case_lock = crate::lock_conversation(&state.conversation_locks, &target_phone).await;
-
-    let Some(client_conversation) = get_conversation(&state.pool, &target_phone).await? else {
-        tracing::warn!(
-            target_phone = %mask_phone(&target_phone),
-            "conversation to resume no longer exists"
-        );
+    let Some(conversation) = get_conversation(&state.pool, phone).await? else {
+        tracing::warn!(phone = %mask_phone(phone), "conversation to return no longer exists");
         return Ok(());
     };
 
-    let (current_state, mut context) =
-        rehydrate_client_conversation(&state, &client_conversation).await?;
+    clear_human_takeover(&state.pool, phone).await?;
 
-    let saved_addresses = list_customer_addresses(&state.pool, &target_phone)
-        .await
-        .unwrap_or_default();
-    let customer_notes = get_customer_notes(&state.pool, &target_phone)
-        .await
-        .unwrap_or_default();
+    let (_, mut context) = rehydrate_client_conversation(state, &conversation).await?;
+    context.handoff_reason = None;
 
-    let (new_state, actions) = match crate::ai::agent::run_resume_turn(
-        &state,
-        &mut context,
-        &current_state,
-        &saved_addresses,
-        customer_notes.as_deref(),
+    let mut note = "↩️ El bot retomó la conversación y empieza de cero con este cliente.".to_string();
+    if !context.order_confirmed {
+        if context.current_order_id.is_none()
+            && !context.items.is_empty()
+            && context.delivery_type.is_some()
+        {
+            upsert_order_from_context(&state.pool, conversation.id, &mut context, "pending_advisor")
+                .await?;
+        }
+        if let Some(order_id) = context.current_order_id {
+            note.push_str(&format!(
+                " El pedido #{order_id} quedó en Pendientes: acéptalo si se vendió o cancélalo si no."
+            ));
+        }
+        context.start_new_order();
+    }
+
+    update_state(&state.pool, phone, "main_menu", &context.to_state_data()).await?;
+
+    if let Err(err) = crate::ai::memory::append_transcript_entry(
+        &state.pool,
+        phone,
+        crate::ai::memory::CASE_RETURNED_LINE,
     )
     .await
     {
-        Ok(result) => result,
-        Err(err) => {
-            // El caso viene de un handoff: si el agente falla acá, el pedido
-            // queda a medias y nadie se entera. `degrade_agent_failure` deja el
-            // estado intacto y avisa por el carril del asesor.
-            return degrade_agent_failure(
-                &state,
-                &target_phone,
-                &context,
-                &current_state,
-                &UserInput::TextMessage("[retomando el caso tras un handoff]".to_string()),
-                "resume",
-                err,
-            )
-            .await;
-        }
-    };
-
-    tracing::info!(
-        source = "resume",
-        target_phone = %mask_phone(&target_phone),
-        from_state = %current_state.as_storage_key(),
-        to_state = %new_state.as_storage_key(),
-        action_count = actions.len(),
-        action_kinds = %summarize_action_kinds(&actions),
-        "resumed the case after a human handoff"
-    );
-
-    update_customer_data(
-        &state.pool,
-        &target_phone,
-        context.customer_name.as_deref(),
-        context.customer_phone.as_deref(),
-        context.delivery_address.as_deref(),
-    )
-    .await?;
-
-    // Lo que el cliente le dio al asesor durante el handoff (nombre, dirección)
-    // solo lo recoge este turno. Sin esto el contacto quedaba en crm-app con el
-    // nombre del perfil de WhatsApp — un "." en el caso de Andrés Hurtado.
-    update_customer_identity(
-        &state.pool,
-        &target_phone,
-        manual_override(context.customer_name.as_deref(), context.meta_customer_name.as_deref()),
-        manual_override(context.customer_phone.as_deref(), context.meta_customer_phone.as_deref()),
-        context.delivery_address.as_deref(),
-    )
-    .await?;
-
-    let execution =
-        execute_actions(&state, client_conversation.id, &mut context, &actions).await?;
-
-    if !execution.reset_requested {
-        update_state(
-            &state.pool,
-            &target_phone,
-            new_state.as_storage_key(),
-            &context.to_state_data(),
-        )
-        .await?;
+        tracing::warn!(error = %err, "failed to mark the returned case in agent memory");
     }
 
-    update_last_message(&state.pool, &target_phone).await?;
+    if let Err(err) = crate::db::queries::record_message_event(
+        &state.pool,
+        phone,
+        CHANNEL_ADVISOR,
+        ACTOR_BOT,
+        "text",
+        Some(&note),
+        Some(json!({ "requires_action": false })),
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = %err, "failed to record the case return note");
+    }
+
+    tracing::info!(
+        phone = %mask_phone(phone),
+        source,
+        order_id = ?conversation.state_data.0.current_order_id,
+        "case returned to the bot; starting from scratch"
+    );
+
     Ok(())
 }
 
@@ -694,9 +671,8 @@ pub async fn send_timer_actions(
 /// Las tres cosas juntas y determinísticamente — nunca a criterio del modelo,
 /// que fue exactamente el modo de falla del caso Graja (2026-09-11).
 ///
-/// El bot vuelve con el turno de recuperación (`ai::agent::run_resume_turn`),
-/// disparado por `POST /internal/advisor/release` o por el barrido que ve la
-/// ventana vencida.
+/// El caso vuelve al bot, desde cero, con `return_case_to_bot`: lo dispara
+/// `POST /internal/advisor/release` o el barrido que ve la ventana vencida.
 pub async fn perform_handoff(
     state: &AppState,
     case_phone: &str,

@@ -58,10 +58,14 @@ cannot resolve it performs a deterministic handoff (`BotAction::HandOffToHuman`:
 decided by `try_handle_handoff_shortcut` *before* the LLM call, so the model cannot decline to
 escalate; `hand_off_to_human` is the tool for what those patterns miss. When the conversation comes
 back (`POST /internal/advisor/release`, or the 6h window lapsing into
-`timers::sweep_expired_handoffs`), `ai::agent::run_resume_turn` **reads the transcript of what was
-said during the handoff** and carries the order forward, then reports what it concluded on the
-advisor lane. Money tools (`set_manual_delivery_cost`, `confirm_payment_received`) only run in a
-resume turn. Full contract in `docs/internal_advisor_send.md`.
+`timers::sweep_expired_handoffs`), **the bot starts from scratch** (v1.36.0,
+`engine::return_case_to_bot`): no LLM turn, nothing sent to the customer. An unconfirmed cart is
+saved as a `pending_advisor` order so it lands in Pendientes for Aceptar/Cancelar, and a `[SISTEMA]`
+line in agent memory tells the model the earlier conversation is closed. The resume turn that used
+to read the handoff transcript and close the order (`run_resume_turn`, `set_manual_delivery_cost`,
+`confirm_payment_received`) is gone — it messaged a customer at 8:00 about an order already
+delivered (pedido 47, 2026-10-20). Contact fields are editable from `crm-app` via
+`PATCH /internal/customers/:phone`. Full contract in `docs/internal_advisor_send.md`.
 
 **The model never picks the Armenia delivery zone (v1.29.0).** `set_delivery_zone_armenia` used to
 take `norte`/`centro`/`sur` as a parameter the model chose, with no table behind it: it read the

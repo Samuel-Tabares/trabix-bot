@@ -306,6 +306,9 @@ escribe, incluido el evento `Purchase` a la CAPI de Meta— y el riesgo asumido 
 
 **Lo que queda abierto de esto:**
 
+> **Superado por v1.36.0 (2026-10-23):** el turno de recuperación se eliminó; al devolver el caso
+> el bot empieza de cero. Los pendientes de abajo quedan solo como historia.
+
 - **Falta el E2E contra producción — es lo único abierto.** Ya está desplegado (2026-09-14,
   contenedor arriba 12:52:29 UTC, sin errores en logs), pero el turno de recuperación **nunca ha
   corrido contra un caso real**: lo único que lo respalda son 182 tests unitarios.
@@ -445,17 +448,23 @@ habría dejado al bot mudo con ese cliente.
 
 ---
 
-### 10. Mensaje de las 8:00 a un cliente ya atendido (pedido 47) — CERRADO (2026-10-23, v1.35.0) · SIN DESPLEGAR
+### 10. Mensaje de las 8:00 a un cliente ya atendido (pedido 47) — CERRADO (2026-10-23, v1.35.0 + v1.36.0)
 
 Cadena real: handoff por imagen → venta y entrega hechas a mano → nadie pulsó "Devolver al bot" →
 la ventana venció a las 23:05 → el turno de recuperación dejó el pedido esperando a abrir → a las
-8:00 el bot le escribió al cliente "tu pedido quedó confirmado, ¿cómo pagas?". Arreglado en código
-(ver CHANGELOG 1.35.0). Pendiente:
+8:00 el bot le escribió al cliente "tu pedido quedó confirmado, ¿cómo pagas?".
 
-- Desplegar (`railway up --service trabix-bot`) y pushear.
-- Ver en vivo el primer handoff que venza de noche: el log debe decir `resuming at opening`.
-- Datos del caso: pedido 47 y la conversación de 573142933303 quedaron a medio camino (ver la nota
-  de cierre de la sesión).
+v1.35.0 lo parchó; v1.36.0 (decisión de Samuel) eliminó la causa: al devolver un caso el bot
+empieza de cero y no le escribe a nadie; el carrito queda en Pendientes. El contacto se edita a mano
+desde `crm-app`. Datos del caso corregidos en producción (pedido 47 cancelado con la razón,
+contacto "Andres Hurtado", conversación reiniciada).
+
+Pendiente:
+
+- Ver en vivo el primer "Devolver al bot" con carrito: debe aparecer el pedido en Pendientes y la
+  nota "↩️ El bot retomó la conversación…", sin ningún mensaje al cliente.
+- Los pedidos que pasan por handoff ya no mandan `Purchase` a la CAPI ni suman a los totales del
+  cliente. Si pesa para la pauta, moverlo al "Aceptar" de Pendientes.
 
 ## Definición de "listo" para cualquier cambio aquí
 

@@ -34,31 +34,28 @@
 > 2. **Memoria continua.** Mientras el bot esta pausado, lo que dice el cliente y lo que le escribe
 >    el asesor se apendan a `agent_case_messages` sin llamar al LLM
 >    (`ai::memory::append_transcript_entry`), con marcadores que pone el sistema.
-> 3. **Turno de recuperacion** (`ai::agent::run_resume_turn`). Al devolver la conversacion
->    (`POST /internal/advisor/release`) o cuando la ventana de 6h vence sola
->    (`bot::timers::sweep_expired_handoffs`), el bot lee ese transcript y sigue el pedido desde ahi:
->    `set_manual_delivery_cost`, `confirm_payment_received`, `finalize_checkout`. Cierra reportandole
->    al asesor que concluyo, porque lee cifras de dinero de un chat en prosa y una lectura mala tiene
->    que verse de inmediato en Pendientes.
+> 3. **Devolucion: el bot empieza de cero** (v1.36.0, `engine::return_case_to_bot`). Al devolver
+>    la conversacion (`POST /internal/advisor/release`) o cuando la ventana de 6h vence sola
+>    (`bot::timers::sweep_expired_handoffs`, a cualquier hora), el bot NO corre el modelo ni le
+>    escribe al cliente: limpia la toma de control y el `handoff_reason`, guarda el carrito como
+>    pedido `pending_advisor` si no tenia pedido (queda en Pendientes para Aceptar/Cancelar), suelta
+>    el pedido de la conversacion salvo que ya estuviera confirmado, y deja una linea `[SISTEMA]` en
+>    la memoria del agente. Hasta v1.35.0 corria un turno de recuperacion que leia el transcript y
+>    cerraba el pedido; el 2026-10-20 eso le confirmo a las 8:00 a un cliente un pedido que ya le
+>    habian entregado (pedido 47). Se pierde a proposito, en pedidos que pasan por handoff, la
+>    contabilidad de `confirm_order_bookkeeping` (totales del cliente, direccion guardada, `Purchase`
+>    a la CAPI); la venta se registra al Aceptar en Pendientes.
 >
->    Desde v1.35.0: (a) si la ventana vence **fuera de horario**, el sweep no retoma — corre
->    `human_takeover_until` a la proxima apertura (8:00) y retoma ahi; (b) en un turno de
->    recuperacion `finalize_checkout` **nunca** deja el pedido en `wait_business_hours`, porque ya lo
->    atendio un humano; (c) si el asesor ya cerro la venta a mano, el bot la registra
->    (`finalize_checkout` + `set_payment_method`) sin escribirle al cliente, y queda en Pendientes
->    para aceptarla; (d) el nombre y la direccion que el cliente le dio al asesor pasan a `customers`
->    (`update_customer_identity`). Origen: pedido 47, Andres Hurtado, 2026-10-19/20.
->
->    El guard de cifras ya no le oculta notas al asesor: las manda completas con las cifras sin
->    respaldo marcadas para revisar. Las cifras de `advisor_case_summary` (calculadas por codigo)
->    cuentan como verificadas.
+>    El guard de cifras no le oculta notas al asesor: las manda completas con las cifras sin respaldo
+>    marcadas. Las cifras de `advisor_case_summary` (calculadas por codigo) cuentan como verificadas.
 >
 > Por que: en un turno de asesor el texto plano del modelo iba al asesor, no al cliente. El
 > 2026-09-11, con el cliente Graja, el "total $271.000" se quedo en el carril interno y el cliente
 > nunca lo vio. Detalle completo en `docs/internal_advisor_send.md`.
 >
-> Guards de dinero: `set_manual_delivery_cost` y `confirm_payment_received` SOLO corren en un turno
-> de recuperacion. El cliente no fija su propio domicilio ni confirma su propio pago.
+> Guards de dinero: desde v1.36.0 el bot no tiene ninguna tool para fijar un domicilio cotizado a
+> mano ni para confirmar un pago (`set_manual_delivery_cost` y `confirm_payment_received` se
+> eliminaron). Las dos cosas las cierra un humano y la venta entra por Pendientes.
 
 
 ## Resumen
@@ -205,8 +202,8 @@ Correcciones del canary 2026-07-19 (`docs/canary-fixes-2026-07-19.md`):
   tool `confirm_advisor_availability` se borro por completo (quedo sin call-sites reales). Regla
   unificada, ver `can_auto_accept()` en `src/ai/agent.rs`: un pedido se autoacepta si es
   `scheduled` (siempre) o si es `immediate` y `check_business_hours().is_open`. El auto-accept vive
-  en `finalize_checkout` (si el domicilio ya se conoce) y en `set_manual_delivery_cost` (si el
-  domicilio llega despues, dato del asesor) — ambos llaman `auto_accept_order` (antes
+  en `finalize_checkout` (si el domicilio ya se conoce; `set_manual_delivery_cost` se elimino en
+  v1.36.0) — llama `auto_accept_order` (antes
   `auto_accept_scheduled_order`, generalizada), que calcula el total, deja el pedido en
   `draft_payment` y salta directo a `select_payment_method`, avisandole al asesor de forma
   informativa (nunca le pregunta disponibilidad).
@@ -224,8 +221,8 @@ Correcciones del canary 2026-07-19 (`docs/canary-fixes-2026-07-19.md`):
     cliente recibia "tu pedido quedo confirmado" con la orden todavia en `pending_advisor`. No hay duracion que trackear ni timer en vivo armado con `StartTimer` — el sweep ya
     corria cada 60s para los demas timers.
   - Fuera de alcance a proposito: destinos desconocidos (envio nacional). Siempre son `scheduled`,
-    ya auto-aceptan al conocerse el costo via `set_manual_delivery_cost` y ya quedan visibles como
-    `needs_human` en `crm-app` sin cambios — es el unico paso bloqueante que sigue en pie.
+    se entregan a un humano (`DeliveryQuote`), que cotiza y cierra la venta; el pedido queda en
+    Pendientes (desde v1.36.0 el bot no retoma esa cotizacion).
 - el atajo deterministico de comprobante (`try_handle_receipt_shortcut`, resend de la imagen al
   asesor) ya no depende solo de `current_state == wait_receipt`: tambien dispara si
   `payment_method == transfer` y todavia no hay `receipt_media_id`, para no perder el reenvio del
@@ -449,10 +446,8 @@ distinta a Armenia/municipios, donde llega listo para consumir).
 - `bot::delivery_zone::MIN_UNITS_NATIONAL = 20`, sin excepción.
 - Tool `set_delivery_national(city)`: valida el mínimo y fija `pending_zone_kind = "national"`,
   `pending_zone_value = None`, `pending_zone_label = "Envío nacional (transportadora) — {city}"`.
-  No calcula tarifa — el costo sigue el camino ya existente de domicilio manual
-  (`message_advisor` + `set_manual_delivery_cost`, mismo mecanismo que un municipio desconocido),
-  así que `finalize_checkout`, el estado `ask_delivery_cost` y la recuperación por timer de
-  horario (`timers::expire_business_hours_timer_with_source`) se reusan sin cambios.
+  No calcula tarifa: `finalize_checkout` entrega el caso a un humano (`DeliveryQuote`, mismo
+  mecanismo que un municipio desconocido), que cotiza y cierra la venta por el chat.
 - El resultado de la tool trae el aviso obligatorio de "llega descongelado" en el texto que el
   modelo debe repetirle al cliente — reforzado también como regla dura en `SYSTEM_PROMPT`, para
   que no dependa solo de que el modelo la recuerde.

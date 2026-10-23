@@ -19,9 +19,9 @@ use granizado_bot::{
     bot::state_machine::UserInput,
     bot::timers::new_timer_map,
     config::Config,
-    db::queries::get_conversation,
-    engine::{process_customer_input, process_resume_for_case},
-    messages::{client_messages, set_client_messages, ClientMessages},
+    db::queries::{create_conversation, get_conversation},
+    engine::{process_customer_input, return_case_to_bot},
+    messages::{set_client_messages, ClientMessages},
     whatsapp::client::WhatsAppClient,
     AppState,
 };
@@ -117,72 +117,73 @@ async fn agent_failure_does_not_propagate_or_change_state() {
     );
 }
 
-/// Regresión: `degrade_agent_failure` solía notificar al cliente SOLO cuando
-/// el turno que falló era del cliente. Si el turno que fallaba era el del
-/// recuperación (el asesor devuelve la conversación desde `crm-app` tras un
-/// handoff), el cliente se quedaba sin ningún mensaje nuevo — el caso de
-/// Santiago (573136356011) en producción el 2026-08-03. Este test cubre justo
-/// ese camino: un turno de recuperación que falla también debe dejar el mensaje
-/// fijo de `llm_failure_customer` en la fila del cliente.
+/// Devolver un caso al bot no corre el modelo ni le escribe al cliente: deja el
+/// carrito que tenía como pedido en Pendientes y arranca de cero. Regresión del
+/// pedido 47 (2026-10-20): el turno de recuperación que existía antes le
+/// confirmó a las 8:00 a un cliente un pedido que el asesor ya había entregado.
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL and a reachable PostgreSQL instance"]
-async fn resume_turn_failure_still_notifies_the_customer() {
+async fn returning_a_case_starts_from_scratch_and_parks_the_cart_in_pendientes() {
     let state = setup_state().await;
     let phone = unique_phone();
 
-    // Primer mensaje: solo dispara el saludo fijo (sin LLM), deja
-    // `has_greeted = true` para que el segundo mensaje sí entre al agente.
-    process_customer_input(
-        state.clone(),
-        phone.clone(),
-        Some("Cliente Prueba".to_string()),
-        None,
-        None,
-        UserInput::TextMessage("Hola".to_string()),
-    )
-    .await
-    .expect("welcome turn should not fail");
-
-    // Segundo mensaje del cliente: ahora sí llama al LLM (credenciales de
-    // prueba inválidas), falla y degrada — turn_actor == "customer".
-    process_customer_input(
-        state.clone(),
-        phone.clone(),
-        Some("Cliente Prueba".to_string()),
-        None,
-        None,
-        UserInput::TextMessage("Quiero un granizado".to_string()),
-    )
-    .await
-    .expect("degradation path should not propagate the agent error");
-
-    // El asesor devuelve la conversación al bot desde crm-app: el turno de
-    // recuperación también pasa por el motor de agente, también falla con las
-    // mismas credenciales de prueba, y turn_actor == "resume" esta vez.
-    process_resume_for_case(&state, &phone)
+    create_conversation(&state.pool, &phone)
         .await
-        .expect("resume degradation path should not propagate the agent error");
+        .expect("create conversation");
 
-    let fallback_body = client_messages().agent.llm_failure_customer.clone();
-    let client_fallback_count: i64 = sqlx::query_scalar(
+    sqlx::query(
         r#"
-        SELECT COUNT(*)
-        FROM message_events
-        WHERE case_phone = $1
-          AND channel = 'client'
-          AND actor = 'bot'
-          AND body = $2
+        UPDATE conversations
+        SET state_data = state_data || jsonb_build_object(
+              'items', jsonb_build_array(jsonb_build_object(
+                'flavor', 'Uva Vodka', 'has_liquor', true, 'quantity', 2)),
+              'delivery_type', 'immediate',
+              'handoff_reason', 'unreadable_media'),
+            human_takeover_until = NOW() - INTERVAL '1 minute'
+        WHERE phone_number = $1
         "#,
     )
     .bind(&phone)
-    .bind(&fallback_body)
+    .execute(&state.pool)
+    .await
+    .expect("seed a cart in handoff");
+
+    let client_messages_before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM message_events WHERE case_phone = $1 AND channel = 'client'",
+    )
+    .bind(&phone)
     .fetch_one(&state.pool)
     .await
-    .expect("query message_events");
+    .expect("count client messages");
 
-    assert_eq!(
-        client_fallback_count, 2,
-        "the customer must get the generic fallback for BOTH the customer-turn \
-         failure and the resume-turn failure — not just the first one"
-    );
+    return_case_to_bot(&state, &phone, "test")
+        .await
+        .expect("returning the case should not fail");
+
+    let conversation = get_conversation(&state.pool, &phone)
+        .await
+        .expect("query conversation")
+        .expect("conversation exists");
+    assert_eq!(conversation.state, "main_menu");
+    assert!(conversation.state_data.0.items.is_empty());
+    assert!(conversation.state_data.0.handoff_reason.is_none());
+    assert!(conversation.human_takeover_until.is_none());
+
+    let parked: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM orders WHERE conversation_id = $1 AND status = 'pending_advisor'",
+    )
+    .bind(conversation.id)
+    .fetch_one(&state.pool)
+    .await
+    .expect("count parked orders");
+    assert_eq!(parked, 1, "the cart must land in Pendientes");
+
+    let client_messages_after: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM message_events WHERE case_phone = $1 AND channel = 'client'",
+    )
+    .bind(&phone)
+    .fetch_one(&state.pool)
+    .await
+    .expect("count client messages");
+    assert_eq!(client_messages_after, client_messages_before, "nothing goes to the customer");
 }

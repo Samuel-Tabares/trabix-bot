@@ -20,8 +20,8 @@ use crate::{
     db::{
         models::{ConversationStateData, HandoffReason},
         queries::{
-            clear_human_takeover, get_conversation, list_active_timer_conversations,
-            list_expired_handoffs, set_human_takeover, update_state,
+            get_conversation, list_active_timer_conversations, list_expired_handoffs,
+            update_state,
         },
     },
     engine::send_timer_actions as dispatch_timer_actions,
@@ -248,49 +248,23 @@ pub async fn sweep_expired_timers(state: AppState) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Retoma los handoffs que nadie devolvió. La ventana de toma de control vence
-/// sola a las `ADVISOR_TAKEOVER_HOURS` (6 por defecto); si el asesor atendió el
-/// caso y se olvidó de pulsar "Devolver al bot", sin esto el pedido se quedaría
-/// sin cotizar o sin confirmar para siempre — y con él toda la contabilidad que
-/// cuelga de `confirm_order_bookkeeping`.
+/// Devuelve al bot los handoffs que nadie devolvió. La ventana de toma de
+/// control vence sola a las `ADVISOR_TAKEOVER_HOURS` (6 por defecto) desde el
+/// último mensaje del asesor. Es lo mismo que el botón "Devolver al bot": el bot
+/// empieza de cero sin escribirle a nadie (`engine::return_case_to_bot`), así
+/// que puede correr a cualquier hora.
 ///
 /// Solo toca los casos con `state_data.handoff_reason` puesto: una toma de
 /// control que un humano inició por su cuenta (escribirle al cliente sin que el
-/// bot lo pidiera) no tiene nada que retomar.
-///
-/// Fuera de horario no se retoma: el turno de recuperación puede escribirle al
-/// cliente y no se le escribe a nadie a las 23:05 ni a las 3:00. La ventana se
-/// corre hasta la próxima apertura; mientras tanto lo que escriba el cliente
-/// queda en la bandeja y entra al transcript que el bot lee al retomar.
+/// bot lo pidiera) no tiene nada que devolver.
 pub async fn sweep_expired_handoffs(state: AppState) -> Result<(), sqlx::Error> {
-    let expired = list_expired_handoffs(&state.pool).await?;
-    if !expired.is_empty() && !crate::ai::tools::check_business_hours().is_open {
-        let opening = crate::bot::states::scheduling::next_business_opening_utc(Utc::now());
-        for phone_number in expired {
-            tracing::info!(
+    for phone_number in list_expired_handoffs(&state.pool).await? {
+        if let Err(err) = crate::engine::return_case_to_bot(&state, &phone_number, "sweep").await {
+            tracing::error!(
                 phone = %mask_phone(&phone_number),
-                resume_at = %opening,
-                "handoff window expired outside business hours; resuming at opening"
+                error = %err,
+                "failed to return an expired handoff to the bot"
             );
-            set_human_takeover(&state.pool, &phone_number, opening).await?;
-        }
-        return Ok(());
-    }
-
-    for phone_number in expired {
-        tracing::info!(
-            phone = %mask_phone(&phone_number),
-            source = "sweep",
-            "handoff window expired without an explicit release; resuming the case"
-        );
-
-        if let Err(err) = clear_human_takeover(&state.pool, &phone_number).await {
-            tracing::error!(error = %err, "failed to clear the expired takeover window");
-            continue;
-        }
-
-        if let Err(err) = crate::engine::process_resume_for_case(&state, &phone_number).await {
-            tracing::error!(error = %err, "failed to resume the case after an expired handoff");
         }
     }
 

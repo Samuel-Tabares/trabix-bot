@@ -158,16 +158,21 @@ pub async fn update_customer_data(
     Ok(())
 }
 
-/// Como `create_or_update_customer`, pero sin contar como contacto del cliente:
-/// lo usa el turno de recuperación, que corre sin que el cliente escriba.
-pub async fn update_customer_identity(
+/// Corrección manual del contacto desde `crm-app`. Escribe en `customers` (lo
+/// que ve la consola) y en `conversations` (lo que usa el bot en el próximo
+/// pedido), así el dato corregido no se pisa en el siguiente turno. Un campo en
+/// `None` no se toca. Devuelve `false` si ese número no tiene ni contacto ni
+/// conversación.
+pub async fn update_customer_contact(
     pool: &PgPool,
-    phone_number_meta: &str,
-    customer_name_manual: Option<&str>,
-    phone_number_manual: Option<&str>,
-    delivery_address_last: Option<&str>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    phone_number: &str,
+    name: Option<&str>,
+    phone: Option<&str>,
+    address: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    let customers = sqlx::query(
         r#"
         UPDATE customers
         SET customer_name_manual = COALESCE($2, customer_name_manual),
@@ -177,14 +182,33 @@ pub async fn update_customer_identity(
         WHERE phone_number_meta = $1
         "#,
     )
-    .bind(phone_number_meta)
-    .bind(customer_name_manual)
-    .bind(phone_number_manual)
-    .bind(delivery_address_last)
-    .execute(pool)
-    .await?;
+    .bind(phone_number)
+    .bind(name)
+    .bind(phone)
+    .bind(address)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
 
-    Ok(())
+    let conversations = sqlx::query(
+        r#"
+        UPDATE conversations
+        SET customer_name = COALESCE($2, customer_name),
+            customer_phone = COALESCE($3, customer_phone),
+            delivery_address = COALESCE($4, delivery_address)
+        WHERE phone_number = $1
+        "#,
+    )
+    .bind(phone_number)
+    .bind(name)
+    .bind(phone)
+    .bind(address)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+
+    tx.commit().await?;
+    Ok(customers + conversations > 0)
 }
 
 pub async fn update_last_message(pool: &PgPool, phone_number: &str) -> Result<(), sqlx::Error> {
@@ -976,9 +1000,10 @@ pub async fn record_delivery_status(
 #[cfg(test)]
 mod tests {
     use super::{
-        add_order_item, create_conversation, create_order, get_conversation, list_conversations,
-        list_order_items, list_orders, record_delivery_status, record_message_event,
-        reset_conversation, update_customer_data, update_state,
+        add_order_item, create_conversation, create_or_update_customer, create_order,
+        get_conversation, get_customer, list_conversations, list_order_items, list_orders,
+        record_delivery_status, record_message_event, reset_conversation, update_customer_contact,
+        update_customer_data, update_state,
     };
     use crate::db::models::ConversationStateData;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1044,6 +1069,41 @@ mod tests {
             loaded.state_data.0.delivery_type.as_deref(),
             Some("immediate")
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL and a reachable PostgreSQL instance"]
+    async fn editing_a_contact_updates_the_console_and_the_next_order() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .expect("TEST_DATABASE_URL must be set for ignored DB tests");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect(&database_url)
+            .await
+            .expect("db connection");
+        sqlx::migrate!().run(&pool).await.expect("migrations");
+        let suffix = unique_suffix();
+        let phone_owned = format!("5730{}", &suffix[suffix.len() - 8..]);
+        let phone = phone_owned.as_str();
+        create_conversation(&pool, phone).await.expect("create conversation");
+        create_or_update_customer(&pool, phone, None, Some("."), None, None, None, None)
+            .await
+            .expect("create customer");
+
+        let found = update_customer_contact(&pool, phone, Some("Andrés Hurtado"), None, Some("Unicentro"))
+            .await
+            .expect("update contact");
+        assert!(found);
+
+        let customer = get_customer(&pool, phone).await.expect("get customer").expect("customer");
+        assert_eq!(customer.customer_name_manual.as_deref(), Some("Andrés Hurtado"));
+        assert_eq!(customer.customer_name_meta.as_deref(), Some("."));
+        assert_eq!(customer.delivery_address_last.as_deref(), Some("Unicentro"));
+        let conversation = get_conversation(&pool, phone).await.expect("get").expect("conversation");
+        assert_eq!(conversation.customer_name.as_deref(), Some("Andrés Hurtado"));
+
+        assert!(!update_customer_contact(&pool, "573000000001", Some("Nadie"), None, None)
+            .await
+            .expect("update unknown"));
     }
 
     #[tokio::test]
