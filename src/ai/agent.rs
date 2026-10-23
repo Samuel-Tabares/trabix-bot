@@ -427,6 +427,11 @@ pub async fn run_resume_turn(
          pago quedó verificado, dirección, nombre, cantidades, con o sin licor).\n\
          2. Llama las tools que correspondan para dejar el pedido al día. Si un dato no aparece \
          de forma clara y explícita en lo que se dijo, NO lo inventes ni lo asumas.\n\
+         Si el asesor ya CERRÓ la venta a mano (acordó el total y el método de pago, o el \
+         pedido ya salió o ya se entregó), regístrala tal cual: finalize_checkout y luego \
+         set_payment_method con el método acordado. Eso deja el pedido en Pendientes para que \
+         el asesor lo acepte. En ese caso NO le escribas nada al cliente: ya fue atendido. Si el \
+         cliente al final no compró, llama cancel_order.\n\
          3. Si quedó algo pendiente del PEDIDO, continúa la conversación con el cliente desde \
          donde la dejó el asesor: no repitas lo que él ya dijo, no vuelvas a saludar y no le pidas \
          de nuevo algo que ya entregó. Si el handoff no era de un pedido (el cliente pidió hablar \
@@ -673,7 +678,11 @@ async fn run_case_turn(
         .map(|(next_state, _)| next_state)
         .unwrap_or_else(|| current_state.clone());
 
-    let known_amounts = known_tool_amounts(&history);
+    let mut known_amounts = known_tool_amounts(&history);
+    // Las cifras del resumen del caso las calcula el código (precios, domicilio
+    // y total), no el modelo. Sin esto, el aviso determinista "🌙 Pedido
+    // inmediato fuera de horario" salió bloqueado por mencionar su propio total.
+    known_amounts.extend(extract_currency_amounts(&advisor_case_summary(context)));
     let mut blocked_amounts: Vec<String> = Vec::new();
     for action in actions.iter_mut() {
         match action {
@@ -1545,7 +1554,7 @@ fn dispatch_tool(
                 actions,
             )
         }
-        "finalize_checkout" => finalize_checkout(id, context),
+        "finalize_checkout" => finalize_checkout(id, context, turn_kind),
         "set_payment_method" => {
             // El pedido tiene que estar aceptado (estado persistido antes de
             // este turno = select_payment_method, o wait_receipt si está
@@ -2198,7 +2207,7 @@ fn set_manual_delivery_cost(
     // solo si hay horario abierto ahora mismo (ver `can_auto_accept`). Si
     // todavía no hay pedido (se está resolviendo la zona antes de
     // finalize_checkout), solo se guarda el costo y el flujo normal continúa.
-    if can_auto_accept(context) && context.current_order_id.is_some() {
+    if can_auto_accept(context, TurnKind::Resume) && context.current_order_id.is_some() {
         // El aviso con el total se manda determinísticamente, no se le deja al
         // modelo. Encontrado en vivo dos veces: el 2026-08-12 y otra vez con el
         // cliente Graja el 2026-09-11, el modelo escribió la confirmación como
@@ -2501,7 +2510,11 @@ fn send_options_list(id: &str, input: &Value, context: &ConversationContext) -> 
     )
 }
 
-fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome {
+fn finalize_checkout(
+    id: &str,
+    context: &mut ConversationContext,
+    turn_kind: TurnKind,
+) -> ToolOutcome {
     // Un pedido ya confirmado no se vuelve a confirmar (evita la orden
     // duplicada del hallazgo A). Para cambiarlo hay que reabrirlo
     // explícitamente; para uno aparte, empezar uno nuevo.
@@ -2557,7 +2570,7 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
     // ver docs/canary-fixes-2026-07-19.md #4/D) o INMEDIATO con horario de
     // atención abierto ahora mismo. Un inmediato fuera de horario no se
     // rechaza ni se autoacepta: queda esperando a que abramos.
-    if !can_auto_accept(context) {
+    if !can_auto_accept(context, turn_kind) {
         return wait_for_business_hours(id, context);
     }
     if let Some(delivery_cost) = context.delivery_cost {
@@ -2641,8 +2654,16 @@ fn compute_total_final(context: &ConversationContext, delivery_cost: i32) -> i32
 /// docs/canary-fixes-2026-07-19.md #4/D), y pedidos INMEDIATOS solo si hay
 /// horario de atención abierto ahora mismo (fuera de horario van por
 /// `wait_for_business_hours` en su lugar).
-fn can_auto_accept(context: &ConversationContext) -> bool {
-    context.delivery_type.as_deref() == Some("scheduled") || tools::check_business_hours().is_open
+///
+/// Al retomar un handoff no se mira el horario: un humano ya atendió el caso,
+/// así que la disponibilidad está resuelta. Sin esto, un handoff que vencía a
+/// las 23:05 dejaba el pedido esperando a abrir y a las 8:00 el sweep le
+/// escribía "¡Ya abrimos! Tu pedido quedó confirmado" a un cliente que lo
+/// había recibido la tarde anterior (Andrés Hurtado, pedido 47, 2026-10-20).
+fn can_auto_accept(context: &ConversationContext, turn_kind: TurnKind) -> bool {
+    turn_kind == TurnKind::Resume
+        || context.delivery_type.as_deref() == Some("scheduled")
+        || tools::check_business_hours().is_open
 }
 
 /// Autoacepta un pedido (programado, o inmediato con horario abierto) apenas
@@ -3080,6 +3101,12 @@ fn normalize_whatsapp_markdown(body: &str) -> String {
 /// Devuelve el texto a enviar y las cifras que se bloquearon (vacio = no se
 /// bloqueo nada). El llamador usa esa lista para entregar el caso a un humano:
 /// antes solo se registraba un `warn` y el cliente quedaba esperando.
+///
+/// Al asesor nunca se le oculta la nota: el guard existe para que el modelo no
+/// le prometa al CLIENTE una cifra inventada. Reemplazarle la nota al asesor lo
+/// dejaba ciego justo cuando el turno de recuperación le reporta con qué cifras
+/// se quedó — que salen del chat, no de una tool, y por eso se bloqueaban
+/// siempre. Ahí la nota sale completa con las cifras marcadas para revisar.
 fn sanitize_hallucinated_amounts(
     body: &str,
     known_amounts: &std::collections::HashSet<String>,
@@ -3109,7 +3136,10 @@ fn sanitize_hallucinated_amounts(
     // NotifyAdvisor cuando el disparo era `message_advisor`, lo cual no
     // tiene sentido ahí.
     let replacement = if is_advisor {
-        "(mensaje bloqueado: mencionaba una cifra no verificada)".to_string()
+        format!(
+            "{body}\n\n⚠️ Cifras que el bot no pudo verificar con una herramienta (revísalas): {}",
+            blocked.join(", ")
+        )
     } else {
         "Déjame confirmar ese valor con alguien del equipo 🙏 En un momento te escriben por aquí \
          mismo."
@@ -3616,15 +3646,47 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_uses_advisor_appropriate_wording_when_blocked() {
+    fn sanitize_flags_unverified_amounts_to_the_advisor_without_hiding_the_note() {
         let known = std::collections::HashSet::new();
-        let body = "Confírmale que el total es $925.000";
+        let body = "Retomé el caso: domicilio $8.000, total $20.000";
         let (sanitized, blocked) = sanitize_hallucinated_amounts(body, &known, "3000000000", true);
-        assert_ne!(sanitized, body);
-        assert!(!sanitized.contains('$'));
-        assert!(!blocked.is_empty());
+        assert!(sanitized.starts_with(body));
+        assert!(sanitized.contains("revísalas"));
+        assert_eq!(blocked, vec!["$8.000".to_string(), "$20.000".to_string()]);
         // No debe sonar como si le habláramos al cliente en segunda persona.
         assert!(!sanitized.to_lowercase().contains("tu pedido"));
+    }
+
+    /// El total del resumen lo calcula el código: el aviso de "fuera de
+    /// horario" salía bloqueado por mencionarlo (pedido 47, 2026-10-19).
+    #[test]
+    fn amounts_in_the_case_summary_count_as_verified() {
+        let mut context = test_context();
+        context.delivery_cost = Some(8_000);
+        let summary = advisor_case_summary(&context);
+        let known: std::collections::HashSet<String> =
+            extract_currency_amounts(&summary).into_iter().collect();
+        let (sanitized, blocked) = sanitize_hallucinated_amounts(&summary, &known, "3000000000", true);
+        assert_eq!(sanitized, summary);
+        assert!(blocked.is_empty());
+    }
+
+    /// Al retomar un handoff ya hubo un humano: el pedido no se deja esperando
+    /// a que abramos aunque sea de noche.
+    #[test]
+    fn a_resume_turn_never_parks_the_order_until_opening() {
+        let mut context = test_context();
+        context.delivery_type = Some("immediate".to_string());
+        context.delivery_cost = Some(8_000);
+
+        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Resume);
+
+        match outcome {
+            ToolOutcome::ResultWithStateChange(_, next_state, _) => {
+                assert_eq!(next_state, ConversationState::SelectPaymentMethod);
+            }
+            _ => panic!("expected a state change"),
+        }
     }
 
     /// El texto de reemplazo ya no puede prometer que "el bot va a reintentar"
@@ -4000,7 +4062,7 @@ mod tests {
         let mut context = test_context();
         context.delivery_cost = Some(15_000);
 
-        let outcome = finalize_checkout("id_1", &mut context);
+        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
 
         match outcome {
             ToolOutcome::ResultWithStateChange(block, next_state, actions) => {
@@ -4027,7 +4089,7 @@ mod tests {
         let mut context = test_context();
         context.delivery_cost = None;
 
-        let outcome = finalize_checkout("id_1", &mut context);
+        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
 
         match outcome {
             ToolOutcome::ResultWithStateChange(block, next_state, actions) => {
@@ -4074,7 +4136,7 @@ mod tests {
         context.delivery_cost = Some(15_000);
         let is_open = tools::check_business_hours().is_open;
 
-        let outcome = finalize_checkout("id_1", &mut context);
+        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
 
         match outcome {
             ToolOutcome::ResultWithStateChange(block, next_state, actions) => {
@@ -4211,7 +4273,7 @@ mod tests {
         let (_, is_error) = set_delivery_national(&json!({ "city": "Cali" }), &mut context);
         assert!(!is_error);
 
-        let outcome = finalize_checkout("id_1", &mut context);
+        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
 
         match outcome {
             ToolOutcome::ResultWithStateChange(_, next_state, actions) => {
@@ -4298,7 +4360,7 @@ mod tests {
         }];
         assert!(!context.referral_prompt_resolved);
 
-        let outcome = finalize_checkout("id_1", &mut context);
+        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
 
         match outcome {
             ToolOutcome::Result(ContentBlock::ToolResult {
@@ -4335,7 +4397,7 @@ mod tests {
         assert!(context.referral_prompt_resolved);
 
         // Ya no bloquea: el programado con domicilio conocido se autoacepta.
-        let outcome = finalize_checkout("id_1", &mut context);
+        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
         assert!(matches!(
             outcome,
             ToolOutcome::ResultWithStateChange(_, ConversationState::SelectPaymentMethod, _)
@@ -4359,7 +4421,7 @@ mod tests {
             has_liquor: true,
             quantity: 3,
         }];
-        let outcome = finalize_checkout("id_1", &mut context);
+        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
         assert!(matches!(
             outcome,
             ToolOutcome::ResultWithStateChange(_, ConversationState::SelectPaymentMethod, _)
@@ -4593,7 +4655,7 @@ mod tests {
         context.current_order_id = Some(31);
         context.order_confirmed = true;
 
-        let outcome = finalize_checkout("id_1", &mut context);
+        let outcome = finalize_checkout("id_1", &mut context, TurnKind::Customer);
 
         match outcome {
             ToolOutcome::Result(ContentBlock::ToolResult {

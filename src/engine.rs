@@ -24,7 +24,7 @@ use crate::{
         models::{Conversation, ConversationStateData},
         queries::{
             create_conversation, create_order, create_or_update_customer, create_or_update_referral_analytics, get_conversation, get_customer_notes, list_customer_addresses, replace_order_items,
-            reset_conversation, touch_customer_address, update_customer_data, update_customer_notes, update_customer_totals, update_last_message, update_order,
+            reset_conversation, touch_customer_address, update_customer_data, update_customer_identity, update_customer_notes, update_customer_totals, update_last_message, update_order,
             update_order_delivery_cost, update_order_status, update_state, upsert_customer_address,
         },
     },
@@ -95,7 +95,18 @@ pub async fn process_customer_input(
         }
     }
 
-    let (current_state, mut context) = rehydrate_client_conversation(&state, &conversation).await?;
+    let (mut current_state, mut context) =
+        rehydrate_client_conversation(&state, &conversation).await?;
+    if is_abandoned_draft(&current_state, &context, conversation.last_message_at, Utc::now()) {
+        tracing::info!(
+            phone = %mask_phone(&phone),
+            from_state = %current_state.as_storage_key(),
+            order_id = ?context.current_order_id,
+            "discarding an abandoned unconfirmed order before the customer's turn"
+        );
+        context.start_new_order();
+        current_state = ConversationState::MainMenu;
+    }
     let seeded = seed_customer_data(&mut context, &phone, profile_name.as_deref());
     if seeded.seeded_phone || seeded.seeded_name {
         tracing::debug!(
@@ -225,6 +236,8 @@ pub async fn process_customer_input(
 // Best-effort append-only log of every message so the CRM can replay the full
 // flow: the customer<->bot lane ("client") and the internal bot<->advisor lane
 // ("advisor"). Logging failures never block delivery.
+
+const ABANDONED_DRAFT_HOURS: i64 = 48;
 
 const CHANNEL_CLIENT: &str = "client";
 const CHANNEL_ADVISOR: &str = "advisor";
@@ -478,6 +491,18 @@ pub async fn process_resume_for_case(
         &target_phone,
         context.customer_name.as_deref(),
         context.customer_phone.as_deref(),
+        context.delivery_address.as_deref(),
+    )
+    .await?;
+
+    // Lo que el cliente le dio al asesor durante el handoff (nombre, dirección)
+    // solo lo recoge este turno. Sin esto el contacto quedaba en crm-app con el
+    // nombre del perfil de WhatsApp — un "." en el caso de Andrés Hurtado.
+    update_customer_identity(
+        &state.pool,
+        &target_phone,
+        manual_override(context.customer_name.as_deref(), context.meta_customer_name.as_deref()),
+        manual_override(context.customer_phone.as_deref(), context.meta_customer_phone.as_deref()),
         context.delivery_address.as_deref(),
     )
     .await?;
@@ -849,17 +874,15 @@ pub async fn execute_actions(
                                     tracing::error!(error = %err, "failed to expire receipt timer");
                                 }
                             }
+                            // Nunca se arma por StartTimer: lo resuelve el sweep de 60s
+                            // (`timers::sweep_expired_timers`). Llamarlo desde acá haría
+                            // un ciclo async con `execute_actions`, que es por donde ese
+                            // camino ejecuta sus acciones.
                             TimerType::BusinessHoursReopen => {
-                                if let Err(err) = crate::bot::timers::expire_business_hours_timer(
-                                    app_state, phone,
-                                )
-                                .await
-                                {
-                                    tracing::error!(
-                                        error = %err,
-                                        "failed to expire business hours timer"
-                                    );
-                                }
+                                let _ = (app_state, phone);
+                                tracing::warn!(
+                                    "business hours reopen is resolved by the sweep, not by StartTimer"
+                                );
                             }
                         }
                     },
@@ -1076,6 +1099,35 @@ fn is_agent_owned_state(state: &ConversationState) -> bool {
             | ConversationState::ContactAdvisorPhone
             | ConversationState::LeaveMessage
     )
+}
+
+/// Un pedido sin confirmar que lleva días quieto es un carrito abandonado. Si el
+/// cliente vuelve, se le atiende desde cero: antes el bot retomaba el estado
+/// viejo y le preguntaba cómo iba a pagar un pedido de hace semanas (hay uno de
+/// julio en `select_payment_method` en producción). La fila del pedido no se
+/// toca; solo se suelta de la conversación.
+///
+/// No aplica cuando el caso espera a un humano (cotizar un envío, verificar un
+/// comprobante ya enviado, un handoff abierto): eso lo cierra el equipo.
+fn is_abandoned_draft(
+    current_state: &ConversationState,
+    context: &ConversationContext,
+    last_message_at: chrono::DateTime<Utc>,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    if now - last_message_at < chrono::Duration::hours(ABANDONED_DRAFT_HOURS) {
+        return false;
+    }
+    if context.order_confirmed
+        || context.handoff_reason.is_some()
+        || context.receipt_media_id.is_some()
+        || matches!(current_state, ConversationState::AskDeliveryCost)
+    {
+        return false;
+    }
+    !context.items.is_empty()
+        || context.current_order_id.is_some()
+        || !matches!(current_state, ConversationState::MainMenu)
 }
 
 fn should_use_agent(current_state: &ConversationState) -> bool {
@@ -1421,7 +1473,56 @@ fn schedule_values_for_persistence(context: &ConversationContext) -> PersistedSc
 
 #[cfg(test)]
 mod tests {
-    use crate::bot::state_machine::UserInput;
+    use crate::bot::state_machine::{ConversationContext, ConversationState, UserInput};
+    use crate::db::models::{ConversationStateData, OrderItemData};
+
+    fn draft_context() -> ConversationContext {
+        let mut context = ConversationContext::from_persisted(
+            "573001111111".to_string(),
+            "573009999999".to_string(),
+            None,
+            None,
+            None,
+            &ConversationStateData::default(),
+        );
+        context.items.push(OrderItemData {
+            flavor: "Uva Vodka".to_string(),
+            has_liquor: true,
+            quantity: 2,
+        });
+        context.current_order_id = Some(32);
+        context
+    }
+
+    #[test]
+    fn a_draft_left_for_days_is_discarded_but_a_recent_one_is_kept() {
+        let now = chrono::Utc::now();
+        let context = draft_context();
+        let state = ConversationState::SelectPaymentMethod;
+        assert!(super::is_abandoned_draft(&state, &context, now - chrono::Duration::days(3), now));
+        assert!(!super::is_abandoned_draft(&state, &context, now - chrono::Duration::hours(20), now));
+    }
+
+    #[test]
+    fn an_old_case_waiting_on_a_human_is_never_discarded() {
+        let now = chrono::Utc::now();
+        let old = now - chrono::Duration::days(5);
+
+        let mut confirmed = draft_context();
+        confirmed.order_confirmed = true;
+        assert!(!super::is_abandoned_draft(&ConversationState::MainMenu, &confirmed, old, now));
+
+        let mut paid = draft_context();
+        paid.receipt_media_id = Some("media".to_string());
+        assert!(!super::is_abandoned_draft(&ConversationState::WaitReceipt, &paid, old, now));
+
+        assert!(!super::is_abandoned_draft(
+            &ConversationState::AskDeliveryCost,
+            &draft_context(),
+            old,
+            now
+        ));
+    }
 
     #[test]
     fn channel_classification_splits_client_and_advisor_lanes() {

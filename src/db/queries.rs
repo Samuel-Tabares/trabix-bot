@@ -158,6 +158,35 @@ pub async fn update_customer_data(
     Ok(())
 }
 
+/// Como `create_or_update_customer`, pero sin contar como contacto del cliente:
+/// lo usa el turno de recuperación, que corre sin que el cliente escriba.
+pub async fn update_customer_identity(
+    pool: &PgPool,
+    phone_number_meta: &str,
+    customer_name_manual: Option<&str>,
+    phone_number_manual: Option<&str>,
+    delivery_address_last: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE customers
+        SET customer_name_manual = COALESCE($2, customer_name_manual),
+            phone_number_manual = COALESCE($3, phone_number_manual),
+            delivery_address_last = COALESCE($4, delivery_address_last),
+            updated_at = NOW()
+        WHERE phone_number_meta = $1
+        "#,
+    )
+    .bind(phone_number_meta)
+    .bind(customer_name_manual)
+    .bind(phone_number_manual)
+    .bind(delivery_address_last)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 pub async fn update_last_message(pool: &PgPool, phone_number: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"

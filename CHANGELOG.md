@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-10-23
+
+### Fixed
+
+- **El bot le escribió a un cliente a las 8:00 por un pedido que ya le habían entregado.** Andrés
+  Hurtado mandó una imagen a las 15:42 del 19 de octubre y el caso pasó a un humano, que le vendió
+  y le entregó a mano. Nadie pulsó "Devolver al bot", así que la ventana venció a las 23:05 (6h
+  después del último mensaje del asesor) y el turno de recuperación corrió con el negocio cerrado:
+  `finalize_checkout` dejó el pedido 47 esperando a abrir y a las 8:00 el sweep le mandó *"¡Ya
+  abrimos! Tu pedido quedó confirmado. Cuéntanos cómo prefieres pagar"*. Ahora:
+  - un turno de recuperación nunca deja el pedido en `wait_business_hours`: ya lo atendió un humano;
+  - una ventana de handoff que vence fuera de horario se retoma a la próxima apertura (8:00);
+  - el prompt de recuperación dice qué hacer cuando el asesor ya cerró la venta: registrarla con
+    `finalize_checkout` + `set_payment_method`, sin escribirle al cliente.
+- **La reapertura de las 8:00 no actualizaba el pedido.** Sus acciones iban por
+  `send_timer_actions`, que solo manda mensajes y descartaba en silencio la actualización de la
+  orden (`draft_payment`, domicilio, total) y el aviso al asesor. Ahora van por `execute_actions`.
+- **El contacto quedaba con el nombre del perfil de WhatsApp** (un "." en este caso) cuando el
+  cliente le daba su nombre al asesor durante un handoff: el turno de recuperación no escribía en
+  `customers`. Ahora sí (`update_customer_identity`, sin contar como contacto del cliente).
+- **El guard de cifras le ocultaba notas al asesor.** El reporte de recuperación, que por diseño
+  lleva cifras leídas del chat, salía como *"(mensaje bloqueado…)"*, y también el aviso
+  determinista de "fuera de horario" por mencionar su propio total. Al asesor ahora le llega la
+  nota completa con las cifras sin respaldo marcadas, y las cifras del resumen del caso cuentan como
+  verificadas.
+
+### Changed
+
+- **Un carrito sin confirmar con 48h quieto se descarta** cuando el cliente vuelve a escribir: se le
+  atiende desde cero en vez de retomar el estado viejo (había una conversación de julio esperando
+  método de pago). No aplica a casos que esperan a un humano.
+
 ## [1.34.0] - 2026-09-30
 
 ### Fixed

@@ -41,6 +41,18 @@
 >    al asesor que concluyo, porque lee cifras de dinero de un chat en prosa y una lectura mala tiene
 >    que verse de inmediato en Pendientes.
 >
+>    Desde v1.35.0: (a) si la ventana vence **fuera de horario**, el sweep no retoma — corre
+>    `human_takeover_until` a la proxima apertura (8:00) y retoma ahi; (b) en un turno de
+>    recuperacion `finalize_checkout` **nunca** deja el pedido en `wait_business_hours`, porque ya lo
+>    atendio un humano; (c) si el asesor ya cerro la venta a mano, el bot la registra
+>    (`finalize_checkout` + `set_payment_method`) sin escribirle al cliente, y queda en Pendientes
+>    para aceptarla; (d) el nombre y la direccion que el cliente le dio al asesor pasan a `customers`
+>    (`update_customer_identity`). Origen: pedido 47, Andres Hurtado, 2026-10-19/20.
+>
+>    El guard de cifras ya no le oculta notas al asesor: las manda completas con las cifras sin
+>    respaldo marcadas para revisar. Las cifras de `advisor_case_summary` (calculadas por codigo)
+>    cuentan como verificadas.
+>
 > Por que: en un turno de asesor el texto plano del modelo iba al asesor, no al cliente. El
 > 2026-09-11, con el cliente Graja, el "total $271.000" se quedo en el carril interno y el cliente
 > nunca lo vio. Detalle completo en `docs/internal_advisor_send.md`.
@@ -207,7 +219,9 @@ Correcciones del canary 2026-07-19 (`docs/canary-fixes-2026-07-19.md`):
     `check_business_hours().is_open` volvio a ser cierto (nuevo `TimerType::BusinessHoursReopen`,
     `timers::expire_business_hours_timer_with_source`): si el domicilio ya se conocia, autoacepta
     y avisa al cliente; si no, pasa a pedir el costo con el timer normal de 10 min (ya es horario
-    real). No hay duracion que trackear ni timer en vivo armado con `StartTimer` — el sweep ya
+    real). Desde v1.35.0 sus acciones corren por `engine::execute_actions`: antes iban por
+    `send_timer_actions`, que descartaba la actualizacion del pedido y el aviso al asesor, asi que el
+    cliente recibia "tu pedido quedo confirmado" con la orden todavia en `pending_advisor`. No hay duracion que trackear ni timer en vivo armado con `StartTimer` — el sweep ya
     corria cada 60s para los demas timers.
   - Fuera de alcance a proposito: destinos desconocidos (envio nacional). Siempre son `scheduled`,
     ya auto-aceptan al conocerse el costo via `set_manual_delivery_cost` y ya quedan visibles como
@@ -253,6 +267,10 @@ Correcciones del canary 2026-07-20 (resto del backlog de `docs/canary-fixes-2026
   vivo, y su tool-result ahora enumera los items que ya estan en el carrito (si el cliente dicta su
   lista completa de nuevo y el modelo solo agrega, quedan sumados — asi es como un pedido de 20
   unidades mostro un subtotal de 40).
+- CARRITO ABANDONADO (v1.35.0): si un pedido sin confirmar lleva 48h quieto
+  (`ABANDONED_DRAFT_HOURS`, `engine::is_abandoned_draft`) y el cliente vuelve a escribir, se atiende
+  desde cero (`start_new_order()`, estado `main_menu`). No aplica a casos que esperan a un humano
+  (cotizar envio, comprobante ya enviado, handoff abierto). La fila del pedido viejo no se toca.
 - UNA MODIFICACION VUELVE A PENDIENTES (v1.24.0): la `NotifyAdvisor` de un pedido MODIFICADO va con
   `requires_action: true`. `crm-app` filtra su cola por `order_dispatch`, que esta indexado por
   `order_id`; sin esto un pedido ya aceptado que cambia quedaba invisible en la consola y el asesor

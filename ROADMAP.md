@@ -445,6 +445,18 @@ habría dejado al bot mudo con ese cliente.
 
 ---
 
+### 10. Mensaje de las 8:00 a un cliente ya atendido (pedido 47) — CERRADO (2026-10-23, v1.35.0) · SIN DESPLEGAR
+
+Cadena real: handoff por imagen → venta y entrega hechas a mano → nadie pulsó "Devolver al bot" →
+la ventana venció a las 23:05 → el turno de recuperación dejó el pedido esperando a abrir → a las
+8:00 el bot le escribió al cliente "tu pedido quedó confirmado, ¿cómo pagas?". Arreglado en código
+(ver CHANGELOG 1.35.0). Pendiente:
+
+- Desplegar (`railway up --service trabix-bot`) y pushear.
+- Ver en vivo el primer handoff que venza de noche: el log debe decir `resuming at opening`.
+- Datos del caso: pedido 47 y la conversación de 573142933303 quedaron a medio camino (ver la nota
+  de cierre de la sesión).
+
 ## Definición de "listo" para cualquier cambio aquí
 
 `cargo check` + `cargo test` en verde · `CHANGELOG.md` actualizado · versión bumpeada en

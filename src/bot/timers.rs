@@ -21,7 +21,7 @@ use crate::{
         models::{ConversationStateData, HandoffReason},
         queries::{
             clear_human_takeover, get_conversation, list_active_timer_conversations,
-            list_expired_handoffs, update_state,
+            list_expired_handoffs, set_human_takeover, update_state,
         },
     },
     engine::send_timer_actions as dispatch_timer_actions,
@@ -257,8 +257,27 @@ pub async fn sweep_expired_timers(state: AppState) -> Result<(), sqlx::Error> {
 /// Solo toca los casos con `state_data.handoff_reason` puesto: una toma de
 /// control que un humano inició por su cuenta (escribirle al cliente sin que el
 /// bot lo pidiera) no tiene nada que retomar.
+///
+/// Fuera de horario no se retoma: el turno de recuperación puede escribirle al
+/// cliente y no se le escribe a nadie a las 23:05 ni a las 3:00. La ventana se
+/// corre hasta la próxima apertura; mientras tanto lo que escriba el cliente
+/// queda en la bandeja y entra al transcript que el bot lee al retomar.
 pub async fn sweep_expired_handoffs(state: AppState) -> Result<(), sqlx::Error> {
-    for phone_number in list_expired_handoffs(&state.pool).await? {
+    let expired = list_expired_handoffs(&state.pool).await?;
+    if !expired.is_empty() && !crate::ai::tools::check_business_hours().is_open {
+        let opening = crate::bot::states::scheduling::next_business_opening_utc(Utc::now());
+        for phone_number in expired {
+            tracing::info!(
+                phone = %mask_phone(&phone_number),
+                resume_at = %opening,
+                "handoff window expired outside business hours; resuming at opening"
+            );
+            set_human_takeover(&state.pool, &phone_number, opening).await?;
+        }
+        return Ok(());
+    }
+
+    for phone_number in expired {
         tracing::info!(
             phone = %mask_phone(&phone_number),
             source = "sweep",
@@ -502,17 +521,6 @@ async fn expire_receipt_timer_with_source(
     Ok(())
 }
 
-/// No se arma vía `BotAction::StartTimer` (`BusinessHoursReopen` no tiene
-/// duración fija, ver `timer_rule_for_start_timer`), pero se expone igual con
-/// el mismo shape que los demás `expire_*` para que `engine.rs` pueda cubrir
-/// el `match` exhaustivo de `TimerType` sin una rama muerta.
-pub async fn expire_business_hours_timer(
-    state: AppState,
-    phone_number: String,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    expire_business_hours_timer_with_source(state, phone_number, TimerSource::Runtime).await
-}
-
 /// Reabrimos apenas el sweep detecta que volvió a abrir (`timer_recovery`,
 /// caso `wait_business_hours`). Reusa `auto_accept_order_actions` (agent.rs)
 /// -- la MISMA lógica que usa el tool-call del agente para no duplicarla --
@@ -523,6 +531,8 @@ async fn expire_business_hours_timer_with_source(
     phone_number: String,
     source: TimerSource,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _case_lock = crate::lock_conversation(&state.conversation_locks, &phone_number).await;
+
     let Some(conversation) = get_conversation(&state.pool, &phone_number).await? else {
         return Ok(());
     };
@@ -592,14 +602,22 @@ async fn expire_business_hours_timer_with_source(
         (ConversationState::MainMenu, handoff_actions)
     };
 
-    update_state(
-        &state.pool,
-        &phone_number,
-        next_state.as_storage_key(),
-        &context.to_state_data(),
-    )
-    .await?;
-    dispatch_timer_actions(&state, &phone_number, &actions).await?;
+    // Por el ejecutor completo, no por `dispatch_timer_actions`: ese solo sabe
+    // mandar mensajes y descartaba en silencio la actualización del pedido y el
+    // aviso al asesor. Al cliente le llegaba "tu pedido quedó confirmado" con
+    // la orden todavía en `pending_advisor` y sin domicilio (pedido 47).
+    let execution =
+        crate::engine::execute_actions(&state, conversation.id, &mut context, &actions).await?;
+
+    if !execution.reset_requested {
+        update_state(
+            &state.pool,
+            &phone_number,
+            next_state.as_storage_key(),
+            &context.to_state_data(),
+        )
+        .await?;
+    }
 
     Ok(())
 }
