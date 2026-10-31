@@ -943,8 +943,9 @@ modelo leia el barrio y adivinaba. Con la misma direccion de Kall Diaz dijo nort
 Hoy hay dos caminos y solo dos:
 
 1. `resolve_armenia_address { address }` — resuelve contra `config/armenia_zones.toml` (515
-   barrios, geocodificados y cortados por las fronteras fisicas que definio Samuel; el TOML explica
-   el metodo) via `bot::armenia_zones::lookup_zone`. Normaliza
+   barrios y, desde v1.37.0, ~100 lugares de referencia —centros comerciales, clinicas, parques,
+   la terminal...— en `[referencias]`; geocodificados y cortados por las fronteras fisicas que
+   definio Samuel; el TOML explica el metodo) via `bot::armenia_zones::lookup_zone`. Normaliza
    minusculas/tildes/puntuacion y recorta prefijos genericos ("Barrio", "Conjunto Residencial",
    "Urbanizacion"...), y busca la ventana de palabras mas larga que coincida.
 2. `set_delivery_zone_armenia { sector }` — solo cuando el CLIENTE dijo la zona. Su palabra manda

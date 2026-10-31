@@ -352,8 +352,8 @@ patrones deterministas antes del LLM (piso, no se puede saltar) + contexto del s
 
 **Lo que queda abierto de esto:**
 
-- **Desplegado el 2026-09-22** (contenedor arriba 16:58 UTC). **Falta el E2E contra producción**:
-  los patrones nunca han corrido contra mensajes reales. Lo que hay son tests unitarios. Mínimo a probar desde el teléfono de Samuel:
+- **Desplegado el 2026-09-22** (contenedor arriba 16:58 UTC). **E2E contra producción hecho
+  (2026-10-30, Samuel desde su teléfono): todo funciona.** Lo que se probó:
   mandar una foto cualquiera (→ handoff + push + el adjunto abre desde la bandeja), escribir
   "quiero hablar con un asesor" (→ handoff), escribir "me interesa lo de emprender" (→ handoff con
   el mensaje de alianzas), mandar una nota de voz y un sticker (la nota escala, el sticker no), y
@@ -408,7 +408,7 @@ que es el caso que de verdad moría sin avisar. Decisión de Samuel, 2026-09-22.
   `resolve_armenia_address` una zona guardada que no le conste, así que debería autocorregirse en
   el próximo pedido de ese cliente — pero eso depende del modelo, no del código. Cerrarlo de raíz
   es un UPDATE de una fila, y es decisión de Samuel.
-- **Falta el E2E contra producción.** Mínimo: un pedido a una dirección con barrio conocido (que
+- **E2E contra producción hecho (2026-10-30, Samuel): todo funciona.** Se probó un pedido a una dirección con barrio conocido (que
   resuelva solo), uno con un nombre de conjunto que no esté en la tabla (que pregunte la zona), y
   verificar que un programado conserva su pedido si se pregunta por él después de la hora.
 - **Sin telemetría de cuántas veces pregunta.** Si la tabla resulta tener mala cobertura, el bot va
@@ -465,6 +465,22 @@ Pendiente:
   nota "↩️ El bot retomó la conversación…", sin ningún mensaje al cliente.
 - Los pedidos que pasan por handoff ya no mandan `Purchase` a la CAPI ni suman a los totales del
   cliente. Si pesa para la pauta, moverlo al "Aceptar" de Pendientes.
+
+### 11. Lugares de referencia en la tabla de zonas — CERRADO (2026-10-30, v1.37.0)
+
+Un cliente pidió "a Unicentro" y el bot le preguntó la zona: la tabla solo conocía barrios. Se
+agregaron ~100 nombres de lugares (`[referencias]` en `config/armenia_zones.toml`), ubicados en
+OpenStreetMap y proyectados sobre el mismo eje de los barrios. El script que generó la tabla
+original no quedó guardado; el eje se recuperó de las referencias de frontera de Samuel (Plaza
+Flora, Coliseo, Parque Cafetero y Granada caen a <20 m de su valor) y se verificó contra 383 de 392
+barrios.
+
+Abierto:
+
+- **24 nombres caen a menos de 150 m de una frontera** (centro histórico y zona del Coliseo/EAM);
+  el comentario de cada línea lo dice. Si Samuel conoce la zona real de alguno, se corrige ahí.
+- Cadenas con varias sedes (Éxito, D1, Olímpica, Carulla, Megacentro) **no** se agregaron: cada
+  sede cae en una zona distinta y el nombre solo no dice cuál.
 
 ## Definición de "listo" para cualquier cambio aquí
 

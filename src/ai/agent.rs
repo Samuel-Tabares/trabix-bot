@@ -156,8 +156,10 @@ DOMICILIO AUTOMÁTICO (resuelvelo tu siempre que una herramienta pueda):
 - Armenia: NUNCA deduzcas la zona de un barrio, un conjunto ni una dirección. No la sabes, y \
   adivinarla ya le cobró de menos a un cliente real durante tres semanas. Hay dos caminos y solo \
   dos:
-  · El cliente te dio una DIRECCIÓN → llama resolve_armenia_address con el texto completo. Si \
-    reconoce el barrio te fija el costo sola; si no lo reconoce o es ambiguo, te va a decir que le \
+  · El cliente te dio una DIRECCIÓN o un LUGAR DE REFERENCIA ("en Unicentro", "al lado del \
+    Estadio Centenario", "cerca de la Clínica Central") → llama resolve_armenia_address con el \
+    texto completo. La tabla conoce barrios y también centros comerciales, clínicas, parques, \
+    universidades y otros puntos de Armenia. Si reconoce el lugar te fija el costo sola; si no lo reconoce o es ambiguo, te va a decir que le \
     preguntes la zona al cliente. Hazlo, con esas palabras: "¿esa dirección queda al norte, en el \
     centro o al sur?".
   · El cliente DIJO la zona ("es en el sur", "norte de Armenia") → llama set_delivery_zone_armenia \
@@ -1748,14 +1750,14 @@ fn resolve_armenia_address(input: &Value, context: &mut ConversationContext) -> 
     match crate::bot::armenia_zones::lookup_zone(address) {
         crate::bot::armenia_zones::ZoneLookup::Resolved { zone, barrio } => {
             let (message, is_error) = apply_armenia_zone(zone, context);
-            (format!("Barrio reconocido: {barrio}. {message}"), is_error)
+            (format!("Lugar reconocido: {barrio}. {message}"), is_error)
         }
         crate::bot::armenia_zones::ZoneLookup::Ambiguous { barrio } => ask(format!(
             "'{barrio}' existe en más de una zona de Armenia, así que no se puede saber cuál es."
         )),
         crate::bot::armenia_zones::ZoneLookup::Unknown => ask(
-            "Esa dirección no tiene un barrio que yo reconozca (puede ser un conjunto, unos \
-             apartamentos o un nombre local)."
+            "Esa dirección no tiene un barrio ni un lugar de referencia que yo reconozca (puede \
+             ser un conjunto, unos apartamentos o un nombre local)."
                 .to_string(),
         ),
     }
@@ -2927,7 +2929,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "resolve_armenia_address".to_string(),
-            description: "Dada la dirección textual de un cliente en Armenia, resuelve su zona de tarifa contra la tabla oficial de barrios y fija el domicilio sola. Si el barrio no se reconoce o cae en dos zonas, te devuelve la orden de preguntarle la zona al cliente — nunca adivina. Llámala SIEMPRE que tengas una dirección de Armenia, antes que set_delivery_zone_armenia.".to_string(),
+            description: "Dada la dirección textual de un cliente en Armenia, o un lugar de referencia (centro comercial, clínica, parque, universidad, estadio...), resuelve su zona de tarifa contra la tabla de barrios y lugares de Armenia y fija el domicilio sola. Si el barrio no se reconoce o cae en dos zonas, te devuelve la orden de preguntarle la zona al cliente — nunca adivina. Llámala SIEMPRE que tengas una dirección de Armenia, antes que set_delivery_zone_armenia.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

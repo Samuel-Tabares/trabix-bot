@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-10-30
+
+### Added
+
+- **Lugares de referencia de Armenia en la tabla de zonas** (`[referencias]` en
+  `config/armenia_zones.toml`). Un cliente pidió "a Unicentro" y el bot tuvo que preguntarle la
+  zona porque solo conocía barrios. Ahora reconoce 100 nombres de unos 70 lugares —centros
+  comerciales (Unicentro, Portal del Quindío, Mocawa, Plaza Flora…), clínicas y hospitales,
+  universidades y colegios, estadios y coliseos, la terminal, la Plaza de Bolívar, parques— y cobra
+  la zona sin preguntar. Se ubicaron en OpenStreetMap y se proyectaron sobre el mismo eje de los
+  barrios, recuperado de las referencias de Samuel y verificado contra 383 de 392 barrios. Una
+  referencia nunca le cambia la zona a un barrio: si chocan, el bot pregunta.
+
+### Changed
+
+- El prompt y la descripción de `resolve_armenia_address` dicen que la herramienta también recibe
+  un lugar de referencia, no solo una dirección: sin eso el modelo no la llamaba con "a Unicentro".
+
 ## [1.36.0] - 2026-10-23
 
 ### Changed

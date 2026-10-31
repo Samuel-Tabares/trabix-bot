@@ -563,3 +563,129 @@ ambiguos = [
 "yulima ii" = "centro"  # c
 "yulima iii" = "centro"  # c
 "zuldemayda" = "sur"
+
+# Lugares de referencia: lo que la gente da en vez de una direccion ("a Unicentro",
+# "al lado del Estadio Centenario"). Se ubicaron en OpenStreetMap (2026-10-30) y se
+# proyectaron sobre el mismo eje de arriba, que se recupero de las referencias de
+# Samuel y coincide con la zona de 383 de 392 barrios de esta tabla. Los que caen a
+# menos de 150 m de una frontera lo dicen en el comentario: si alguno esta mal,
+# cambia su zona y listo. Una referencia nunca pisa un barrio: si el nombre ya
+# existe con otra zona, el bot pregunta.
+[referencias]
+# Centros comerciales
+"unicentro" = "centro"  # Unicentro Armenia, eje +1306
+"portal del quindio" = "norte"  # Portal del Quindío, eje +3502
+"cc portal" = "norte"  # Portal del Quindío, eje +3502
+"mocawa" = "norte"  # Mocawa Plaza, eje +2511
+"mocawa plaza" = "norte"  # Mocawa Plaza, eje +2511
+"plaza flora" = "norte"  # Plaza Flora, eje +1779, definido por Samuel
+"centenario mall" = "centro"  # Centenario Mall, eje +1196
+"florida mall" = "centro"  # Florida Mall, eje +213, a 134 m de la frontera
+"cc el eden" = "centro"  # El Edén, eje +246
+"centro comercial el eden" = "centro"  # El Edén, eje +246
+"cc altavista" = "centro"  # Centro Comercial Altavista, eje +228, a 149 m de la frontera
+"centro comercial altavista" = "centro"  # Centro Comercial Altavista, eje +228, a 149 m de la frontera
+"san andresito" = "centro"  # San Andresito El Diamante, eje +316
+"sanandresito" = "centro"  # San Andresito El Diamante, eje +316
+
+# Supermercados y mercados
+"super bulevar" = "centro"  # Super Bulevar, eje +1587, a 38 m de la frontera
+"mercar" = "sur"  # Mercar - Central Mayorista de Armenia, eje -3619
+"central mayorista" = "sur"  # Mercar - Central Mayorista de Armenia, eje -3619
+"plaza minorista" = "sur"  # Plaza de Mercado Minorista de Armenia, eje -291
+"galeria minorista" = "sur"  # Plaza de Mercado Minorista de Armenia, eje -291
+"placita campesina" = "centro"  # Placita Campesina, eje +422
+
+# Salud
+"hospital san juan de dios" = "norte"  # Hospital San Juan de Dios, eje +3231
+"san juan de dios" = "norte"  # Hospital San Juan de Dios, eje +3231
+"hospital del sur" = "sur"  # P. E. P. Hospital del Sur, eje -3608
+"clinica central" = "norte"  # Clínica Central del Quindío, eje +1989
+"clinica la sagrada familia" = "centro"  # Clínica La Sagrada Familia, eje +969
+"clinica sagrada familia" = "centro"  # Clínica La Sagrada Familia, eje +969
+"clinica del cafe" = "norte"  # Clínica del Café, eje +1915
+"avidanti" = "norte"  # Clínica Avidanti, eje +4095
+"clinica avidanti" = "norte"  # Clínica Avidanti, eje +4095
+"clinica el prado" = "norte"  # Clínica El Prado, eje +2075
+"clinica santa ana" = "sur"  # Clínica Santa Ana, eje -2498
+"clinica la providencia" = "norte"  # Clínica La Providencia, eje +2628
+"clinica providencia" = "norte"  # Clínica La Providencia, eje +2628
+"gomez arbelaez" = "norte"  # Clínica Gómez Arbeláez, eje +2055
+"clinica gomez arbelaez" = "norte"  # Clínica Gómez Arbeláez, eje +2055
+"clinica del parque" = "norte"  # Clínica del Parque, eje +1837
+"cruz roja" = "norte"  # Cruz Roja Hemocentro, eje +3712
+"hemocentro" = "norte"  # Cruz Roja Hemocentro, eje +3712
+
+# Educación
+"universidad del quindio" = "norte"  # Universidad del Quindío, eje +2659
+"uniquindio" = "norte"  # Universidad del Quindío, eje +2659
+"coliseo uniquindio" = "norte"  # Universidad del Quindío, eje +2659
+"universidad la gran colombia" = "centro"  # La Gran Colombia, eje +1150
+"la gran colombia universidad" = "centro"  # La Gran Colombia, eje +1150
+"uniremington" = "centro"  # UniRemington, eje +1224
+"universidad antonio narino" = "norte"  # Universidad Antonio Nariño, eje +5606
+"eam" = "centro"  # Escuela de Administración y Mercadotécnia del Quindío - Bloque A, eje +1598, a 27 m de la frontera
+"universidad eam" = "centro"  # Escuela de Administración y Mercadotécnia del Quindío - Bloque A, eje +1598, a 27 m de la frontera
+"cue alexander von humboldt" = "norte"  # CUE Alexander von Humboldt, eje +1708, a 83 m de la frontera
+"von humboldt" = "norte"  # CUE Alexander von Humboldt, eje +1708, a 83 m de la frontera
+"humboldt" = "norte"  # CUE Alexander von Humboldt, eje +1708, a 83 m de la frontera
+"sena agroindustrial" = "norte"  # SENA Centro Agroindustrial, eje +5457
+"sena centro de comercio" = "centro"  # SENA Centro de Comercio y Turismo, eje +1133
+"esap" = "centro"  # Escuela Superior de Administración Pública, eje +428
+"bellas artes" = "centro"  # Instituto de Bellas Artes, eje +138, a 59 m de la frontera
+"normal superior" = "sur"  # Escuela Normal Superior del Quindío, eje -100
+"inem" = "norte"  # INEM - José Celestino Mutis, eje +1863
+"colegio san jose" = "centro"  # Colegio San José, eje +113, a 34 m de la frontera
+"zakurayima" = "centro"  # Colegio Zakurayima, eje +756
+"colegio zakurayima" = "centro"  # Colegio Zakurayima, eje +756
+"liceo cervantes" = "centro"  # Liceo Cervantes Armenia, eje +1506, a 119 m de la frontera
+"bethlemitas" = "sur"  # Colegio del Sagrado Corazón de Jesús - Hermanas Bethlemitas, eje -171
+"colegio bethlemitas" = "sur"  # Colegio del Sagrado Corazón de Jesús - Hermanas Bethlemitas, eje -171
+
+# Deporte
+"estadio centenario" = "sur"  # Estadio Centenario, eje -3250
+"coliseo del cafe" = "norte"  # Coliseo del Café, eje +1615, a 10 m de la frontera, definido por Samuel
+"estadio san jose" = "sur"  # Parque de la Cultura Deportiva - Estadio San José, eje -381
+"complejo acuatico" = "sur"  # Complejo Acuático de Armenia, eje -5955
+"polideportivo el cafetero" = "sur"  # Polideportivo El Cafetero, eje -182
+"centro cultural el bosque" = "sur"  # Centro Cultural El Bosque, eje -159
+
+# Transporte y servicios
+"terminal" = "sur"  # Terminal de Transportes de Armenia, eje -1126
+"terminal de transportes" = "sur"  # Terminal de Transportes de Armenia, eje -1126
+"bomberos" = "norte"  # Cuerpo de Bomberos - Estación Central, eje +1617, a 8 m de la frontera, pegado al Coliseo del Cafe (norte)
+"estacion de bomberos" = "norte"  # Cuerpo de Bomberos - Estación Central, eje +1617, a 8 m de la frontera, pegado al Coliseo del Cafe (norte)
+"fuerte de carabineros" = "sur"  # Fuerte de Carabineros de Armenia, eje -3808
+"estacion de policia" = "sur"  # Estación de Policía Armenia, eje -2416
+"departamento de policia" = "norte"  # Departamento de Policía Quindío, eje +2300
+
+# Centro histórico y gobierno
+"plaza de bolivar" = "centro"  # Plaza de Bolívar, eje +128, a 49 m de la frontera
+"catedral" = "centro"  # Catedral La Inmaculada Concepción, eje +119, a 40 m de la frontera
+"gobernacion" = "centro"  # Centro Administrativo Departamental Ancizar López López, eje +190, a 111 m de la frontera
+"gobernacion del quindio" = "centro"  # Centro Administrativo Departamental Ancizar López López, eje +190, a 111 m de la frontera
+"cad" = "centro"  # Centro Administrativo Departamental Ancizar López López, eje +190, a 111 m de la frontera
+"palacio de justicia" = "centro"  # Palacio de Justicia - Fabio Calderón Botero, eje +127, a 48 m de la frontera
+"biblioteca jesus duque" = "centro"  # Biblioteca Jesús Duque Restrepo, eje +209, a 130 m de la frontera
+"casa museo musical" = "sur"  # Casa Museo Musical del Quindío, eje -540
+
+# Parques
+"parque de la vida" = "norte"  # Parque de La Vida, eje +2330
+"parque sucre" = "centro"  # Parque Antonio José de Sucre, eje +706
+"parque uribe" = "sur"  # Parque Rafael Uribe Uribe, eje -449
+"parque valencia" = "centro"  # Parque Guillermo León Valencia, eje +186, a 107 m de la frontera
+"parque la castellana" = "norte"  # Parque La Castellana, eje +2818
+"parque laureles" = "norte"  # Parque Laureles, eje +3470
+"parque de los suenos" = "centro"  # Parque de los Sueños, eje +389
+"parque los aborigenes" = "norte"  # Parque Los Aborigenes, eje +4086
+"aborigenes" = "norte"  # Parque Los Aborigenes, eje +4086
+"museo del oro" = "norte"  # Museo del Oro Quimbaya, eje +4954
+"museo quimbaya" = "norte"  # Museo del Oro Quimbaya, eje +4954
+
+# Otros
+"cine colombia" = "norte"  # Cine Colombia, eje +3476
+"cinemark" = "centro"  # Cinemark, eje +1291
+"hotel armenia" = "norte"  # Armenia Hotel, eje +2409
+"armenia hotel" = "norte"  # Armenia Hotel, eje +2409
+"hotel de la calle real" = "centro"  # Hotel de la Calle Real, eje +463
+"nutivara" = "centro"  # Club Hotel Nutivara, eje +165, a 86 m de la frontera

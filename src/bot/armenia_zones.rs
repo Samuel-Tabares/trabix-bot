@@ -48,6 +48,10 @@ struct ZonesFile {
     #[serde(default)]
     ambiguos: Vec<String>,
     barrios: HashMap<String, String>,
+    /// Lugares que la gente da en vez de una direccion ("a Unicentro", "al
+    /// lado del Estadio Centenario"). Mismo mecanismo que los barrios.
+    #[serde(default)]
+    referencias: HashMap<String, String>,
 }
 
 /// Que se pudo concluir de una direccion. `Ambiguous` y `Unknown` son
@@ -110,6 +114,26 @@ fn table() -> &'static ZoneTable {
             let zone = ArmeniaZone::from_text(zone_text)
                 .unwrap_or_else(|| panic!("zona invalida para '{barrio}': '{zone_text}'"));
             by_barrio.insert(key, vec![zone]);
+        }
+
+        // Una referencia nunca pisa un barrio: si el nombre ya existe con otra
+        // zona, queda ambiguo y se pregunta.
+        for (lugar, zone_text) in &parsed.referencias {
+            let key = normalize_place(lugar);
+            if key.is_empty() {
+                continue;
+            }
+            let zone = ArmeniaZone::from_text(zone_text)
+                .unwrap_or_else(|| panic!("zona invalida para '{lugar}': '{zone_text}'"));
+            match by_barrio.get(&key) {
+                Some(existing) if existing.as_slice() == [zone] => {}
+                Some(_) => {
+                    by_barrio.insert(key, Vec::new());
+                }
+                None => {
+                    by_barrio.insert(key, vec![zone]);
+                }
+            }
         }
 
         // Los ambiguos se cargan DESPUES y pisan cualquier zona: listar un
@@ -361,6 +385,45 @@ mod tests {
             lookup_zone("Parque Residencial Las Veraneras torre 2"),
             ZoneLookup::Ambiguous { .. }
         ));
+    }
+
+    /// El caso que origino las referencias: un cliente pidio "a Unicentro" y el
+    /// bot tuvo que preguntar la zona.
+    #[test]
+    fn landmarks_resolve_without_asking() {
+        for (address, expected) in [
+            ("en Unicentro", ArmeniaZone::Centro),
+            ("CC Portal del Quindío local 203", ArmeniaZone::Norte),
+            ("Mocawa", ArmeniaZone::Norte),
+            ("al lado del Estadio Centenario", ArmeniaZone::Sur),
+            ("frente a la Clínica Central", ArmeniaZone::Norte),
+            ("Plaza de Bolívar", ArmeniaZone::Centro),
+            ("en la terminal", ArmeniaZone::Sur),
+        ] {
+            match lookup_zone(address) {
+                ZoneLookup::Resolved { zone, .. } => assert_eq!(zone, expected, "{address}"),
+                other => panic!("{address}: {other:?}"),
+            }
+        }
+    }
+
+    /// Ninguna referencia puede cambiarle la zona a un barrio: si choca, gana
+    /// la pregunta, nunca la referencia.
+    #[test]
+    fn a_landmark_never_overrides_a_barrio() {
+        let parsed: ZonesFile = toml::from_str(ZONES_TOML).unwrap();
+        for (lugar, zone_text) in &parsed.referencias {
+            let key = normalize_place(lugar);
+            if let Some(barrio_zone) = parsed
+                .barrios
+                .iter()
+                .find(|(b, _)| normalize_place(b) == key)
+                .map(|(_, z)| z)
+            {
+                assert_eq!(barrio_zone, zone_text, "'{lugar}' choca con un barrio de otra zona");
+            }
+        }
+        assert!(parsed.referencias.len() >= 90, "se esperaban ~100 referencias");
     }
 
     #[test]
