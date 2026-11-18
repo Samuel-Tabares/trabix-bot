@@ -430,10 +430,66 @@ async fn log_outbound_text(state: &AppState, case_phone: &str, to: &str, body: &
 /// se guarda como pedido y queda en Pendientes, que es donde el asesor acepta
 /// (y con eso registra la venta) o cancela. Un pedido ya confirmado conserva su
 /// vínculo para que una corrección del cliente no cree un duplicado.
+/// `orders.delivery_type` para un carrito guardado sin que el cliente
+/// eligiera inmediato o programado. crm-app lo muestra como "Entrega sin definir".
+const UNDEFINED_DELIVERY_TYPE: &str = "sin_definir";
+
 pub async fn return_case_to_bot(
     state: &AppState,
     phone: &str,
     source: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    return_case_inner(state, phone, source, false).await
+}
+
+/// Nadie del equipo atendió un handoff dentro de `handoff_attention_minutes()`:
+/// al cliente se le dice la verdad (no hay asesor disponible ahora) y el bot
+/// retoma. Antes el cliente podía esperar 6 h sin respuesta (Juanjo Mahecha,
+/// 2026-11-07, 8:37 pm → 2:37 am).
+pub async fn return_unattended_case_to_bot(
+    state: &AppState,
+    phone: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    return_case_inner(state, phone, "unattended", true).await
+}
+
+/// Minutos que tiene el equipo para atender un caso que el bot le pasó.
+pub fn handoff_attention_minutes() -> i64 {
+    std::env::var("HANDOFF_ATTENTION_MINUTES")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|m| (1..=360).contains(m))
+        .unwrap_or(15)
+}
+
+/// Qué se le dice al cliente cuando nadie atendió su caso a tiempo.
+pub(crate) fn unattended_customer_text(reason: Option<crate::db::models::HandoffReason>) -> &'static str {
+    match reason {
+        Some(crate::db::models::HandoffReason::DeliveryQuote) => {
+            "😔 En este momento no hay un asesor disponible para cotizarte el envío. Tu pedido \
+             quedó guardado y te escribimos por aquí apenas podamos."
+        }
+        Some(crate::db::models::HandoffReason::PaymentVerification) => {
+            "🙏 Recibimos tu comprobante. En este momento no hay nadie disponible para verificarlo; \
+             apenas lo revisemos te confirmamos por aquí."
+        }
+        Some(crate::db::models::HandoffReason::PartnershipInquiry) => {
+            "😔 En este momento no hay un asesor disponible para contarte cómo emprender con \
+             Trabix; te escribimos apenas podamos. Si mientras tanto quieres hacer un pedido, te \
+             ayudo yo."
+        }
+        _ => {
+            "😔 En este momento no hay un asesor disponible. Sigo yo por aquí: cuéntame en un \
+             mensaje de texto qué necesitas y te ayudo."
+        }
+    }
+}
+
+async fn return_case_inner(
+    state: &AppState,
+    phone: &str,
+    source: &str,
+    unattended: bool,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let _case_lock = crate::lock_conversation(&state.conversation_locks, phone).await;
 
@@ -445,16 +501,40 @@ pub async fn return_case_to_bot(
     clear_human_takeover(&state.pool, phone).await?;
 
     let (_, mut context) = rehydrate_client_conversation(state, &conversation).await?;
-    context.handoff_reason = None;
+    let reason = context.handoff_reason.take();
 
-    let mut note = "↩️ El bot retomó la conversación y empieza de cero con este cliente.".to_string();
+    if unattended {
+        let body = unattended_customer_text(reason);
+        if let Err(err) = send_text(state, phone, phone, body).await {
+            tracing::error!(phone = %mask_phone(phone), error = %err, "failed to tell the customer nobody was available");
+        }
+        log_outbound_text(state, phone, phone, body).await;
+    }
+
+    let mut note = if unattended {
+        format!(
+            "⌛ Nadie atendió este caso en {} min. Al cliente se le dijo que no había asesor \
+             disponible y el bot retomó la conversación.",
+            handoff_attention_minutes()
+        )
+    } else {
+        "↩️ El bot retomó la conversación y empieza de cero con este cliente.".to_string()
+    };
     if !context.order_confirmed {
-        if context.current_order_id.is_none()
-            && !context.items.is_empty()
-            && context.delivery_type.is_some()
-        {
+        // Antes exigía `delivery_type`: un carrito sin "inmediato/programado"
+        // elegido se borraba sin dejar rastro (Juanjo Mahecha, 2026-11-07, 2
+        // granizados). Ahora queda en Pendientes igual, con la entrega "sin
+        // definir", para que alguien decida.
+        if context.current_order_id.is_none() && !context.items.is_empty() {
+            let had_delivery_type = context.delivery_type.is_some();
+            if !had_delivery_type {
+                context.delivery_type = Some(UNDEFINED_DELIVERY_TYPE.to_string());
+            }
             upsert_order_from_context(&state.pool, conversation.id, &mut context, "pending_advisor")
                 .await?;
+            if !had_delivery_type {
+                context.delivery_type = None;
+            }
         }
         if let Some(order_id) = context.current_order_id {
             note.push_str(&format!(
@@ -466,12 +546,19 @@ pub async fn return_case_to_bot(
 
     update_state(&state.pool, phone, "main_menu", &context.to_state_data()).await?;
 
-    if let Err(err) = crate::ai::memory::append_transcript_entry(
-        &state.pool,
-        phone,
-        crate::ai::memory::CASE_RETURNED_LINE,
-    )
-    .await
+    let memory_line = if unattended {
+        format!(
+            "[SISTEMA] Nadie del equipo alcanzó a atender este caso y al cliente se le dijo: \"{}\". \
+             Lo que estaba en curso quedó guardado para el equipo; sigue ayudándolo tú con lo que \
+             puedas resolver (un pedido nuevo, dudas del menú) sin prometerle nada de lo que \
+             quedó pendiente.",
+            unattended_customer_text(reason)
+        )
+    } else {
+        crate::ai::memory::CASE_RETURNED_LINE.to_string()
+    };
+    if let Err(err) = crate::ai::memory::append_transcript_entry(&state.pool, phone, &memory_line)
+        .await
     {
         tracing::warn!(error = %err, "failed to mark the returned case in agent memory");
     }
@@ -857,7 +944,7 @@ pub async fn execute_actions(
                             // (`timers::sweep_expired_timers`). Llamarlo desde acá haría
                             // un ciclo async con `execute_actions`, que es por donde ese
                             // camino ejecuta sus acciones.
-                            TimerType::BusinessHoursReopen => {
+                            TimerType::BusinessHoursReopen | TimerType::AvailabilityTimeout => {
                                 let _ = (app_state, phone);
                                 tracing::warn!(
                                     "business hours reopen is resolved by the sweep, not by StartTimer"
@@ -1057,6 +1144,7 @@ fn is_agent_owned_state(state: &ConversationState) -> bool {
             | ConversationState::ReviewCheckout
             | ConversationState::AskDeliveryCost
             | ConversationState::WaitBusinessHours
+            | ConversationState::WaitAvailability
             | ConversationState::SelectPaymentMethod
             | ConversationState::WaitReceipt
             // Estados del FSM legado de asesor/relay. Ningún productor vivo los

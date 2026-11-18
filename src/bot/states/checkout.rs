@@ -632,6 +632,7 @@ mod tests {
             pending_zone_value: None,
             pending_zone_label: None,
             handoff_reason: None,
+            availability_deadline: None,
         }
     }
 

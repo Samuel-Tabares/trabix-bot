@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-11-18
+
+### Changed
+
+- **Un pedido inmediato ya no se confirma solo: se pregunta si hay quien lo lleve.** Dentro de
+  horario (o al reabrir a las 8 am) el pedido pasa a `wait_availability` y el cliente oye
+  "estoy confirmando disponibilidad del domiciliario". crm-app muestra en Pendientes una cuenta
+  regresiva con "Sí, lo despacho" / "No puedo" (`POST /internal/orders/:id/availability`). Sí →
+  "✅ ¡Confirmado!" con el total y pregunta de pago. No, o nadie responde en
+  `AVAILABILITY_WINDOW_MINUTES` (10 por defecto) → el pedido se cancela y al cliente se le ofrece
+  programarlo, con el carrito y la dirección guardados. Antes el bot le decía "confirmado" aunque
+  nadie pudiera despacharlo. Los programados siguen autoaceptándose. Estado de pedido nuevo:
+  `awaiting_courier`.
+- **Un caso pasado a humano que nadie atiende ya no deja al cliente esperando 6 horas.** Si en
+  `HANDOFF_ATTENTION_MINUTES` (15 por defecto) nadie le escribe al cliente, el bot le dice que no
+  hay asesor disponible (texto según el motivo) y retoma la conversación. Juanjo Mahecha esperó de
+  8:37 pm a 2:37 am.
+- **Al devolver un caso, el carrito se guarda aunque no se haya elegido inmediato/programado.**
+  Queda en Pendientes con entrega "sin definir"; antes se borraba sin rastro.
+
+### Added
+
+- **Suite de escenarios sin tokens** (`tests/sim/`): el bot real contra un Meta y un Claude
+  falsos, 18 escenarios de clientes de Armenia. Cazó dos bugs de este mismo release antes de
+  producción (un estado de pedido que no cabía en `orders.status` y el orden al cancelar).
+- `WHATSAPP_API_BASE` y `ANTHROPIC_API_URL`, opcionales, solo para esa suite. Producción no los
+  define.
+
 ## [1.38.0] - 2026-11-18
 
 ### Fixed

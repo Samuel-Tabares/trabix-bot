@@ -140,7 +140,8 @@ impl WhatsAppClient {
         filename: &str,
     ) -> Result<String, WhatsAppError> {
         let url = format!(
-            "https://graph.facebook.com/v21.0/{}/media",
+            "{}/v21.0/{}/media",
+            graph_api_base(),
             self.whatsapp_phone_id
         );
 
@@ -204,7 +205,7 @@ impl WhatsAppClient {
     /// tener credenciales de Meta propias — el bot sigue siendo el único
     /// dueño de esa relación (mismo principio que `send_text`/etc.).
     pub async fn download_media(&self, media_id: &str) -> Result<(Vec<u8>, String), WhatsAppError> {
-        let resolve_url = format!("https://graph.facebook.com/v21.0/{media_id}");
+        let resolve_url = format!("{}/v21.0/{media_id}", graph_api_base());
         let resolve_response = self
             .http_client
             .get(resolve_url)
@@ -267,7 +268,8 @@ impl WhatsAppClient {
         payload: &T,
     ) -> Result<Option<String>, WhatsAppError> {
         let url = format!(
-            "https://graph.facebook.com/v21.0/{}/messages",
+            "{}/v21.0/{}/messages",
+            graph_api_base(),
             self.whatsapp_phone_id
         );
         let response = self
@@ -308,4 +310,17 @@ impl WhatsAppClient {
         );
         Ok(message_id)
     }
+}
+
+/// Base de la Graph API de Meta. `WHATSAPP_API_BASE` existe solo para pruebas
+/// locales contra un Meta falso (`tests/sim/`); en producción no se define.
+fn graph_api_base() -> &'static str {
+    static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| {
+        std::env::var("WHATSAPP_API_BASE")
+            .ok()
+            .map(|v| v.trim().trim_end_matches('/').to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://graph.facebook.com".to_string())
+    })
 }

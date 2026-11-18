@@ -70,6 +70,9 @@ pub struct ConversationStateData {
     pub pending_flavor: Option<String>,
     /// Motivo del handoff humano en curso (`None` = el bot tiene el caso).
     pub handoff_reason: Option<HandoffReason>,
+    /// Hasta cuándo el equipo tiene para confirmar disponibilidad de un pedido
+    /// inmediato (estado `wait_availability`). `None` fuera de esa espera.
+    pub availability_deadline: Option<chrono::DateTime<chrono::Utc>>,
     /// True una vez que el pedido `current_order_id` quedó CONFIRMADO. Bloquea
     /// crear una orden duplicada: para tocarlo de nuevo hay que reabrirlo con
     /// `modify_confirmed_order`, y para un pedido aparte hay que limpiar con
@@ -152,6 +155,7 @@ impl Default for ConversationStateData {
             pending_zone_value: None,
             pending_zone_label: None,
             handoff_reason: None,
+            availability_deadline: None,
         }
     }
 }

@@ -51,6 +51,10 @@ pub enum ConversationState {
     /// inactividad (`advisor_timeout_kind`), que resetearía el pedido antes
     /// de que abramos.
     WaitBusinessHours,
+    /// Pedido INMEDIATO completo esperando que el equipo confirme que hay quien
+    /// lo lleve (`state_data.availability_deadline`). Lo resuelve crm-app con
+    /// "Sí/No" o el barrido de `timers.rs` al vencer el plazo.
+    WaitAvailability,
     NegotiateHour,
     OfferHourToClient { proposed_hour: String },
     WaitClientHour,
@@ -103,6 +107,7 @@ impl ConversationState {
             Self::WaitAdvisorResponse => "wait_advisor_response",
             Self::AskDeliveryCost => "ask_delivery_cost",
             Self::WaitBusinessHours => "wait_business_hours",
+            Self::WaitAvailability => "wait_availability",
             Self::NegotiateHour => "negotiate_hour",
             Self::OfferHourToClient { .. } => "offer_hour_to_client",
             Self::WaitClientHour => "wait_client_hour",
@@ -172,6 +177,7 @@ impl ConversationState {
             "wait_advisor_response" => Ok(Self::WaitAdvisorResponse),
             "ask_delivery_cost" => Ok(Self::AskDeliveryCost),
             "wait_business_hours" => Ok(Self::WaitBusinessHours),
+            "wait_availability" => Ok(Self::WaitAvailability),
             "negotiate_hour" => Ok(Self::NegotiateHour),
             "offer_hour_to_client" => Ok(Self::OfferHourToClient {
                 proposed_hour: "pendiente".to_string(),
@@ -243,6 +249,7 @@ impl<'de> Deserialize<'de> for ConversationState {
             "wait_advisor_response" => Ok(Self::WaitAdvisorResponse),
             "ask_delivery_cost" => Ok(Self::AskDeliveryCost),
             "wait_business_hours" => Ok(Self::WaitBusinessHours),
+            "wait_availability" => Ok(Self::WaitAvailability),
             "negotiate_hour" => Ok(Self::NegotiateHour),
             "offer_hour_to_client" => Ok(Self::OfferHourToClient {
                 proposed_hour: String::new(),
@@ -326,6 +333,7 @@ pub struct ExtractedInput {
 pub enum TimerType {
     ReceiptUpload,
     BusinessHoursReopen,
+    AvailabilityTimeout,
 }
 
 impl TimerType {
@@ -333,6 +341,7 @@ impl TimerType {
         match self {
             Self::ReceiptUpload => "receipt_upload",
             Self::BusinessHoursReopen => "business_hours_reopen",
+            Self::AvailabilityTimeout => "availability_timeout",
         }
     }
 }
@@ -517,6 +526,7 @@ pub struct ConversationContext {
     pub pending_zone_value: Option<String>,
     pub pending_zone_label: Option<String>,
     pub handoff_reason: Option<crate::db::models::HandoffReason>,
+    pub availability_deadline: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl ConversationContext {
@@ -565,6 +575,7 @@ impl ConversationContext {
             pending_zone_value: state_data.pending_zone_value.clone(),
             pending_zone_label: state_data.pending_zone_label.clone(),
             handoff_reason: state_data.handoff_reason,
+            availability_deadline: state_data.availability_deadline,
         }
     }
 
@@ -601,6 +612,7 @@ impl ConversationContext {
             pending_zone_value: self.pending_zone_value.clone(),
             pending_zone_label: self.pending_zone_label.clone(),
             handoff_reason: self.handoff_reason,
+            availability_deadline: self.availability_deadline,
         }
     }
 
@@ -637,6 +649,7 @@ impl ConversationContext {
         self.order_confirmed_at = None;
         self.confirmed_order_snapshot = None;
         self.referral_prompt_resolved = false;
+        self.availability_deadline = None;
     }
 }
 
@@ -759,6 +772,7 @@ pub fn transition(
         | ConversationState::WaitClientHour
         | ConversationState::AskDeliveryCost
         | ConversationState::WaitBusinessHours
+        | ConversationState::WaitAvailability
         | ConversationState::NegotiateHour
         | ConversationState::WaitAdvisorHourDecision { .. }
         | ConversationState::WaitAdvisorConfirmHour

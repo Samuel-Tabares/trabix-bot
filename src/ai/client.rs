@@ -8,6 +8,19 @@ use serde_json::Value;
 
 pub const DEFAULT_MODEL: &str = "claude-sonnet-5";
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
+
+/// `ANTHROPIC_API_URL` existe solo para pruebas locales contra un modelo falso
+/// con guion (`tests/sim/`), que no consume créditos; en producción no se define.
+fn anthropic_api_url() -> &'static str {
+    static URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    URL.get_or_init(|| {
+        std::env::var("ANTHROPIC_API_URL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| ANTHROPIC_API_URL.to_string())
+    })
+}
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 // Sonnet 5 corre thinking adaptativo, y esos tokens cuentan contra `max_tokens`.
 // Con el tope de 1024 que traiamos de Sonnet 4.5 una respuesta larga se cortaba
@@ -204,7 +217,7 @@ impl AnthropicClient {
 
         let response = self
             .http
-            .post(ANTHROPIC_API_URL)
+            .post(anthropic_api_url())
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .json(&request)

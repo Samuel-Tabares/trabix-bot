@@ -546,6 +546,43 @@ pub async fn list_expired_handoffs(pool: &PgPool) -> Result<Vec<String>, sqlx::E
     Ok(rows.into_iter().map(|(phone,)| phone).collect())
 }
 
+/// Handoffs que nadie atendió: el bot dejó la nota hace más de `minutes`
+/// minutos, la pausa sigue activa y ningún humano le escribió al cliente desde
+/// entonces. Ver `engine::return_unattended_case_to_bot`.
+pub async fn list_unattended_handoffs(
+    pool: &PgPool,
+    minutes: i64,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT c.phone_number
+        FROM conversations c
+        JOIN LATERAL (
+            SELECT MAX(e.created_at) AS handed_off_at
+            FROM message_events e
+            WHERE e.case_phone = c.phone_number
+              AND e.channel = 'advisor'
+              AND e.actor = 'bot'
+              AND e.payload ? 'handoff_reason'
+        ) h ON h.handed_off_at IS NOT NULL
+        WHERE c.state_data->>'handoff_reason' IS NOT NULL
+          AND c.human_takeover_until > NOW()
+          AND h.handed_off_at < NOW() - make_interval(mins => $1::int)
+          AND NOT EXISTS (
+              SELECT 1 FROM message_events a
+              WHERE a.case_phone = c.phone_number
+                AND a.actor = 'advisor'
+                AND a.created_at > h.handed_off_at
+          )
+        "#,
+    )
+    .bind(minutes)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(|(phone,)| phone).collect())
+}
+
 pub async fn reset_conversation(pool: &PgPool, phone_number: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"

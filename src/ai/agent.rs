@@ -256,11 +256,12 @@ Reglas que no puedes romper:
   enviar el pedido tal cual esta, con productos, nombre, telefono, direccion y tipo de entrega \
   completos. En ese mismo turno, ademas de llamar finalize_checkout, escribele al cliente \
   confirmandole que el pedido fue enviado.
-- PEDIDO INMEDIATO: nunca se le pregunta disponibilidad al asesor, ni dentro ni fuera de horario — \
-  esa pregunta ya no existe. Cuando el cliente confirme (tras la recapitulación), llama \
+- PEDIDO INMEDIATO: tú nunca le preguntas disponibilidad al asesor — de eso se encarga el sistema \
+  solo. Cuando el cliente confirme (tras la recapitulación), llama \
   finalize_checkout directo, sin preguntarle nada al asesor antes. Tres resultados posibles, todos \
-  los maneja la herramienta sola: (1) horario ABIERTO y domicilio ya conocido → se autoacepta al \
-  instante, dile al cliente que ya puede elegir método de pago; (2) domicilio todavía no se conoce \
+  los maneja la herramienta sola: (1) horario ABIERTO y domicilio ya conocido → el equipo confirma \
+  si hay domiciliario (unos minutos): dile al cliente que estás confirmando disponibilidad, sin \
+  darle el pedido por confirmado ni pedirle el pago — el sistema le escribe solo; (2) domicilio todavía no se conoce \
   (municipio/zona fuera de lista) → la herramienta entrega el caso a un humano y al cliente ya se le \
   avisa: no escribas nada mas; (3) horario CERRADO → la herramienta guarda el pedido igual, no lo rechaces ni \
   lo fuerces a programar: dile al cliente que su pedido quedó registrado y se confirma \
@@ -1088,6 +1089,14 @@ fn build_dynamic_case_state(
              apenas abramos (no hace falta que nadie haga nada). Si el cliente escribe de nuevo, \
              recuérdale con amabilidad que su pedido se confirma automáticamente al abrir; no \
              vuelvas a pedirle datos ni llames finalize_checkout otra vez."
+                .to_string()
+        }
+        ConversationState::WaitAvailability => {
+            "\nFase del flujo: pedido INMEDIATO completo, esperando que el equipo confirme si hay \
+             domiciliario. El pedido NO está confirmado. Si el cliente escribe, dile que estás \
+             confirmando disponibilidad y que en pocos minutos le escribes; no le pidas método de \
+             pago, no le des el total como confirmado y no llames finalize_checkout. El sistema \
+             le escribe solo cuando haya respuesta."
                 .to_string()
         }
         ConversationState::SelectPaymentMethod => {
@@ -2340,6 +2349,14 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
         ));
     }
 
+    if context.availability_deadline.is_some() {
+        return ToolOutcome::Result(error_result(
+            id,
+            "Este pedido ya está esperando que el equipo confirme disponibilidad. No llames \
+             finalize_checkout otra vez: el sistema le avisa al cliente solo, apenas haya respuesta.",
+        ));
+    }
+
     if let Some(error) = checkout_precondition_error(context) {
         return ToolOutcome::Result(error_result(id, error));
     }
@@ -2387,6 +2404,9 @@ fn finalize_checkout(id: &str, context: &mut ConversationContext) -> ToolOutcome
         return wait_for_business_hours(id, context);
     }
     if let Some(delivery_cost) = context.delivery_cost {
+        if context.delivery_type.as_deref() == Some("immediate") {
+            return request_availability(id, context, delivery_cost);
+        }
         return auto_accept_order(id, context, delivery_cost);
     }
 
@@ -2529,6 +2549,89 @@ fn auto_accept_order(
             ),
         ),
         ConversationState::SelectPaymentMethod,
+        actions,
+    )
+}
+
+/// Minutos que tiene el equipo para confirmar que hay quien lleve un pedido
+/// inmediato. `AVAILABILITY_WINDOW_MINUTES` lo cambia sin redesplegar código.
+pub(crate) fn availability_window_minutes() -> i64 {
+    std::env::var("AVAILABILITY_WINDOW_MINUTES")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|m| (1..=120).contains(m))
+        .unwrap_or(10)
+}
+
+/// Hora local de Armenia en formato corto ("8:47 pm") para los avisos.
+pub(crate) fn bogota_clock(at: chrono::DateTime<chrono::Utc>) -> String {
+    let local = at.with_timezone(&chrono::FixedOffset::west_opt(5 * 3600).expect("offset fijo"));
+    local.format("%-I:%M %P").to_string()
+}
+
+/// Pedido INMEDIATO completo (dentro de horario o al reabrir): en vez de
+/// confirmárselo al cliente al instante, se le pregunta al equipo si hay quien
+/// lo lleve. Antes se autoaceptaba y el cliente quedaba con un "confirmado"
+/// aunque nadie pudiera despacharlo (caso Juanjo Mahecha, 2026-11-07, 8:37 pm).
+/// La respuesta llega por crm-app (`POST /internal/orders/:id/availability`) o,
+/// si nadie contesta, el barrido la da por "no disponible" al vencer el plazo.
+pub(crate) fn availability_request_actions(
+    context: &mut ConversationContext,
+    delivery_cost: i32,
+) -> (chrono::DateTime<chrono::Utc>, Vec<BotAction>) {
+    context.delivery_cost = Some(delivery_cost);
+    let total_final = compute_total_final(context, delivery_cost);
+    context.total_final = Some(total_final);
+    let deadline = chrono::Utc::now() + chrono::Duration::minutes(availability_window_minutes());
+    context.availability_deadline = Some(deadline);
+
+    let mut actions = Vec::new();
+    if context.current_order_id.is_none() {
+        actions.push(BotAction::FinalizeCurrentOrder {
+            status: "pending_advisor".to_string(),
+        });
+    }
+    actions.extend([
+        BotAction::UpdateCurrentOrderDeliveryCost {
+            delivery_cost,
+            total_final,
+            // `orders.status` es VARCHAR(20): "awaiting_availability" no cabía
+            // y tumbaba el turno (lo cazó tests/sim, S15).
+            status: "awaiting_courier".to_string(),
+        },
+        BotAction::NotifyAdvisor {
+            body: format!(
+                "⏳ Pedido INMEDIATO: confirma en Pendientes si hay quien lo lleve antes de las \
+                 {}. Si no respondes, al cliente se le dice que no hay domiciliario y se le \
+                 ofrece programarlo.\n\n{}",
+                bogota_clock(deadline),
+                advisor_case_summary(context)
+            ),
+            requires_action: true,
+        },
+    ]);
+    (deadline, actions)
+}
+
+fn request_availability(
+    id: &str,
+    context: &mut ConversationContext,
+    delivery_cost: i32,
+) -> ToolOutcome {
+    let (_deadline, actions) = availability_request_actions(context, delivery_cost);
+    let minutes = availability_window_minutes();
+    ToolOutcome::ResultWithStateChange(
+        ok_result(
+            id,
+            format!(
+                "Pedido guardado. Ahora el equipo confirma si hay domiciliario disponible (máximo \
+                 {minutes} minutos). Dile al cliente EXACTAMENTE eso: que estás confirmando \
+                 disponibilidad del domiciliario y que en máximo {minutes} minutos le escribes. \
+                 NO le digas que el pedido está confirmado, NO le des el total final todavía y NO \
+                 le preguntes el método de pago: el sistema se lo pide solo cuando haya respuesta."
+            ),
+        ),
+        ConversationState::WaitAvailability,
         actions,
     )
 }
@@ -2822,7 +2925,7 @@ fn customer_identity_line(custom: Option<&str>, meta: Option<&str>) -> String {
     }
 }
 
-fn format_thousands(value: u32) -> String {
+pub(crate) fn format_thousands(value: u32) -> String {
     let digits = value.to_string();
     let mut rendered = String::with_capacity(digits.len() + digits.len() / 3 + 1);
     for (index, ch) in digits.chars().rev().enumerate() {
@@ -3708,6 +3811,7 @@ mod tests {
             pending_zone_value: None,
             pending_zone_label: None,
             handoff_reason: None,
+            availability_deadline: None,
         }
     }
 
@@ -3915,8 +4019,19 @@ mod tests {
                     panic!("expected tool result");
                 };
                 if is_open {
-                    assert_eq!(next_state, ConversationState::SelectPaymentMethod);
-                    assert!(content.contains("auto-aceptado"));
+                    // Desde v1.39.0 un inmediato en horario NO se confirma solo:
+                    // espera a que el equipo diga si hay domiciliario.
+                    assert_eq!(next_state, ConversationState::WaitAvailability);
+                    assert!(content.contains("disponibilidad"));
+                    assert!(context.availability_deadline.is_some());
+                    assert!(actions.iter().any(|action| matches!(
+                        action,
+                        BotAction::UpdateCurrentOrderDeliveryCost { status, .. } if status == "awaiting_courier"
+                    )));
+                    assert!(actions.iter().any(|action| matches!(
+                        action,
+                        BotAction::NotifyAdvisor { requires_action: true, .. }
+                    )));
                     assert!(!actions
                         .iter()
                         .any(|action| matches!(action, BotAction::StartTimer { .. })));
@@ -3933,6 +4048,96 @@ mod tests {
                 }
             }
             _ => panic!("expected a state change"),
+        }
+    }
+
+    #[test]
+    fn finalize_checkout_refuses_while_waiting_for_availability() {
+        let mut context = test_context();
+        context.delivery_type = Some("immediate".to_string());
+        context.delivery_cost = Some(8_000);
+        context.availability_deadline = Some(chrono::Utc::now() + chrono::Duration::minutes(5));
+
+        match finalize_checkout("id_1", &mut context) {
+            ToolOutcome::Result(ContentBlock::ToolResult { content, is_error, .. }) => {
+                assert_eq!(is_error, Some(true));
+                assert!(content.contains("disponibilidad"));
+            }
+            _ => panic!("expected an error result"),
+        }
+    }
+
+    #[test]
+    fn availability_request_sets_deadline_and_awaiting_status() {
+        let mut context = test_context();
+        context.delivery_type = Some("immediate".to_string());
+        let before = chrono::Utc::now();
+        let (deadline, actions) = availability_request_actions(&mut context, 8_000);
+
+        let minutes = (deadline - before).num_minutes();
+        assert!((9..=10).contains(&minutes), "plazo inesperado: {minutes} min");
+        assert_eq!(context.total_final, Some(compute_total_final(&context, 8_000)));
+        assert!(matches!(actions.first(), Some(BotAction::FinalizeCurrentOrder { .. })));
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            BotAction::UpdateCurrentOrderDeliveryCost { status, delivery_cost: 8_000, .. } if status == "awaiting_courier"
+        )));
+    }
+
+    #[test]
+    fn availability_confirmed_moves_to_payment_and_tells_the_customer() {
+        use crate::bot::timers::{availability_resolution_plan, AvailabilityOutcome, AvailabilityResolution};
+        let mut context = test_context();
+        context.delivery_type = Some("immediate".to_string());
+        context.current_order_id = Some(77);
+        let _ = availability_request_actions(&mut context, 8_000);
+
+        let (next, actions, line, resolution) =
+            availability_resolution_plan(&mut context, AvailabilityOutcome::Available);
+
+        assert_eq!(next, ConversationState::SelectPaymentMethod);
+        assert!(matches!(resolution, AvailabilityResolution::Confirmed { .. }));
+        assert!(context.availability_deadline.is_none());
+        assert_eq!(context.current_order_id, Some(77));
+        assert!(actions.iter().any(|a| matches!(a, BotAction::SendText { body, .. } if body.contains("Confirmado"))));
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            BotAction::UpdateCurrentOrderDeliveryCost { status, .. } if status == "draft_payment"
+        )));
+        assert!(line.contains("set_payment_method"));
+    }
+
+    #[test]
+    fn availability_declined_or_expired_cancels_order_and_offers_scheduling() {
+        use crate::bot::timers::{availability_resolution_plan, AvailabilityOutcome, AvailabilityResolution};
+        // `orders.status` es VARCHAR(20).
+        assert!("awaiting_courier".len() <= 20);
+        for outcome in [AvailabilityOutcome::Unavailable, AvailabilityOutcome::TimedOut] {
+            let mut context = test_context();
+            context.delivery_type = Some("immediate".to_string());
+            context.current_order_id = Some(78);
+            let _ = availability_request_actions(&mut context, 8_000);
+            let items_before = context.items.clone();
+
+            let (next, actions, line, resolution) = availability_resolution_plan(&mut context, outcome);
+            // El pedido se marca cancelado con su número; recién después se suelta.
+            assert_eq!(context.current_order_id, Some(78));
+            crate::bot::timers::release_declined_order(&mut context);
+
+            assert_eq!(next, ConversationState::MainMenu);
+            assert_eq!(resolution, AvailabilityResolution::Declined);
+            assert!(actions.iter().any(|a| matches!(
+                a,
+                BotAction::UpdateCurrentOrderDeliveryCost { status, .. } if status == "cancelled"
+            )));
+            assert!(actions.iter().any(|a| matches!(a, BotAction::SendText { body, .. } if body.contains("programo"))));
+            // El carrito y la dirección quedan para programarlo sin repetir nada.
+            assert_eq!(context.items, items_before);
+            assert!(context.delivery_address.is_some());
+            assert_eq!(context.current_order_id, None);
+            assert_eq!(context.delivery_type, None);
+            assert!(context.availability_deadline.is_none());
+            assert!(line.contains("set_delivery_schedule"));
         }
     }
 

@@ -34,6 +34,10 @@ pub fn internal_router() -> Router<AppState> {
         .route("/internal/advisor/release", post(internal::advisor_release))
         .route("/internal/media/:media_id", get(internal::media))
         .route(
+            "/internal/orders/:order_id/availability",
+            post(internal::order_availability),
+        )
+        .route(
             "/internal/referral-codes",
             post(internal::create_referral_code),
         )

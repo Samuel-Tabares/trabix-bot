@@ -90,7 +90,7 @@ fn timer_rule_for_start_timer(timer_type: &TimerType) -> Option<TimerRule> {
         // No se arma vía StartTimer: se resuelve puramente por el sweep de
         // 60s reconsultando check_business_hours (ver `timer_recovery`), no
         // hay una duración fija que trackear.
-        TimerType::BusinessHoursReopen => None,
+        TimerType::BusinessHoursReopen | TimerType::AvailabilityTimeout => None,
     }
 }
 
@@ -271,6 +271,24 @@ pub async fn sweep_expired_handoffs(state: AppState) -> Result<(), sqlx::Error> 
     Ok(())
 }
 
+/// Casos que el bot pasó a un humano y nadie atendió a tiempo: el bot le dice
+/// la verdad al cliente y retoma.
+pub async fn sweep_unattended_handoffs(state: AppState) -> Result<(), sqlx::Error> {
+    let minutes = crate::engine::handoff_attention_minutes();
+    for phone_number in
+        crate::db::queries::list_unattended_handoffs(&state.pool, minutes).await?
+    {
+        if let Err(err) = crate::engine::return_unattended_case_to_bot(&state, &phone_number).await {
+            tracing::error!(
+                phone = %mask_phone(&phone_number),
+                error = %err,
+                "failed to return an unattended handoff to the bot"
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn spawn_timer_sweeper(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = interval(TIMER_SWEEP_INTERVAL);
@@ -285,6 +303,10 @@ pub fn spawn_timer_sweeper(state: AppState) -> tokio::task::JoinHandle<()> {
 
             if let Err(err) = sweep_expired_handoffs(state.clone()).await {
                 tracing::error!(error = %err, "failed to sweep expired handoffs");
+            }
+
+            if let Err(err) = sweep_unattended_handoffs(state.clone()).await {
+                tracing::error!(error = %err, "failed to sweep unattended handoffs");
             }
         }
     })
@@ -366,6 +388,14 @@ fn timer_recovery(
                 None
             }
         }
+        // El plazo lo fija `request_availability` (agent.rs); vencido sin que
+        // nadie conteste, el pedido inmediato se da por no disponible.
+        "wait_availability" => match state_data.availability_deadline {
+            Some(deadline) if deadline <= now => {
+                Some(TimerRecovery::Expired(TimerType::AvailabilityTimeout))
+            }
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -409,7 +439,9 @@ fn boot_expiration_action(
         // (avisarle al cliente que su pedido quedó confirmado). Se deja para
         // el próximo tick del sweep normal (`sweep_expired_timers`, cada
         // 60s), que ya corre apenas arranca el proceso.
-        TimerType::BusinessHoursReopen => BootExpirationAction::None,
+        TimerType::BusinessHoursReopen | TimerType::AvailabilityTimeout => {
+            BootExpirationAction::None
+        }
     }
 }
 
@@ -432,6 +464,14 @@ async fn expire_timer_now(
         TimerType::BusinessHoursReopen => {
             expire_business_hours_timer_with_source(state, phone_number, source).await
         }
+        TimerType::AvailabilityTimeout => resolve_availability(
+            &state,
+            &phone_number,
+            None,
+            AvailabilityOutcome::TimedOut,
+        )
+        .await
+        .map(|_| ()),
     };
 
     if let Err(err) = result {
@@ -544,15 +584,19 @@ async fn expire_business_hours_timer_with_source(
     );
 
     let (next_state, actions) = if let Some(delivery_cost) = context.delivery_cost {
-        let (_total_final, mut accept_actions) =
-            crate::ai::agent::auto_accept_order_actions(&mut context, delivery_cost);
-        accept_actions.push(BotAction::SendText {
+        // Al abrir tampoco se confirma a ciegas: se pregunta disponibilidad,
+        // igual que un inmediato dentro de horario (ver `request_availability`).
+        let (_deadline, mut request_actions) =
+            crate::ai::agent::availability_request_actions(&mut context, delivery_cost);
+        request_actions.push(BotAction::SendText {
             to: phone_number.clone(),
-            body: "✅ ¡Ya abrimos! Tu pedido quedó confirmado. Cuéntanos cómo prefieres pagar \
-                   (efectivo contra entrega o transferencia) y seguimos."
-                .to_string(),
+            body: format!(
+                "☀️ ¡Ya abrimos! Estoy confirmando disponibilidad del domiciliario para tu pedido; \
+                 en máximo {} minutos te escribo.",
+                crate::ai::agent::availability_window_minutes()
+            ),
         });
-        (ConversationState::SelectPaymentMethod, accept_actions)
+        (ConversationState::WaitAvailability, request_actions)
     } else {
         // Abrimos, pero el domicilio sigue sin cotizar (municipio fuera de la
         // lista o envío nacional). El bot no puede resolverlo y ya no existe el
@@ -596,6 +640,178 @@ async fn expire_business_hours_timer_with_source(
     Ok(())
 }
 
+/// Cómo terminó la espera de disponibilidad de un pedido inmediato.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AvailabilityOutcome {
+    /// Alguien del equipo dijo "sí, lo despacho" en crm-app.
+    Available,
+    /// Alguien dijo "no puedo".
+    Unavailable,
+    /// Venció el plazo sin respuesta: se trata igual que "no puedo".
+    TimedOut,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AvailabilityResolution {
+    Confirmed { total_final: i32 },
+    Declined,
+    /// El caso ya no estaba esperando (otro dispositivo contestó primero, ya
+    /// venció, o el pedido cambió). No se hizo nada.
+    NotWaiting,
+}
+
+/// Lógica pura de la resolución, sin BD: qué estado sigue, qué acciones se
+/// ejecutan y qué línea queda en la memoria del agente para el próximo turno.
+pub(crate) fn availability_resolution_plan(
+    context: &mut ConversationContext,
+    outcome: AvailabilityOutcome,
+) -> (ConversationState, Vec<BotAction>, String, AvailabilityResolution) {
+    let phone = context.phone_number.clone();
+    context.availability_deadline = None;
+
+    if outcome == AvailabilityOutcome::Available {
+        let delivery_cost = context.delivery_cost.unwrap_or(0);
+        let (total_final, mut actions) =
+            crate::ai::agent::auto_accept_order_actions(context, delivery_cost);
+        let total_text = crate::ai::agent::format_thousands(u32::try_from(total_final).unwrap_or(0));
+        actions.push(BotAction::SendText {
+            to: phone,
+            body: format!(
+                "✅ ¡Confirmado! Tenemos quien te lo lleve 🛵 El total es *${total_text}*. ¿Pagas \
+                 en efectivo contra entrega o por transferencia?"
+            ),
+        });
+        let line = format!(
+            "[SISTEMA] El equipo confirmó disponibilidad del pedido inmediato. Al cliente ya se le \
+             dijo que está confirmado, con total ${total_text}, y se le preguntó el método de pago: \
+             cuando responda, llama set_payment_method."
+        );
+        return (
+            ConversationState::SelectPaymentMethod,
+            actions,
+            line,
+            AvailabilityResolution::Confirmed { total_final },
+        );
+    }
+
+    let order_label = context
+        .current_order_id
+        .map(|id| format!("#{id}"))
+        .unwrap_or_else(|| "sin número".to_string());
+    let customer_text = if outcome == AvailabilityOutcome::TimedOut {
+        "😔 No alcanzamos a confirmar un domiciliario para entregarte ahora mismo. Tu pedido sigue \
+         guardado: si quieres te lo programo para más tarde u otro día (con mínimo 3 horas de \
+         anticipación). ¿Para cuándo te sirve?"
+    } else {
+        "😔 En este momento no tenemos domiciliario disponible para entrega inmediata. Tu pedido \
+         sigue guardado: si quieres te lo programo para más tarde u otro día (con mínimo 3 horas \
+         de anticipación). ¿Para cuándo te sirve?"
+    };
+    let advisor_text = if outcome == AvailabilityOutcome::TimedOut {
+        format!("⌛ Nadie confirmó disponibilidad a tiempo para el pedido {order_label}. Se canceló y al cliente se le ofreció programarlo.")
+    } else {
+        format!("🚫 Marcaste sin disponibilidad el pedido {order_label}. Se canceló y al cliente se le ofreció programarlo.")
+    };
+
+    let mut actions = Vec::new();
+    if context.current_order_id.is_some() {
+        actions.push(BotAction::UpdateCurrentOrderDeliveryCost {
+            delivery_cost: context.delivery_cost.unwrap_or(0),
+            total_final: context.total_final.unwrap_or(0),
+            status: "cancelled".to_string(),
+        });
+    }
+    actions.push(BotAction::SendText { to: phone, body: customer_text.to_string() });
+    actions.push(BotAction::NotifyAdvisor { body: advisor_text, requires_action: false });
+
+    let line = format!(
+        "[SISTEMA] No hubo domiciliario para entregar YA el pedido {order_label}: se canceló y al \
+         cliente se le ofreció programarlo (mínimo 3 horas). El carrito y la dirección siguen \
+         guardados. Si da fecha y hora, usa set_delivery_schedule y luego finalize_checkout; no le \
+         vuelvas a ofrecer entrega inmediata hoy salvo que él insista."
+    );
+    (ConversationState::MainMenu, actions, line, AvailabilityResolution::Declined)
+}
+
+/// Tras ejecutar las acciones de un "no hay domiciliario": el carrito, la
+/// dirección y la zona se conservan para que programarlo sea un solo mensaje;
+/// lo que se suelta es el pedido ya cancelado y el "inmediato". Va DESPUÉS de
+/// ejecutar porque marcar el pedido como cancelado necesita su número.
+pub(crate) fn release_declined_order(context: &mut ConversationContext) {
+    context.current_order_id = None;
+    context.delivery_type = None;
+    context.total_final = None;
+}
+
+/// Resuelve la espera de disponibilidad. La llaman crm-app (Sí/No, con el
+/// número de pedido que el asesor estaba viendo) y el barrido al vencer el
+/// plazo. Si el caso ya no está esperando ese pedido, no hace nada.
+pub async fn resolve_availability(
+    state: &AppState,
+    phone_number: &str,
+    expected_order_id: Option<i32>,
+    outcome: AvailabilityOutcome,
+) -> Result<AvailabilityResolution, Box<dyn std::error::Error + Send + Sync>> {
+    let _case_lock = crate::lock_conversation(&state.conversation_locks, phone_number).await;
+
+    let Some(conversation) = get_conversation(&state.pool, phone_number).await? else {
+        return Ok(AvailabilityResolution::NotWaiting);
+    };
+    if conversation.state != "wait_availability" {
+        return Ok(AvailabilityResolution::NotWaiting);
+    }
+    let state_data = conversation.state_data.0.clone();
+    if expected_order_id.is_some() && state_data.current_order_id != expected_order_id {
+        return Ok(AvailabilityResolution::NotWaiting);
+    }
+    // El barrido solo actúa con el plazo vencido; una respuesta humana puede
+    // llegar en cualquier momento antes.
+    if outcome == AvailabilityOutcome::TimedOut
+        && !state_data.availability_deadline.is_some_and(|d| d <= Utc::now())
+    {
+        return Ok(AvailabilityResolution::NotWaiting);
+    }
+
+    let mut context = rehydrate_context_for_timer(
+        phone_number.to_string(),
+        state.config.advisor_phone.clone(),
+        conversation.customer_name.clone(),
+        conversation.customer_phone.clone(),
+        conversation.delivery_address.clone(),
+        &state_data,
+    );
+    let (next_state, actions, transcript_line, resolution) =
+        availability_resolution_plan(&mut context, outcome);
+
+    tracing::info!(
+        phone = %mask_phone(phone_number),
+        outcome = ?outcome,
+        "resolving immediate-order availability"
+    );
+
+    let execution =
+        crate::engine::execute_actions(state, conversation.id, &mut context, &actions).await?;
+    if resolution == AvailabilityResolution::Declined {
+        release_declined_order(&mut context);
+    }
+    if !execution.reset_requested {
+        update_state(
+            &state.pool,
+            phone_number,
+            next_state.as_storage_key(),
+            &context.to_state_data(),
+        )
+        .await?;
+    }
+    if let Err(err) =
+        crate::ai::memory::append_transcript_entry(&state.pool, phone_number, &transcript_line).await
+    {
+        tracing::warn!(error = %err, "failed to note the availability outcome in agent memory");
+    }
+
+    Ok(resolution)
+}
+
 fn timer_recovery_states() -> Vec<&'static str> {
     vec![
         "wait_receipt",
@@ -604,6 +820,7 @@ fn timer_recovery_states() -> Vec<&'static str> {
         "wait_advisor_contact",
         "ask_delivery_cost",
         "wait_business_hours",
+        "wait_availability",
         "negotiate_hour",
         "wait_advisor_hour_decision",
         "wait_advisor_confirm_hour",

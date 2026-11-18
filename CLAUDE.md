@@ -67,6 +67,19 @@ to read the handoff transcript and close the order (`run_resume_turn`, `set_manu
 delivered (pedido 47, 2026-10-20). Contact fields are editable from `crm-app` via
 `PATCH /internal/customers/:phone`. Full contract in `docs/internal_advisor_send.md`.
 
+**An immediate order asks the team before confirming (v1.39.0).** `finalize_checkout` on an
+immediate order with a known delivery cost no longer auto-accepts: `request_availability` puts the
+case in `wait_availability` (order status `awaiting_courier`, deadline in
+`state_data.availability_deadline`, `AVAILABILITY_WINDOW_MINUTES`, default 10) and the customer is
+told availability is being confirmed. crm-app answers through
+`POST /internal/orders/:id/availability`; the 60s sweep treats an expired deadline as "no". Both
+paths go through `timers::resolve_availability`. Scheduled orders still auto-accept. Separately,
+a handoff nobody attends within `HANDOFF_ATTENTION_MINUTES` (default 15) is returned to the bot by
+`timers::sweep_unattended_handoffs` after telling the customer no advisor is available.
+
+**Scenario suite without tokens:** `tests/sim/` runs this binary against a fake Meta and a scripted
+fake Claude (`WHATSAPP_API_BASE`, `ANTHROPIC_API_URL`, unset in production). See its README.
+
 **The model never picks the Armenia delivery zone (v1.29.0).** `set_delivery_zone_armenia` used to
 take `norte`/`centro`/`sur` as a parameter the model chose, with no table behind it: it read the
 barrio and guessed, charging the same address $6,000 one day and $8,000 another. Now

@@ -86,6 +86,22 @@ pub struct AdvisorReleaseRequest {
     pub sent_by: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct OrderAvailabilityRequest {
+    pub case_phone: String,
+    pub available: bool,
+    /// Quién respondió desde la consola. Solo para el log.
+    #[serde(default)]
+    pub sent_by: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OrderAvailabilityResponse {
+    pub ok: bool,
+    /// `confirmed` | `declined`.
+    pub result: &'static str,
+}
+
 #[derive(Debug, Serialize)]
 pub struct AdvisorSendResponse {
     pub wa_message_id: Option<String>,
@@ -119,6 +135,7 @@ pub enum ApiError {
     Internal(String),
     DuplicateReferralCode,
     UnknownReferralCode,
+    NotWaitingAvailability,
 }
 
 impl ApiError {
@@ -134,6 +151,7 @@ impl ApiError {
             Self::Internal(_) => "internal_error",
             Self::DuplicateReferralCode => "duplicate_code",
             Self::UnknownReferralCode => "unknown_code",
+            Self::NotWaitingAvailability => "not_waiting",
         }
     }
 
@@ -149,6 +167,7 @@ impl ApiError {
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::DuplicateReferralCode => StatusCode::CONFLICT,
             Self::UnknownReferralCode => StatusCode::NOT_FOUND,
+            Self::NotWaitingAvailability => StatusCode::CONFLICT,
         }
     }
 
@@ -166,6 +185,10 @@ impl ApiError {
             }
             Self::DuplicateReferralCode => "ya existe un código de referido con ese valor".into(),
             Self::UnknownReferralCode => "no existe un código de referido con ese valor".into(),
+            Self::NotWaitingAvailability => {
+                "ese pedido ya no está esperando disponibilidad (se respondió o venció el plazo)"
+                    .into()
+            }
         }
     }
 }
@@ -454,6 +477,48 @@ pub async fn advisor_release(
 /// `advisor_send`/etc., ver el comentario de arriba del archivo). No valida
 /// que el `media_id` pertenezca a un caso conocido: son IDs opacos de Meta,
 /// de un solo uso práctico (expiran), sin valor fuera de este contexto.
+/// "Sí, lo despacho" / "No puedo" desde Pendientes para un pedido inmediato
+/// en `wait_availability`. Ver `timers::resolve_availability`.
+pub async fn order_availability(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(order_id): Path<i32>,
+    payload: Result<Json<OrderAvailabilityRequest>, JsonRejection>,
+) -> Result<Json<OrderAvailabilityResponse>, ApiError> {
+    authorize(&headers, state.config.internal_api_token.as_deref())?;
+    let Json(payload) = payload
+        .map_err(|err| ApiError::InvalidRequest(format!("cuerpo JSON inválido: {err}")))?;
+    let case_phone = validate_phone(&payload.case_phone)?;
+
+    let outcome = if payload.available {
+        crate::bot::timers::AvailabilityOutcome::Available
+    } else {
+        crate::bot::timers::AvailabilityOutcome::Unavailable
+    };
+    tracing::info!(
+        case_phone = %mask_phone(&case_phone),
+        order_id,
+        available = payload.available,
+        sent_by = %payload.sent_by.as_deref().unwrap_or("<desconocido>"),
+        "availability answered from crm-app"
+    );
+
+    match crate::bot::timers::resolve_availability(&state, &case_phone, Some(order_id), outcome)
+        .await
+        .map_err(|err| ApiError::Internal(format!("error resolviendo disponibilidad: {err}")))?
+    {
+        crate::bot::timers::AvailabilityResolution::Confirmed { .. } => {
+            Ok(Json(OrderAvailabilityResponse { ok: true, result: "confirmed" }))
+        }
+        crate::bot::timers::AvailabilityResolution::Declined => {
+            Ok(Json(OrderAvailabilityResponse { ok: true, result: "declined" }))
+        }
+        crate::bot::timers::AvailabilityResolution::NotWaiting => {
+            Err(ApiError::NotWaitingAvailability)
+        }
+    }
+}
+
 pub async fn media(
     State(state): State<AppState>,
     headers: HeaderMap,
