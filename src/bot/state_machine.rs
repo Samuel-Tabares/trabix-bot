@@ -299,8 +299,11 @@ impl UserInput {
     pub fn needs_human_eyes(&self) -> bool {
         match self {
             Self::ImageMessage(_) => true,
+            // La ubicación sí se puede leer: llega como texto con coordenadas.
+            // Escalarla dejó a un cliente con el carrito armado esperando seis
+            // horas (Juanjo Mahecha, 2026-11-07).
             Self::MediaMessage { kind, .. } => {
-                !matches!(kind.as_str(), "sticker" | "reaction")
+                !matches!(kind.as_str(), "sticker" | "reaction" | "location")
             }
             _ => false,
         }
@@ -878,7 +881,7 @@ fn describe_location(location: &LocationContent) -> String {
         parts.push(address.to_string());
     }
     if let (Some(lat), Some(lon)) = (location.latitude, location.longitude) {
-        parts.push(format!("{lat}, {lon}"));
+        parts.push(format!("{lat}, {lon} (https://maps.google.com/?q={lat},{lon})"));
     }
     if parts.is_empty() {
         "ubicación sin detalle".to_string()
@@ -1001,14 +1004,20 @@ mod tests {
             name: None,
             address: Some("Cra 15 #20-30".to_string()),
         });
+        let parsed_location = extract_user_input(&location);
         assert_eq!(
-            extract_user_input(&location),
+            parsed_location,
             UserInput::MediaMessage {
                 kind: "location".to_string(),
                 media_id: None,
-                text: Some("Cra 15 #20-30 — 4.53, -75.68".to_string()),
+                text: Some(
+                    "Cra 15 #20-30 — 4.53, -75.68 (https://maps.google.com/?q=4.53,-75.68)"
+                        .to_string()
+                ),
             }
         );
+        // La ubicación la lee el modelo; no es motivo de handoff.
+        assert!(!parsed_location.needs_human_eyes());
 
         let mut reaction = base_message("reaction");
         reaction.reaction = Some(ReactionContent {

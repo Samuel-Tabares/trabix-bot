@@ -718,6 +718,9 @@ pub async fn perform_handoff(
         }
     };
     send_text(state, case_phone, case_phone, body).await?;
+    // Sin esto el aviso al cliente no aparecía en la bandeja: el asesor veía
+    // al cliente responder "bueno, espero" a un mensaje invisible.
+    log_outbound_text(state, case_phone, case_phone, body).await;
 
     tracing::info!(
         phone = %mask_phone(case_phone),

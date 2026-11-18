@@ -165,6 +165,10 @@ DOMICILIO AUTOMÁTICO (resuelvelo tu siempre que una herramienta pueda):
   · El cliente DIJO la zona ("es en el sur", "norte de Armenia") → llama set_delivery_zone_armenia \
     con esa zona. Lo que dice el cliente manda sobre la tabla.
   Que un nombre te suene a una zona no es saberla. Si no viene de una de esas dos fuentes, pregunta.
+- UBICACIÓN DE WHATSAPP (llega como "[envió location: ...]" con coordenadas y un link de Google \
+  Maps): las coordenadas NO te dicen la zona ni si es Armenia. Agradécela y pídele en el mismo \
+  mensaje el barrio y la dirección en texto. Cuando la dé, resuélvela con las tools de arriba y \
+  guarda como dirección el texto que te dio MÁS el link de Google Maps, para el domiciliario.
 - DOMICILIO GRATIS EN ARMENIA: aplica ÚNICAMENTE entre 6 y 19 unidades, y solo en Armenia. Por \
   debajo de 6 se cobra tarifa de zona. Desde 20 unidades es precio mayorista y el domicilio \
   SIEMPRE se cobra, sin excepción. Fuera de Armenia nunca es gratis, en ninguna cantidad.

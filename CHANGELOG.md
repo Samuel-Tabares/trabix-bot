@@ -8,6 +8,16 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Una ubicación de WhatsApp ya no entrega el caso a un humano.** Se trataba como adjunto
+  ilegible, pero llega como texto con coordenadas. Juanjo Mahecha (2026-11-07, 8:37 pm) mandó su
+  pin con el carrito armado; el bot se pausó 6 h, nadie respondió, y al vencer la pausa el carrito
+  se descartó porque aún no había elegido inmediato/programado. Ahora el modelo agradece la
+  ubicación, pide barrio y dirección en texto para la tarifa, y guarda el link de Google Maps
+  (que ahora acompaña a las coordenadas) junto a la dirección para el domiciliario.
+- **El aviso al cliente de un handoff no aparecía en la bandeja.** `perform_handoff` lo mandaba
+  pero no lo registraba en `message_events`; el asesor veía al cliente responder "bueno, espero" a
+  un mensaje invisible.
+
 - **El domicilio no se recalculaba al cambiar el carrito.** El costo se fijaba una sola vez, al
   resolver la zona: con 6 unidades quedaba en $0 y si el cliente bajaba a 3 el pedido salía con
   domicilio gratis; al revés, 3 unidades cobraban la zona y subir a 6 no lo volvía gratis, y pasar
