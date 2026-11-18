@@ -124,6 +124,52 @@ const NEARBY_TOWNS: &[(&str, &str, u32, TownGroup)] = &[
     ("pijao", "Pijao", 45_000, TownGroup::Lejano),
 ];
 
+/// Ciudades fuera de la lista de pueblos con moto propia que aparecen en
+/// direcciones de clientes. Solo sirven para detectar que una dirección NO es
+/// de Armenia; el destino real sigue siendo envío nacional.
+const OTHER_CITIES: &[(&str, &str)] = &[
+    ("pereira", "Pereira"),
+    ("dosquebradas", "Dosquebradas"),
+    ("cartago", "Cartago"),
+    ("manizales", "Manizales"),
+    ("caicedonia", "Caicedonia"),
+    ("sevilla", "Sevilla"),
+    ("ibague", "Ibagué"),
+    ("cali", "Cali"),
+    ("bogota", "Bogotá"),
+    ("medellin", "Medellín"),
+];
+
+/// Un municipio distinto de Armenia mencionado en un texto libre de dirección.
+pub struct MentionedTown {
+    /// Forma normalizada tal como aparece en el texto (`"la tebaida"`).
+    pub key: &'static str,
+    pub name: &'static str,
+}
+
+/// Detecta si una dirección nombra otro municipio (pueblo cercano o ciudad).
+///
+/// Existe porque la tabla de barrios de Armenia no sabe en qué ciudad está la
+/// dirección: "Barrio Centenario, Calarcá" resolvía a una zona de Armenia y el
+/// pedido salía con domicilio gratis a otro municipio.
+pub fn mentioned_town(text: &str) -> Option<MentionedTown> {
+    let words: Vec<String> = normalize(text)
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect();
+    let has_phrase = |phrase: &str| {
+        let parts: Vec<&str> = phrase.split(' ').collect();
+        words.windows(parts.len()).any(|w| w.iter().zip(&parts).all(|(a, b)| a == b))
+    };
+    NEARBY_TOWNS
+        .iter()
+        .map(|(key, name, _, _)| (*key, *name))
+        .chain(OTHER_CITIES.iter().copied())
+        .find(|(key, _)| has_phrase(key))
+        .map(|(key, name)| MentionedTown { key, name })
+}
+
 pub struct NearbyTown {
     /// Clave estable de `NEARBY_TOWNS` (sin tildes/mayúsculas) para persistir
     /// en `customer_addresses.zone_value` — `name` es solo la etiqueta humana.
@@ -252,6 +298,16 @@ mod tests {
                 "expected {units} units to charge the zone rate"
             );
         }
+    }
+
+    #[test]
+    fn mentioned_town_detects_other_municipalities_by_whole_word() {
+        assert_eq!(mentioned_town("Barrio Centenario, Calarcá").unwrap().name, "Calarcá");
+        assert_eq!(mentioned_town("cra 3 #4-5 la tebaida").unwrap().name, "La Tebaida");
+        assert_eq!(mentioned_town("Cuba, Pereira").unwrap().name, "Pereira");
+        assert!(mentioned_town("Calle 50 La Castellana Armenia").is_none());
+        // "cali" no puede pegar dentro de otra palabra.
+        assert!(mentioned_town("Barrio La Calima").is_none());
     }
 
     #[test]

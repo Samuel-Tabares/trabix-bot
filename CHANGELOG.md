@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-11-18
+
+### Fixed
+
+- **El domicilio no se recalculaba al cambiar el carrito.** El costo se fijaba una sola vez, al
+  resolver la zona: con 6 unidades quedaba en $0 y si el cliente bajaba a 3 el pedido salía con
+  domicilio gratis; al revés, 3 unidades cobraban la zona y subir a 6 no lo volvía gratis, y pasar
+  de 19 a 20 tampoco volvía a cobrarlo. `add_order_item`/`remove_order_item` ahora llaman
+  `refresh_delivery_after_cart_change`, que recalcula Armenia y anula el destino si un pueblo del
+  Grupo B o un envío nacional quedan por debajo de su mínimo.
+- **Una dirección de otro municipio se cobraba como Armenia.** La tabla de barrios no sabe en qué
+  ciudad está la dirección: "Barrio Centenario, Calarcá" resolvía a una zona de Armenia y salía con
+  domicilio gratis. `resolve_armenia_address` y `set_delivery_zone_armenia` rechazan una dirección
+  que nombre uno de los 13 pueblos o una ciudad conocida (`delivery_zone::mentioned_town`). Si el
+  nombre es a la vez barrio y municipio (Quimbaya), el bot pregunta, salvo que la dirección diga
+  "Armenia".
+
 ## [1.37.0] - 2026-10-30
 
 ### Added

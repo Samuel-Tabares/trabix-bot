@@ -1639,9 +1639,10 @@ fn add_order_item(input: &Value, context: &mut ConversationContext) -> (String, 
         quantity,
     });
 
+    let (delivery_note, _) = refresh_delivery_after_cart_change(context);
     let (summary, _) = get_order_summary(context);
     (
-        format!("Agregado: {quantity} x {flavor}.\n{summary}"),
+        format!("Agregado: {quantity} x {flavor}.\n{summary}{delivery_note}"),
         false,
     )
 }
@@ -1661,7 +1662,8 @@ fn remove_order_item(input: &Value, context: &mut ConversationContext) -> (Strin
     match position {
         Some(index) => {
             context.items.remove(index);
-            ("Producto quitado del pedido.".to_string(), false)
+            let (delivery_note, _) = refresh_delivery_after_cart_change(context);
+            (format!("Producto quitado del pedido.{delivery_note}"), false)
         }
         None => (format!("No encontré '{flavor}' en el pedido actual."), true),
     }
@@ -1723,6 +1725,82 @@ fn free_delivery_status_line(context: &ConversationContext, total_units: u32) ->
     }
 }
 
+/// Recalcula el domicilio cuando cambia el carrito con un destino ya fijado.
+///
+/// El costo se calculaba una sola vez, al fijar la zona: con 6 unidades quedaba
+/// en $0 y si el cliente bajaba a 3 el pedido salía con domicilio gratis; al
+/// revés, 3 unidades cobraban la zona y subir a 6 no lo volvía gratis. Lo mismo
+/// dejaba pasar un pueblo lejano o un envío nacional por debajo de su mínimo.
+/// Devuelve una nota para el tool-result, vacía si nada cambió.
+fn refresh_delivery_after_cart_change(context: &mut ConversationContext) -> (String, bool) {
+    let total_units: u32 = context.items.iter().map(|item| item.quantity).sum();
+    let drop_destination = |context: &mut ConversationContext| {
+        context.delivery_cost = None;
+        context.pending_zone_kind = None;
+        context.pending_zone_value = None;
+        context.pending_zone_label = None;
+    };
+
+    match context.pending_zone_kind.as_deref() {
+        Some("armenia") => {
+            let Some(zone) = context
+                .pending_zone_value
+                .as_deref()
+                .and_then(ArmeniaZone::from_storage_key)
+            else {
+                return (String::new(), false);
+            };
+            let Some(previous) = context.delivery_cost else {
+                return (String::new(), false);
+            };
+            let cost = delivery_zone::armenia_delivery_cost(zone, total_units) as i32;
+            if cost == previous {
+                return (String::new(), false);
+            }
+            let (message, _) = apply_armenia_zone(zone, context);
+            (
+                format!(
+                    "\n(EL DOMICILIO CAMBIÓ por el cambio de unidades — díselo al cliente: {message})"
+                ),
+                false,
+            )
+        }
+        Some("nearby_town") => {
+            let town = context
+                .pending_zone_value
+                .as_deref()
+                .and_then(delivery_zone::lookup_nearby_town);
+            match town {
+                Some(found) if found.min_units > 0 && total_units < found.min_units => {
+                    drop_destination(context);
+                    (
+                        format!(
+                            "\n(DESTINO ANULADO: para {} el mínimo es de {} unidades y el pedido \
+                             quedó en {total_units}. Díselo al cliente; no se puede despachar allá \
+                             con esta cantidad.)",
+                            found.name, found.min_units
+                        ),
+                        true,
+                    )
+                }
+                _ => (String::new(), false),
+            }
+        }
+        Some("national") if total_units < delivery_zone::MIN_UNITS_NATIONAL => {
+            drop_destination(context);
+            (
+                format!(
+                    "\n(DESTINO ANULADO: el envío nacional exige mínimo {} unidades y el pedido \
+                     quedó en {total_units}. Díselo al cliente.)",
+                    delivery_zone::MIN_UNITS_NATIONAL
+                ),
+                true,
+            )
+        }
+        _ => (String::new(), false),
+    }
+}
+
 /// Resuelve la zona a partir del TEXTO de la dirección, sin que el modelo
 /// elija. Ver `bot::armenia_zones`: si el barrio no está en la tabla o cae en
 /// dos zonas, no se adivina — se le devuelve al modelo la orden de preguntar.
@@ -1747,7 +1825,31 @@ fn resolve_armenia_address(input: &Value, context: &mut ConversationContext) -> 
         )
     };
 
-    match crate::bot::armenia_zones::lookup_zone(address) {
+    let lookup = crate::bot::armenia_zones::lookup_zone(address);
+    if let Some(town) = delivery_zone::mentioned_town(address) {
+        let barrio_is_the_town = matches!(
+            &lookup,
+            crate::bot::armenia_zones::ZoneLookup::Resolved { barrio, .. } if barrio.contains(town.key)
+        );
+        let says_armenia = delivery_zone::normalize(address)
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|w| w == "armenia");
+        if barrio_is_the_town && !says_armenia {
+            return (
+                format!(
+                    "'{}' es a la vez un barrio de Armenia y un municipio. NO lo adivines: \
+                     pregúntale al cliente si es el barrio {} de Armenia o el municipio de {}.",
+                    town.name, town.name, town.name
+                ),
+                true,
+            );
+        }
+        if !barrio_is_the_town {
+            return (other_town_refusal(town.name), true);
+        }
+    }
+
+    match lookup {
         crate::bot::armenia_zones::ZoneLookup::Resolved { zone, barrio } => {
             let (message, is_error) = apply_armenia_zone(zone, context);
             (format!("Lugar reconocido: {barrio}. {message}"), is_error)
@@ -1763,7 +1865,33 @@ fn resolve_armenia_address(input: &Value, context: &mut ConversationContext) -> 
     }
 }
 
+fn other_town_refusal(town: &str) -> String {
+    format!(
+        "La dirección menciona {town}, que NO es Armenia: el domicilio gratis y las tarifas \
+         norte/centro/sur son SOLO de Armenia. Si es uno de los pueblos cercanos usa \
+         set_delivery_nearby_town; si no, set_delivery_national. Si el cliente insiste en que es \
+         Armenia, pídele el barrio de Armenia antes de seguir."
+    )
+}
+
 fn set_delivery_zone_armenia(input: &Value, context: &mut ConversationContext) -> (String, bool) {
+    if let Some(town) = context
+        .delivery_address
+        .as_deref()
+        .and_then(delivery_zone::mentioned_town)
+    {
+        let barrio_is_the_town = context
+            .delivery_address
+            .as_deref()
+            .map(crate::bot::armenia_zones::lookup_zone)
+            .is_some_and(|lookup| matches!(
+                lookup,
+                crate::bot::armenia_zones::ZoneLookup::Resolved { barrio, .. } if barrio.contains(town.key)
+            ));
+        if !barrio_is_the_town {
+            return (other_town_refusal(town.name), true);
+        }
+    }
     let sector = input.get("sector").and_then(Value::as_str).unwrap_or("");
     match ArmeniaZone::from_text(sector) {
         Some(zone) => apply_armenia_zone(zone, context),
@@ -3820,6 +3948,136 @@ mod tests {
 
         assert!(!is_error);
         assert_eq!(context.delivery_type.as_deref(), Some("immediate"));
+    }
+
+    fn uva_vodka(quantity: u32) -> crate::db::models::OrderItemData {
+        crate::db::models::OrderItemData {
+            flavor: "Uva Vodka".to_string(),
+            has_liquor: true,
+            quantity,
+        }
+    }
+
+    #[test]
+    fn armenia_free_delivery_is_lost_when_the_cart_drops_below_six() {
+        let mut context = test_context();
+        context.items = vec![uva_vodka(3), uva_vodka(3)];
+        let (_m, is_error) = set_delivery_zone_armenia(&json!({ "sector": "centro" }), &mut context);
+        assert!(!is_error);
+        assert_eq!(context.delivery_cost, Some(0));
+
+        context.items.truncate(1);
+        let (message, _) = refresh_delivery_after_cart_change(&mut context);
+
+        assert_eq!(context.delivery_cost, Some(8_000));
+        assert!(message.contains("8.000"));
+    }
+
+    #[test]
+    fn armenia_delivery_becomes_free_when_the_cart_reaches_six() {
+        let mut context = test_context();
+        context.items = vec![uva_vodka(3)];
+        set_delivery_zone_armenia(&json!({ "sector": "sur" }), &mut context);
+        assert_eq!(context.delivery_cost, Some(10_000));
+
+        context.items.push(uva_vodka(3));
+        refresh_delivery_after_cart_change(&mut context);
+
+        assert_eq!(context.delivery_cost, Some(0));
+    }
+
+    #[test]
+    fn armenia_delivery_is_charged_again_when_the_cart_reaches_wholesale() {
+        let mut context = test_context();
+        context.items = vec![uva_vodka(10)];
+        set_delivery_zone_armenia(&json!({ "sector": "norte" }), &mut context);
+        assert_eq!(context.delivery_cost, Some(0));
+
+        context.items.push(uva_vodka(10));
+        refresh_delivery_after_cart_change(&mut context);
+
+        assert_eq!(context.delivery_cost, Some(6_000));
+    }
+
+    #[test]
+    fn far_town_destination_is_dropped_when_the_cart_falls_below_its_minimum() {
+        let mut context = test_context();
+        context.items = vec![uva_vodka(20)];
+        let (_m, is_error) = set_delivery_nearby_town(&json!({ "town": "Salento" }), &mut context);
+        assert!(!is_error);
+
+        context.items = vec![uva_vodka(5)];
+        let (message, _) = refresh_delivery_after_cart_change(&mut context);
+
+        assert_eq!(context.delivery_cost, None);
+        assert_eq!(context.pending_zone_kind, None);
+        assert!(message.contains("20"));
+    }
+
+    #[test]
+    fn national_destination_is_dropped_when_the_cart_falls_below_twenty() {
+        let mut context = test_context();
+        context.items = vec![uva_vodka(20)];
+        set_delivery_national(&json!({ "city": "Bogotá" }), &mut context);
+
+        context.items = vec![uva_vodka(19)];
+        let (message, _) = refresh_delivery_after_cart_change(&mut context);
+
+        assert_eq!(context.pending_zone_kind, None);
+        assert!(message.contains("20"));
+    }
+
+    #[test]
+    fn armenia_barrio_in_another_town_is_not_billed_as_armenia() {
+        let mut context = test_context();
+        context.items = vec![uva_vodka(6)];
+        let (message, is_error) =
+            resolve_armenia_address(&json!({ "address": "Barrio Centenario, Calarcá" }), &mut context);
+
+        assert!(is_error);
+        assert!(message.contains("Calarcá"));
+        assert_eq!(context.delivery_cost, None);
+    }
+
+    #[test]
+    fn quimbaya_barrio_vs_town_is_asked_not_guessed() {
+        let mut context = test_context();
+        let (message, is_error) =
+            resolve_armenia_address(&json!({ "address": "calle 10 quimbaya" }), &mut context);
+
+        assert!(is_error);
+        assert!(message.contains("barrio"));
+        assert_eq!(context.delivery_cost, None);
+    }
+
+    #[test]
+    fn quimbaya_barrio_with_armenia_spelled_out_resolves() {
+        let mut context = test_context();
+        context.items = vec![uva_vodka(6)];
+        let (_message, is_error) =
+            resolve_armenia_address(&json!({ "address": "barrio Quimbaya, Armenia" }), &mut context);
+
+        assert!(!is_error);
+        assert_eq!(context.delivery_cost, Some(0));
+    }
+
+    #[test]
+    fn declared_zone_is_refused_when_the_address_names_another_town() {
+        let mut context = test_context();
+        context.delivery_address = Some("Cra 5 #10-20, Circasia".to_string());
+        let (_message, is_error) =
+            set_delivery_zone_armenia(&json!({ "sector": "norte" }), &mut context);
+
+        assert!(is_error);
+        assert_eq!(context.delivery_cost, None);
+    }
+
+    #[test]
+    fn cart_change_without_destination_says_nothing() {
+        let mut context = test_context();
+        let (message, _) = refresh_delivery_after_cart_change(&mut context);
+        assert!(message.is_empty());
+        assert_eq!(context.delivery_cost, None);
     }
 
     #[test]
