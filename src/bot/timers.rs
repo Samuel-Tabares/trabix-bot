@@ -674,6 +674,23 @@ pub(crate) fn availability_resolution_plan(
         let (total_final, mut actions) =
             crate::ai::agent::auto_accept_order_actions(context, delivery_cost);
         let total_text = crate::ai::agent::format_thousands(u32::try_from(total_final).unwrap_or(0));
+        // Si ya había dicho cómo paga, se cierra con eso en vez de volver a
+        // preguntárselo (suite con IA, P01/P04, 2026-11-19).
+        if let Some((state, pay_actions, method)) = crate::ai::agent::apply_payment_preference(context) {
+            let body = if method == "transfer" {
+                format!("✅ ¡Confirmado! Tenemos quien te lo lleve 🛵 El total es *${total_text}*, por transferencia: te paso los datos 👇")
+            } else {
+                format!("✅ ¡Confirmado! Tenemos quien te lo lleve 🛵 El total es *${total_text}* y lo pagas en efectivo al recibir.")
+            };
+            actions.push(BotAction::SendText { to: phone, body });
+            actions.extend(pay_actions);
+            let line = format!(
+                "[SISTEMA] El equipo confirmó disponibilidad y el pedido quedó CONFIRMADO con el pago \
+                 que el cliente ya había dicho ({method}), total ${total_text}. Ya se le dijo; no le \
+                 vuelvas a preguntar el pago."
+            );
+            return (state, actions, line, AvailabilityResolution::Confirmed { total_final });
+        }
         actions.push(BotAction::SendText {
             to: phone,
             body: format!(

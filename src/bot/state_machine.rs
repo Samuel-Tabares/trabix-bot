@@ -527,6 +527,7 @@ pub struct ConversationContext {
     pub pending_zone_label: Option<String>,
     pub handoff_reason: Option<crate::db::models::HandoffReason>,
     pub availability_deadline: Option<chrono::DateTime<chrono::Utc>>,
+    pub payment_preference: Option<String>,
 }
 
 impl ConversationContext {
@@ -576,6 +577,7 @@ impl ConversationContext {
             pending_zone_label: state_data.pending_zone_label.clone(),
             handoff_reason: state_data.handoff_reason,
             availability_deadline: state_data.availability_deadline,
+            payment_preference: state_data.payment_preference.clone(),
         }
     }
 
@@ -613,6 +615,7 @@ impl ConversationContext {
             pending_zone_label: self.pending_zone_label.clone(),
             handoff_reason: self.handoff_reason,
             availability_deadline: self.availability_deadline,
+            payment_preference: self.payment_preference.clone(),
         }
     }
 
@@ -650,6 +653,7 @@ impl ConversationContext {
         self.confirmed_order_snapshot = None;
         self.referral_prompt_resolved = false;
         self.availability_deadline = None;
+        self.payment_preference = None;
     }
 }
 

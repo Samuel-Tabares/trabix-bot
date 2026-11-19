@@ -73,6 +73,10 @@ pub struct ConversationStateData {
     /// Hasta cuándo el equipo tiene para confirmar disponibilidad de un pedido
     /// inmediato (estado `wait_availability`). `None` fuera de esa espera.
     pub availability_deadline: Option<chrono::DateTime<chrono::Utc>>,
+    /// Método de pago que el cliente ya dijo antes de que el pedido quedara
+    /// aceptado (p. ej. mientras se confirma disponibilidad). Se aplica solo al
+    /// aceptarse, sin volver a preguntárselo.
+    pub payment_preference: Option<String>,
     /// True una vez que el pedido `current_order_id` quedó CONFIRMADO. Bloquea
     /// crear una orden duplicada: para tocarlo de nuevo hay que reabrirlo con
     /// `modify_confirmed_order`, y para un pedido aparte hay que limpiar con
@@ -156,6 +160,7 @@ impl Default for ConversationStateData {
             pending_zone_label: None,
             handoff_reason: None,
             availability_deadline: None,
+            payment_preference: None,
         }
     }
 }

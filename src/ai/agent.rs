@@ -206,6 +206,14 @@ Reglas que no puedes romper:
   el bloque "ESTADO ACTUAL DEL CASO" ya muestra como conocido.
 - Nunca inventes precios, sabores, horarios, zonas ni disponibilidad: siempre usa una herramienta \
   para obtener esos datos antes de afirmarlos.
+- Nunca nombres herramientas, funciones ni procesos internos al cliente ("set_payment_method", \
+  "el sistema no pudo registrar", "error"). Si una herramienta falla, sigue la conversación con \
+  normalidad y pide lo que falte.
+- Si el cliente dice cómo va a pagar antes de que el pedido esté confirmado, igual llama \
+  set_payment_method: queda anotado y se aplica solo al confirmarse, sin volver a preguntárselo.
+- Nunca prometas un tiempo de entrega ("30 a 45 minutos", "en un ratico", "ya va en camino"): \
+  ninguna herramienta lo sabe. Si lo preguntan, di que el domiciliario sale apenas se confirme y \
+  que cualquier novedad se la avisamos por aquí.
 - Prohibido enunciar cualquier cifra en pesos (unitario, subtotal, domicilio, total, descuento, \
   comisión) que no venga copiada TEXTUALMENTE de un tool-result real (get_order_summary, \
   add_order_item, etc.). Nunca sumes, restes ni calcules cifras tú mismo, ni "adelantes" un total \
@@ -1418,19 +1426,19 @@ fn dispatch_tool(
         }
         "finalize_checkout" => finalize_checkout(id, context),
         "set_payment_method" => {
-            // El pedido tiene que estar aceptado (estado persistido antes de
-            // este turno = select_payment_method, o wait_receipt si está
-            // cambiando de método). Si se intenta elegir pago antes de eso,
-            // todavía no hay un `total_final` confiable.
+            // Con el pedido aceptado (estado persistido select_payment_method
+            // o wait_receipt) el pago se aplica; antes de eso solo se anota
+            // como preferencia (`note_payment_preference`). Aceptado en este mismo turno (p. ej. un programado que se
+            // autoaceptó recién): el estado persistido todavía es el viejo,
+            // pero ya hay total y no hay espera de disponibilidad.
+            let accepted_this_turn =
+                context.total_final.is_some() && context.availability_deadline.is_none();
             if !matches!(
                 current_state,
                 ConversationState::SelectPaymentMethod | ConversationState::WaitReceipt
-            ) {
-                return ToolOutcome::Result(error_result(
-                    id,
-                    "Todavía no se puede elegir método de pago: el pedido aún no está aceptado \
-                     (falta el costo del envío o finalize_checkout). Resuelve eso primero.",
-                ));
+            ) && !accepted_this_turn
+            {
+                return note_payment_preference(id, input, context);
             }
             set_payment_method(id, input, context)
         }
@@ -1731,9 +1739,18 @@ fn free_delivery_status_line(context: &ConversationContext, total_units: u32) ->
              MAYORISTA y el domicilio SIEMPRE se cobra. No ofrezcas domicilio gratis ni digas que \
              faltan unidades para conseguirlo.)"
         ),
-        None => format!(
+        None if context.pending_zone_kind.as_deref() == Some("armenia") => format!(
             "(Domicilio gratis en Armenia: SÍ, este pedido de {total_units} unidades ya califica. \
              No digas que faltan unidades.)"
+        ),
+        // Sin destino resuelto todavía: el modelo prometía "domicilio gratis"
+        // antes de saber la dirección y el cliente resultaba ser de Calarcá
+        // (suite con IA, P05, 2026-11-19).
+        None => format!(
+            "(Domicilio gratis: con {total_units} unidades califica SOLO si la entrega es en \
+             Armenia, y todavía no sabes el destino. NO lo prometas ni digas que es gratis hasta \
+             resolver la dirección con las herramientas de zona; si lo mencionas, dilo como \
+             condición: \"si es en Armenia, el domicilio te sale gratis\".)"
         ),
     }
 }
@@ -2531,12 +2548,47 @@ pub(crate) fn auto_accept_order_actions(
     (total_final, actions)
 }
 
+/// Aplica el método de pago que el cliente ya había dicho (ver
+/// `note_payment_preference`) a un pedido recién aceptado. Devuelve el estado
+/// siguiente, las acciones y el método, o `None` si no había preferencia o no
+/// se pudo aplicar (entonces se le pregunta como siempre).
+pub(crate) fn apply_payment_preference(
+    context: &mut ConversationContext,
+) -> Option<(ConversationState, Vec<BotAction>, String)> {
+    let method = context.payment_preference.clone()?;
+    match set_payment_method("auto_pref", &json!({ "method": method }), context) {
+        ToolOutcome::ResultWithStateChange(ContentBlock::ToolResult { is_error, .. }, state, actions)
+            if is_error != Some(true) =>
+        {
+            context.payment_preference = None;
+            Some((state, actions, method))
+        }
+        _ => None,
+    }
+}
+
 fn auto_accept_order(
     id: &str,
     context: &mut ConversationContext,
     delivery_cost: i32,
 ) -> ToolOutcome {
-    let (total_final, actions) = auto_accept_order_actions(context, delivery_cost);
+    let (total_final, mut actions) = auto_accept_order_actions(context, delivery_cost);
+    if let Some((state, pay_actions, method)) = apply_payment_preference(context) {
+        actions.extend(pay_actions);
+        return ToolOutcome::ResultWithStateChange(
+            ok_result(
+                id,
+                format!(
+                    "Pedido auto-aceptado y CONFIRMADO con el pago que el cliente ya había dicho ({}). \
+                     Total final: ${}. Confírmaselo en una frase; no le vuelvas a preguntar el pago.",
+                    if method == "transfer" { "transferencia: ya le llegan los datos" } else { "contra entrega" },
+                    format_thousands(u32::try_from(total_final).unwrap_or(0))
+                ),
+            ),
+            state,
+            actions,
+        );
+    }
 
     ToolOutcome::ResultWithStateChange(
         ok_result(
@@ -2751,6 +2803,35 @@ pub(crate) fn checkout_precondition_error(context: &ConversationContext) -> Opti
             missing.join(", ")
         ))
     }
+}
+
+/// El cliente dijo cómo paga antes de que el pedido estuviera aceptado. Antes
+/// la herramienta fallaba y el modelo improvisaba: le mandaba datos de
+/// transferencia sin pedido confirmado o le filtraba al cliente el nombre de la
+/// herramienta (suite con IA, P04/P10, 2026-11-19). Ahora se anota y se aplica
+/// sola al aceptarse (`availability_resolution_plan`).
+fn note_payment_preference(id: &str, input: &Value, context: &mut ConversationContext) -> ToolOutcome {
+    let method = input.get("method").and_then(Value::as_str).unwrap_or("");
+    if !matches!(method, "cash_on_delivery" | "transfer") {
+        return ToolOutcome::Result(error_result(id, format!("Método de pago desconocido: {method}")));
+    }
+    if method == "cash_on_delivery" && context.pending_zone_kind.as_deref() == Some("national") {
+        return ToolOutcome::Result(error_result(
+            id,
+            "Envío nacional no admite contra entrega: todo se paga por transferencia. Explícaselo \
+             al cliente sin mencionar herramientas.",
+        ));
+    }
+    context.payment_preference = Some(method.to_string());
+    ToolOutcome::Result(ok_result(
+        id,
+        format!(
+            "Anotado: el cliente pagará {}. El pedido TODAVÍA no está confirmado: no le mandes \
+             datos de pago ni le pidas comprobante. Cuando se confirme, el sistema aplica este \
+             método solo y se lo dice. No menciones herramientas ni procesos internos.",
+            if method == "transfer" { "por transferencia" } else { "en efectivo contra entrega" }
+        ),
+    ))
 }
 
 fn set_payment_method(id: &str, input: &Value, context: &mut ConversationContext) -> ToolOutcome {
@@ -3812,6 +3893,7 @@ mod tests {
             pending_zone_label: None,
             handoff_reason: None,
             availability_deadline: None,
+            payment_preference: None,
         }
     }
 
@@ -4279,6 +4361,56 @@ mod tests {
 
         assert!(is_error);
         assert_eq!(context.delivery_cost, None);
+    }
+
+    #[test]
+    fn free_delivery_is_not_promised_before_the_destination_is_known() {
+        let mut context = test_context();
+        context.items = vec![uva_vodka(6)];
+        let line = free_delivery_status_line(&context, 6);
+        assert!(line.contains("NO lo prometas"), "{line}");
+
+        set_delivery_zone_armenia(&json!({ "sector": "centro" }), &mut context);
+        let line = free_delivery_status_line(&context, 6);
+        assert!(line.contains("SÍ"), "{line}");
+    }
+
+    #[test]
+    fn payment_said_early_is_noted_not_rejected() {
+        let mut context = test_context();
+        let outcome = note_payment_preference("id", &json!({ "method": "cash_on_delivery" }), &mut context);
+        match outcome {
+            ToolOutcome::Result(ContentBlock::ToolResult { content, is_error, .. }) => {
+                assert_ne!(is_error, Some(true));
+                assert!(content.contains("Anotado"));
+            }
+            _ => panic!("expected a plain result"),
+        }
+        assert_eq!(context.payment_preference.as_deref(), Some("cash_on_delivery"));
+    }
+
+    #[test]
+    fn availability_confirmed_with_cash_preference_closes_without_asking_again() {
+        use crate::bot::timers::{availability_resolution_plan, AvailabilityOutcome, AvailabilityResolution};
+        let mut context = test_context();
+        context.delivery_type = Some("immediate".to_string());
+        context.current_order_id = Some(79);
+        context.payment_preference = Some("cash_on_delivery".to_string());
+        let _ = availability_request_actions(&mut context, 8_000);
+
+        let (_next, actions, line, resolution) =
+            availability_resolution_plan(&mut context, AvailabilityOutcome::Available);
+
+        assert!(matches!(resolution, AvailabilityResolution::Confirmed { .. }));
+        assert_eq!(context.payment_method.as_deref(), Some("cash_on_delivery"));
+        assert!(context.payment_preference.is_none());
+        let texts: Vec<&str> = actions
+            .iter()
+            .filter_map(|a| match a { BotAction::SendText { body, .. } => Some(body.as_str()), _ => None })
+            .collect();
+        assert!(texts.iter().any(|t| t.contains("efectivo al recibir")), "{texts:?}");
+        assert!(!texts.iter().any(|t| t.contains("¿Pagas")), "volvió a preguntar: {texts:?}");
+        assert!(line.contains("no le") && line.contains("pago"));
     }
 
     #[test]

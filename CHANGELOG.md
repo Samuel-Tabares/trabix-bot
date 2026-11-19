@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+Hallazgos de la primera corrida de la suite con IA (`tests/sim/run_ai_scenarios.py`, 2026-11-19):
+
+- **El bot prometía "domicilio gratis" antes de saber la dirección.** Un cliente de Calarcá oyó
+  "domicilio gratis" y terminó pagando $15.000. La línea de estado del resumen ahora solo dice "SÍ"
+  con la zona de Armenia ya resuelta; antes indica que es condicional.
+- **Si el cliente decía cómo paga antes de que el pedido estuviera aceptado**, la herramienta
+  fallaba y el modelo improvisaba: mandaba datos de transferencia sin pedido confirmado o le
+  filtraba al cliente el nombre de la herramienta. Ahora `set_payment_method` lo anota
+  (`state_data.payment_preference`) y se aplica solo al aceptarse — al confirmar disponibilidad o
+  al autoaceptar un programado — sin volver a preguntarlo.
+- **Prompt:** prohibido prometer tiempos de entrega y nombrar herramientas o procesos internos.
+
 ## [1.39.0] - 2026-11-18
 
 ### Changed

@@ -143,6 +143,7 @@ mod tests {
             pending_zone_label: None,
             handoff_reason: None,
             availability_deadline: None,
+            payment_preference: None,
         }
     }
 
