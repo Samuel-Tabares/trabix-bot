@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.40.0] - 2026-11-19
+
+### Added
+
+- **`ANTHROPIC_MODEL`** (opcional): cambia el modelo del bot desde Railway sin redesplegar. Sin
+  definir sigue `claude-sonnet-5`. Pensado para probar `claude-opus-5-5` (compatible: thinking
+  adaptativo y `effort: low` explícito) y volver al instante.
+
 ### Fixed
 
 Hallazgos de la primera corrida de la suite con IA (`tests/sim/run_ai_scenarios.py`, 2026-11-19):

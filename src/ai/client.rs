@@ -178,7 +178,13 @@ impl AnthropicClient {
         Self {
             http,
             api_key,
-            model: DEFAULT_MODEL.to_string(),
+            // `ANTHROPIC_MODEL` cambia el modelo sin redesplegar (p. ej. probar
+            // claude-opus-5-5 y volver). Vacía o ausente = DEFAULT_MODEL.
+            model: std::env::var("ANTHROPIC_MODEL")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| DEFAULT_MODEL.to_string()),
         }
     }
 
