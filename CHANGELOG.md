@@ -17,6 +17,11 @@ Hallazgos de la primera corrida de la suite con IA (`tests/sim/run_ai_scenarios.
   (`state_data.payment_preference`) y se aplica solo al aceptarse — al confirmar disponibilidad o
   al autoaceptar un programado — sin volver a preguntarlo.
 - **Prompt:** prohibido prometer tiempos de entrega y nombrar herramientas o procesos internos.
+- **"¡Pedido enviado!" de un cierre que falló.** El prompt pedía escribir la confirmación en el
+  mismo mensaje que `finalize_checkout`; si el cierre fallaba (faltaba la dirección), el cliente
+  igual leía "pedido enviado" y no había pedido. Ahora el texto que el modelo escribe junto a una
+  herramienta que falla se descarta y el modelo responde de nuevo sabiendo del error; el prompt ya
+  no pide confirmar a ciegas. Escenario fijo S19.
 
 ## [1.39.0] - 2026-11-18
 

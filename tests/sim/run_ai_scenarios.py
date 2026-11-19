@@ -150,7 +150,8 @@ def customer_turn(persona: dict, transcript: list[dict]) -> tuple[dict, dict]:
     return claude_brain.ask_json(system, f"CONVERSACIÓN HASTA AHORA:\n{convo}\n\nTu siguiente mensaje:", CUSTOMER_SCHEMA, CUSTOMER_MODEL)
 
 
-def judge(persona: dict, transcript: list[dict], calls: list[dict], db: dict) -> tuple[dict, dict]:
+def judge(persona: dict, transcript: list[dict], calls: list[dict], db: dict, results: list | None = None) -> tuple[dict, dict]:
+    results = results or []
     system = ("Eres un auditor exigente del bot de WhatsApp de Trabix Granizados. Revisa si el bot hizo lo correcto "
               "según las reglas y lo esperado del escenario. Sé concreto: cita la evidencia. No marques como problema "
               "algo que esté bien. Distingue fallas de dinero/operación (alta) de redacción (baja).\n\n" + BUSINESS_RULES)
@@ -158,7 +159,9 @@ def judge(persona: dict, transcript: list[dict], calls: list[dict], db: dict) ->
         f"ESCENARIO {persona['id']} — {persona['perfil']}\nObjetivo del cliente: {persona['objetivo']}\n"
         f"Lo esperado: {persona['esperado']}\n\n"
         "CONVERSACIÓN (lo que vio el cliente):\n" + "\n".join(f"{t['who'].upper()}: {t['text']}" for t in transcript) +
-        "\n\nHERRAMIENTAS QUE LLAMÓ EL BOT Y LO QUE LE DEVOLVIERON:\n" + json.dumps(calls, ensure_ascii=False)[:20000] +
+        "\n\nHERRAMIENTAS QUE LLAMÓ EL BOT (en orden):\n" + json.dumps(calls, ensure_ascii=False)[:15000] +
+        "\n\nRESULTADOS QUE DEVOLVIERON (en orden; un error significa que esa llamada NO tuvo efecto y el "
+        "reintento posterior no es un duplicado):\n" + json.dumps(results, ensure_ascii=False)[:15000] +
         "\n\nESTADO FINAL EN LA BASE:\n" + json.dumps(db, ensure_ascii=False, default=str)
     )
     return claude_brain.ask_json(system, prompt, JUDGE_SCHEMA, JUDGE_MODEL)
@@ -248,7 +251,8 @@ def run_persona(idx: int, persona: dict) -> dict:
             break
     st = sim.fake_state()
     db = db_snapshot(phone)
-    verdict, ju = judge(persona, transcript, st.get("brain_calls", []), db)
+    tool_results = [t for c in st.get("llm_calls", []) for t in c.get("tool_results", [])]
+    verdict, ju = judge(persona, transcript, st.get("brain_calls", []), db, tool_results)
     return {
         "persona": persona, "transcript": transcript, "events": events, "calls": st.get("brain_calls", []),
         "brain_errors": st.get("brain_errors", []), "db": db, "verdict": verdict,

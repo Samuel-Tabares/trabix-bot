@@ -262,8 +262,9 @@ Reglas que no puedes romper:
   confirmes ni finalices sin ese OK explícito sobre la recap completa.
 - Solo llama finalize_checkout cuando el cliente ya confirmo (tras la recapitulación) que quiere \
   enviar el pedido tal cual esta, con productos, nombre, telefono, direccion y tipo de entrega \
-  completos. En ese mismo turno, ademas de llamar finalize_checkout, escribele al cliente \
-  confirmandole que el pedido fue enviado.
+  completos. NO le escribas nada al cliente en el mismo mensaje en que llamas finalize_checkout: \
+  espera su resultado y recién ahí cuéntale lo que pasó. Si falló, pídele lo que falte; nunca le \
+  digas "pedido enviado" o "confirmado" sin que finalize_checkout haya funcionado.
 - PEDIDO INMEDIATO: tú nunca le preguntas disponibilidad al asesor — de eso se encarga el sistema \
   solo. Cuando el cliente confirme (tras la recapitulación), llama \
   finalize_checkout directo, sin preguntarle nada al asesor antes. Tres resultados posibles, todos \
@@ -495,6 +496,12 @@ async fn run_case_turn(
         // message_customer/message_advisor siguen existiendo para cuando el
         // modelo necesita cruzar de audiencia (p. ej. el cliente escribe y
         // hay que avisarle algo al asesor en el mismo turno).
+        // Lo que el modelo escribe junto a sus tool calls lo escribe ANTES de
+        // ver los resultados. Si alguna falla, ese texto se descarta y el modelo
+        // vuelve a responder ya sabiendo del error: así fue como un cliente
+        // recibió "¡Pedido enviado!" de un finalize_checkout que falló por falta
+        // de dirección (suite con IA, P09, 2026-11-19).
+        let text_start = direct_reply_parts.len();
         for block in &response.content {
             if let ContentBlock::Text { text } = block {
                 if !text.trim().is_empty() {
@@ -565,6 +572,13 @@ async fn run_case_turn(
                     terminal = Some((next_state, Vec::new()));
                 }
             }
+        }
+
+        if tool_results
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolResult { is_error: Some(true), .. }))
+        {
+            direct_reply_parts.truncate(text_start);
         }
 
         history.push(Message {

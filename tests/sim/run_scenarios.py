@@ -305,6 +305,14 @@ SCENARIOS: list[dict] = [
          "wait_sweep": "main_menu",
          "expect": {"out": ["No alcanzamos"], "sql": [("order_status", "cancelled")]}},
     ]},
+    {"id": "S19", "title": "El modelo dice 'pedido enviado' pero el cierre falla: ese texto no sale", "steps": [
+        HELLO,
+        {"send": "6 de uva para mañana", "script": [
+            {"tools": [item(UVA, 6, "uva vodka"), ["set_delivery_schedule", {"date": TOMORROW, "time": "15:00"}]]},
+            {"text": "¡Pedido enviado! 🍧", "tools_with_text": [["finalize_checkout", {}]]},
+            {"text": "Me falta tu nombre y la dirección para cerrar el pedido."}],
+         "expect": {"out": ["Me falta"], "out_not": ["Pedido enviado"]}},
+    ]},
     {"id": "S18", "title": "Foto y nadie atiende en 15 min: el bot avisa y retoma", "steps": [
         HELLO,
         {"send": {"type": "image", "image": {"id": "media.sim.img2", "mime_type": "image/jpeg"}},
@@ -374,6 +382,9 @@ def run() -> int:
             for s in exp.get("out", []):
                 if s.lower() not in new_out.lower():
                     problems.append(f"paso {n}: el cliente no recibió «{s}». Recibió: {new_out[:300] or '(nada)'}")
+            for s in exp.get("out_not", []):
+                if s.lower() in new_out.lower():
+                    problems.append(f"paso {n}: el cliente recibió «{s}» y no debía")
             for s in exp.get("tools", []):
                 if s.lower() not in tool_text.lower():
                     problems.append(f"paso {n}: ninguna herramienta devolvió «{s}». Devolvieron: {tool_text[:400] or '(nada)'}")

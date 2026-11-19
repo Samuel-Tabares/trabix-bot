@@ -46,7 +46,13 @@ def _tool_results(request: dict) -> list[str]:
 
 
 def _anthropic_response(step: dict) -> dict:
-    if "tools" in step:
+    if "tools_with_text" in step:
+        content = [{"type": "text", "text": step.get("text", "")}] + [
+            {"type": "tool_use", "id": _next_id("toolu_sim_"), "name": name, "input": args}
+            for name, args in step["tools_with_text"]
+        ]
+        stop = "tool_use"
+    elif "tools" in step:
         content = [
             {"type": "tool_use", "id": _next_id("toolu_sim_"), "name": name, "input": args}
             for name, args in step["tools"]
