@@ -15,12 +15,15 @@ Formato de cada paso del guion:
 """
 
 import json
+import os
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOCK = threading.Lock()
-STATE: dict = {"outbox": [], "llm_calls": [], "script": [], "missing_script": 0}
+STATE: dict = {"outbox": [], "llm_calls": [], "script": [], "missing_script": 0, "brain_usage": [], "brain_errors": [], "brain_calls": []}
+# script = guion fijo (gratis); claude = Claude Code con la suscripción (ver claude_brain.py)
+BRAIN = os.environ.get("SIM_BRAIN", "script")
 COUNTER = {"n": 0}
 
 
@@ -94,7 +97,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/__reset":
             self._body()
             with LOCK:
-                STATE.update(outbox=[], llm_calls=[], script=[], missing_script=0)
+                STATE.update(outbox=[], llm_calls=[], script=[], missing_script=0, brain_usage=[], brain_errors=[], brain_calls=[])
             self._json(200, {"ok": True})
             return
         if self.path == "/__script":
@@ -116,6 +119,26 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/v1/messages":
             data = self._body()
+            if BRAIN == "claude":
+                import claude_brain
+                with LOCK:
+                    STATE["llm_calls"].append({"tool_results": _tool_results(data)})
+                try:
+                    response, usage = claude_brain.respond(data)
+                except Exception as err:  # el bot verá un 500 y degradará como en producción
+                    with LOCK:
+                        STATE["brain_errors"].append(str(err)[:500])
+                    self._json(500, {"type": "error", "error": {"type": "api_error", "message": str(err)[:300]}})
+                    return
+                with LOCK:
+                    STATE["brain_usage"].append(usage)
+                    for b in response["content"]:
+                        if b["type"] == "tool_use":
+                            STATE["brain_calls"].append({"name": b["name"], "input": b["input"]})
+                        elif b["type"] == "text" and b["text"]:
+                            STATE["brain_calls"].append({"name": "(texto al cliente)", "input": b["text"][:300]})
+                self._json(200, response)
+                return
             with LOCK:
                 STATE["llm_calls"].append({"tool_results": _tool_results(data)})
                 if STATE["script"]:

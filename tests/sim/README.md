@@ -45,3 +45,30 @@ con el guion de lo que "responde el modelo", o llama un endpoint interno, o
 prepara la base y espera el barrido; después revisa lo que le llegó al cliente
 (`out`), lo que devolvieron las herramientas (`tools`), cuántas veces se llamó
 al modelo y el estado en la base (`sql`).
+
+## Suite con IA real, pagada por la suscripción (`run_ai_scenarios.py`)
+
+Para ver cómo responde la IA de verdad sin gastar créditos de API: con
+`SIM_BRAIN=claude`, `fake_services.py` le pasa cada petición del bot a
+`claude -p` (Claude Code, con la sesión de la suscripción de Samuel). Un segundo
+Claude hace de cliente de Armenia según una persona (`PERSONAS`) y un tercero
+hace de juez con las reglas del negocio, la conversación, las herramientas que
+llamó el bot y lo que quedó en la base.
+
+```bash
+SIM_BRAIN=claude SIM_BRAIN_MODEL=claude-sonnet-5 python3 tests/sim/fake_services.py 9900 &
+# bot igual que arriba
+python3 tests/sim/run_ai_scenarios.py            # las 12 personas
+python3 tests/sim/run_ai_scenarios.py P03 P10    # algunas
+```
+
+Deja `docs/qa_ia/<fecha>/reporte.md` (veredicto, problemas con evidencia y la
+conversación de cada persona) y `datos.json`. El reporte trae también los tokens
+que usó el bot convertidos a lo que costarían en la API con Sonnet 5, Sonnet 5.5
+y Opus 5.5: es la forma de comparar modelos antes de cambiar el de producción
+(`SIM_BRAIN_MODEL=claude-opus-5-5` para correr la misma suite con Opus).
+
+Límites: Claude Code recibe las herramientas descritas en texto y responde JSON
+en vez de `tool_use` nativo, así que algún detalle de formato puede ser del
+puente y no del bot (p. ej. un `\n` literal). Tarda ~3–5 min por persona y
+consume el cupo de la suscripción. **Nunca** apuntar el bot de producción a esto.
