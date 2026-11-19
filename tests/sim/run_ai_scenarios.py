@@ -209,9 +209,11 @@ def run_persona(idx: int, persona: dict) -> dict:
     for turn in range(MAX_TURNS):
         msg, u = customer_turn(persona, transcript)
         side_usage.append(u)
-        if msg.get("done") and turn > 0:
-            if msg.get("message"):
-                transcript.append({"who": "cliente", "text": msg["message"]})
+        # "done" significa "después de este mensaje ya no escribo más": el
+        # mensaje igual se le manda al bot (antes se cortaba aquí y un "sí,
+        # confirmo" final nunca le llegaba, lo que parecía un pedido perdido).
+        finished = bool(msg.get("done")) and turn > 0
+        if finished and not (msg.get("message") or "").strip():
             break
         st = sim.fake_state()
         prev_out = len([o for o in st["outbox"] if o["to"] == phone])
@@ -242,6 +244,8 @@ def run_persona(idx: int, persona: dict) -> dict:
                 transcript.append({"who": "bot", "text": o["text"]})
         if sim.takeover_active(phone) == "true":
             events.append("El caso pasó a un humano.")
+        if finished:
+            break
     st = sim.fake_state()
     db = db_snapshot(phone)
     verdict, ju = judge(persona, transcript, st.get("brain_calls", []), db)
