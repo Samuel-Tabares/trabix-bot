@@ -129,7 +129,9 @@ def respond(request: dict) -> tuple[dict, dict]:
     out = data.get("structured_output") or {}
     content = []
     if out.get("text"):
-        content.append({"type": "text", "text": out["text"]})
+        # En modo JSON el modelo a veces escapa los saltos de línea dos veces;
+        # en producción (bloques de texto nativos) eso no pasa.
+        content.append({"type": "text", "text": out["text"].replace("\\n", "\n")})
     for call in out.get("tool_calls") or []:
         content.append({"type": "tool_use", "id": f"toolu_cc_{uuid.uuid4().hex[:16]}",
                         "name": call.get("name", ""), "input": call.get("input") or {}})
