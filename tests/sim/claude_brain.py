@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 import uuid
 
 MODEL = os.environ.get("SIM_BRAIN_MODEL", "claude-sonnet-5")
@@ -59,14 +60,26 @@ def _claude(system: str, prompt: str, schema: dict, model: str) -> dict:
         "--no-session-persistence", "--strict-mcp-config",
         "--setting-sources", "", "--disable-slash-commands",
     ]
-    out = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=TIMEOUT_S,
-                         cwd=os.environ.get("SIM_CLAUDE_CWD", "/tmp"))
-    if out.returncode != 0:
-        raise RuntimeError(f"claude -p falló: {out.stderr.strip()[:500]}")
-    data = json.loads(out.stdout)
-    if data.get("is_error"):
-        raise RuntimeError(f"claude -p devolvió error: {str(data.get('result'))[:500]}")
-    return data
+    # La suscripción tiene límites por ventana de tiempo: un corte no debe
+    # tumbar la corrida entera (pasó en la de Opus 5.5 del 2026-11-19).
+    last = ""
+    for wait_s in (0, 30, 90, 240):
+        if wait_s:
+            time.sleep(wait_s)
+        try:
+            out = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=TIMEOUT_S,
+                                 cwd=os.environ.get("SIM_CLAUDE_CWD", "/tmp"))
+        except subprocess.TimeoutExpired:
+            last = "timeout"
+            continue
+        try:
+            data = json.loads(out.stdout) if out.stdout.strip() else {}
+        except json.JSONDecodeError:
+            data = {}
+        if out.returncode == 0 and data and not data.get("is_error"):
+            return data
+        last = (str(data.get("result")) if data else "") or out.stderr.strip() or out.stdout.strip()
+    raise RuntimeError(f"claude -p falló tras reintentos: {last[:500]}")
 
 
 def _main_usage(data: dict, model: str) -> dict:
