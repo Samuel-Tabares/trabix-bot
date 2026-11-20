@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.41.1] - 2026-11-19
+
+### Fixed
+
+- **Un pedido programado se aceptaba fuera del horario de domicilios** (8 am – 11 pm): solo se
+  exigían las 3 horas de anticipación. Un cliente simulado quedó programado para las 11:45 pm
+  (suite con IA, P10). `set_delivery_schedule` ahora rechaza la hora y pide otra dentro del horario.
+
 ## [1.41.0] - 2026-11-19
 
 ### Changed

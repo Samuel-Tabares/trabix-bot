@@ -1594,6 +1594,21 @@ fn set_delivery_schedule(input: &Value, context: &mut ConversationContext) -> (S
         );
     };
 
+    // Un programado solo se entrega dentro del horario de domicilios. Antes se
+    // aceptaba cualquier hora con las 3h de anticipación: un cliente quedó
+    // programado para las 11:45 pm (suite con IA, P10, 2026-11-19).
+    if !crate::bot::states::scheduling::is_within_business_hours(time) {
+        return (
+            format!(
+                "A esa hora no hacemos entregas: el horario de domicilios es {}. Pídele al \
+                 cliente otra hora dentro de ese horario (hoy si alcanza con {SCHEDULED_MIN_LEAD_HOURS}h \
+                 de anticipación, o mañana).",
+                crate::bot::states::scheduling::immediate_delivery_hours_text()
+            ),
+            true,
+        );
+    }
+
     let scheduled_at = chrono::NaiveDateTime::new(date, time);
     let now_bogota = crate::bot::states::scheduling::current_bogota_now().naive_local();
     let min_at = now_bogota + chrono::Duration::hours(SCHEDULED_MIN_LEAD_HOURS);
@@ -4432,6 +4447,20 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_delivery_outside_business_hours_is_refused() {
+        let mut context = test_context();
+        let tomorrow = (crate::bot::states::scheduling::current_bogota_now() + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let (message, is_error) =
+            set_delivery_schedule(&json!({ "date": tomorrow, "time": "23:45" }), &mut context);
+        assert!(is_error, "{message}");
+        assert!(message.contains("horario"));
+        let (_m, ok_err) = set_delivery_schedule(&json!({ "date": tomorrow, "time": "15:00" }), &mut context);
+        assert!(!ok_err);
+    }
+
+    #[test]
     fn cart_change_without_destination_says_nothing() {
         let mut context = test_context();
         let (message, _) = refresh_delivery_after_cart_change(&mut context);
@@ -4665,6 +4694,11 @@ mod tests {
     fn set_delivery_schedule_accepts_a_same_day_slot_four_hours_out() {
         let mut context = test_context();
         let soon = crate::bot::states::scheduling::current_bogota_now() + chrono::Duration::hours(4);
+        // Fuera del horario de domicilios la hora se rechaza por otra regla
+        // (ver scheduled_delivery_outside_business_hours_is_refused).
+        if !crate::bot::states::scheduling::is_within_business_hours(soon.time()) {
+            return;
+        }
         let outcome = set_delivery_schedule(
             &json!({
                 "date": soon.format("%Y-%m-%d").to_string(),
