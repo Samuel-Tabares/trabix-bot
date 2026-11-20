@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.41.0] - 2026-11-19
+
+### Changed
+
+- **El bot pasa a `claude-sonnet-5-5`** (decisión de Samuel). Mismo precio que Sonnet 5 por token
+  de entrada y salida; la lectura de caché, que es casi todo el costo de este bot, cuesta la mitad.
+  `ANTHROPIC_MODEL=claude-sonnet-5` vuelve al anterior sin redesplegar.
+- **`thinking.block_binding: drop_block`** con el beta `thinking-binding-controls-2026-08-01`.
+  Desde Sonnet 5.5 los bloques de thinking quedan atados al historial exacto; este bot cambia el
+  estado del caso en cada turno y recorta la memoria, así que en una cuenta con la verificación
+  activa cada turno sería un 400. Con `drop_block` la API descarta el thinking viejo y sigue. El log
+  `anthropic messages usage` trae `dropped_thinking_blocks`. Sonnet 5 acepta el mismo cuerpo.
+- **Prompt:** lo que el cliente deba leer va en la respuesta final o con `message_customer`. En
+  Sonnet 5.5 el texto largo escrito junto a llamadas a herramientas vuelve como bloque de thinking
+  oculto y no le llegaría.
+
+### Fixed
+
+- **Una negativa del modelo (`stop_reason: "refusal"`) dejaba al cliente sin respuesta.** Ahora es
+  una falla del turno: el cliente recibe el mensaje de problema técnico y el asesor el aviso.
+  Escenario fijo S20.
+
+### Added
+
+- `tests/sim/`: la suite con IA corre varias personas en paralelo (`SIM_WORKERS`, 3 por defecto),
+  retoma una corrida cortada y, si se agota el cupo del plan, espera y repite la persona en vez de
+  guardar un resultado contaminado. El cliente simulado usa Haiku para estirar el cupo. El bot
+  manda `x-sim-case` solo contra el simulador, nunca a Anthropic.
+
 ## [1.40.0] - 2026-11-19
 
 ### Added

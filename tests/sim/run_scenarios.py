@@ -313,6 +313,11 @@ SCENARIOS: list[dict] = [
             {"text": "Me falta tu nombre y la dirección para cerrar el pedido."}],
          "expect": {"out": ["Me falta"], "out_not": ["Pedido enviado"]}},
     ]},
+    {"id": "S20", "title": "El modelo se niega a responder (refusal): el cliente no queda en silencio", "steps": [
+        HELLO,
+        {"send": "quiero 3 de uva", "script": [{"refusal": True}],
+         "expect": {"out": ["problema técnico"]}},
+    ]},
     {"id": "S18", "title": "Foto y nadie atiende en 15 min: el bot avisa y retoma", "steps": [
         HELLO,
         {"send": {"type": "image", "image": {"id": "media.sim.img2", "mime_type": "image/jpeg"}},

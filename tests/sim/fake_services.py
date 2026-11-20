@@ -46,6 +46,10 @@ def _tool_results(request: dict) -> list[str]:
 
 
 def _anthropic_response(step: dict) -> dict:
+    if step.get("refusal"):
+        return {"id": _next_id("msg_sim_"), "type": "message", "role": "assistant", "content": [],
+                "stop_reason": "refusal", "stop_details": {"type": "refusal", "category": "general_harms"},
+                "usage": {"input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}
     if "tools_with_text" in step:
         content = [{"type": "text", "text": step.get("text", "")}] + [
             {"type": "tool_use", "id": _next_id("toolu_sim_"), "name": name, "input": args}
@@ -125,28 +129,29 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/v1/messages":
             data = self._body()
+            case = self.headers.get("x-sim-case", "")
             if BRAIN == "claude":
                 import claude_brain
                 with LOCK:
-                    STATE["llm_calls"].append({"tool_results": _tool_results(data)})
+                    STATE["llm_calls"].append({"case": case, "tool_results": _tool_results(data)})
                 try:
                     response, usage = claude_brain.respond(data)
                 except Exception as err:  # el bot verá un 500 y degradará como en producción
                     with LOCK:
-                        STATE["brain_errors"].append(str(err)[:500])
+                        STATE["brain_errors"].append({"case": case, "error": str(err)[:500]})
                     self._json(500, {"type": "error", "error": {"type": "api_error", "message": str(err)[:300]}})
                     return
                 with LOCK:
-                    STATE["brain_usage"].append(usage)
+                    STATE["brain_usage"].append({**usage, "case": case})
                     for b in response["content"]:
                         if b["type"] == "tool_use":
-                            STATE["brain_calls"].append({"name": b["name"], "input": b["input"]})
+                            STATE["brain_calls"].append({"case": case, "name": b["name"], "input": b["input"]})
                         elif b["type"] == "text" and b["text"]:
-                            STATE["brain_calls"].append({"name": "(texto al cliente)", "input": b["text"][:300]})
+                            STATE["brain_calls"].append({"case": case, "name": "(texto al cliente)", "input": b["text"][:300]})
                 self._json(200, response)
                 return
             with LOCK:
-                STATE["llm_calls"].append({"tool_results": _tool_results(data)})
+                STATE["llm_calls"].append({"case": case, "tool_results": _tool_results(data)})
                 if STATE["script"]:
                     step = STATE["script"].pop(0)
                 else:

@@ -19,7 +19,9 @@ import json
 import os
 import pathlib
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -33,9 +35,13 @@ sys.argv = _argv
 
 ONLY = set(sys.argv[1:])
 MAX_TURNS = int(os.environ.get("SIM_MAX_TURNS", "10"))
-CUSTOMER_MODEL = os.environ.get("SIM_CUSTOMER_MODEL", "claude-sonnet-5-5")
+# El cliente simulado no necesita un modelo grande; Haiku estira el cupo del plan.
+CUSTOMER_MODEL = os.environ.get("SIM_CUSTOMER_MODEL", "claude-haiku-5-5")
+WORKERS = int(os.environ.get("SIM_WORKERS", "3"))
 JUDGE_MODEL = os.environ.get("SIM_JUDGE_MODEL", "claude-opus-5-5")
-OUT_DIR = pathlib.Path(os.environ.get("SIM_REPORT_DIR", HERE.parents[2] / "docs" / "qa_ia")) / dt.datetime.now().strftime("%Y-%m-%d_%H%M")
+# Un directorio por modelo y día: si la corrida se corta, al volver a lanzarla
+# retoma donde iba (salta las personas que ya tienen resultado).
+OUT_DIR = pathlib.Path(os.environ.get("SIM_REPORT_DIR", HERE.parents[2] / "docs" / "qa_ia")) / claude_brain.MODEL / dt.datetime.now().strftime("%Y-%m-%d")
 
 # Precios por millón de tokens (verificados 2026-11-19). Escritura de caché a
 # 1,25x la entrada (caché de 5 min, la que usa el bot).
@@ -167,6 +173,18 @@ def judge(persona: dict, transcript: list[dict], calls: list[dict], db: dict, re
     return claude_brain.ask_json(system, prompt, JUDGE_SCHEMA, JUDGE_MODEL)
 
 
+def case_state(phone: str) -> dict:
+    """Lo del simulador que es de esta conversación (corren varias a la vez)."""
+    st = sim.fake_state()
+    return {
+        "outbox": [o for o in st["outbox"] if o["to"] == phone],
+        "llm_calls": [c for c in st["llm_calls"] if c.get("case") == phone],
+        "brain_usage": [u for u in st["brain_usage"] if u.get("case") == phone],
+        "brain_calls": [c for c in st["brain_calls"] if c.get("case") == phone],
+        "brain_errors": [e for e in st["brain_errors"] if isinstance(e, dict) and e.get("case") == phone],
+    }
+
+
 def db_snapshot(phone: str) -> dict:
     orders = sim.sql(f"""SELECT coalesce(json_agg(json_build_object('id', o.id, 'status', o.status, 'delivery_type', o.delivery_type,
         'payment', o.payment_method, 'delivery_cost', o.delivery_cost, 'total', coalesce(o.total_final, o.total_estimated),
@@ -183,14 +201,14 @@ def wait_bot(phone: str, prev_out: int, timeout: float = 240.0) -> dict:
     end = time.time() + timeout
     last, since = prev_out, time.time()
     while time.time() < end:
-        st = sim.fake_state()
-        n = len([o for o in st["outbox"] if o["to"] == phone])
+        st = case_state(phone)
+        n = len(st["outbox"])
         if n != last:
             last, since = n, time.time()
         elif n > prev_out and time.time() - since > 6:
             return st
         time.sleep(1)
-    return sim.fake_state()
+    return case_state(phone)
 
 
 def cost(usages: list[dict]) -> dict:
@@ -205,7 +223,11 @@ def cost(usages: list[dict]) -> dict:
 def run_persona(idx: int, persona: dict) -> dict:
     phone = f"5730077{idx:05d}"
     sim.reset_phone(phone)
-    sim.http("POST", f"{sim.FAKE}/__reset", {})
+    base = case_state(phone)
+    skip = {k: len(v) for k, v in base.items()}
+
+    def mine(st: dict) -> dict:
+        return {k: v[skip[k]:] for k, v in st.items()}
     transcript: list[dict] = []
     side_usage: list[dict] = []
     events: list[str] = []
@@ -218,8 +240,7 @@ def run_persona(idx: int, persona: dict) -> dict:
         finished = bool(msg.get("done")) and turn > 0
         if finished and not (msg.get("message") or "").strip():
             break
-        st = sim.fake_state()
-        prev_out = len([o for o in st["outbox"] if o["to"] == phone])
+        prev_out = len(case_state(phone)["outbox"])
         if msg.get("send_location") and persona.get("location_on_address"):
             transcript.append({"who": "cliente", "text": "[manda su ubicación de WhatsApp]"})
             sim.webhook(phone, persona["nombre"], {"type": "location", "location": {"latitude": 4.5571, "longitude": -75.6608}})
@@ -227,12 +248,12 @@ def run_persona(idx: int, persona: dict) -> dict:
             transcript.append({"who": "cliente", "text": msg["message"]})
             sim.webhook(phone, persona["nombre"], {"type": "text", "text": {"body": msg["message"]}})
         st = wait_bot(phone, prev_out)
-        for o in [o for o in st["outbox"] if o["to"] == phone][prev_out:]:
+        for o in st["outbox"][prev_out:]:
             transcript.append({"who": "bot", "text": o["text"]})
 
         state = sim.state_of(phone)
         if state == "wait_availability":
-            prev_out = len([o for o in sim.fake_state()["outbox"] if o["to"] == phone])
+            prev_out = len(case_state(phone)["outbox"])
             if persona["team"] is None:
                 events.append("Nadie respondió la disponibilidad: se forzó el vencimiento.")
                 sim.sql(f"""UPDATE conversations SET state_data = jsonb_set(state_data, '{{availability_deadline}}', to_jsonb(to_char((now() - interval '1 minute') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))) WHERE phone_number='{phone}'""")
@@ -243,13 +264,15 @@ def run_persona(idx: int, persona: dict) -> dict:
                          {"case_phone": phone, "available": persona["team"], "sent_by": "sim"},
                          {"X-Internal-Token": sim.INTERNAL_TOKEN})
             st = wait_bot(phone, prev_out, timeout=30)
-            for o in [o for o in st["outbox"] if o["to"] == phone][prev_out:]:
+            for o in st["outbox"][prev_out:]:
                 transcript.append({"who": "bot", "text": o["text"]})
         if sim.takeover_active(phone) == "true":
             events.append("El caso pasó a un humano.")
         if finished:
             break
-    st = sim.fake_state()
+    st = mine(case_state(phone))
+    if st["brain_errors"]:
+        raise QuotaCut(f"{len(st['brain_errors'])} llamadas del cerebro fallaron: {st['brain_errors'][-1]['error'][:200]}")
     db = db_snapshot(phone)
     tool_results = [t for c in st.get("llm_calls", []) for t in c.get("tool_results", [])]
     verdict, ju = judge(persona, transcript, st.get("brain_calls", []), db, tool_results)
@@ -258,6 +281,21 @@ def run_persona(idx: int, persona: dict) -> dict:
         "brain_errors": st.get("brain_errors", []), "db": db, "verdict": verdict,
         "costo_bot": cost(st.get("brain_usage", [])), "costo_simulacion": cost(side_usage + [ju]),
     }
+
+
+class QuotaCut(Exception):
+    """El cerebro (Claude Code) dejó de responder a mitad de la conversación:
+    casi siempre es el cupo del plan. El resultado no sirve y se repite."""
+
+
+def wait_for_quota(max_wait_s: int = 5 * 3600) -> bool:
+    end = time.time() + max_wait_s
+    while time.time() < end:
+        if claude_brain.quota_ok():
+            return True
+        print("   cupo agotado; reintento en 5 min…", flush=True)
+        time.sleep(300)
+    return False
 
 
 def report(results: list[dict]) -> str:
@@ -293,20 +331,40 @@ def report(results: list[dict]) -> str:
 
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    results = []
-    for i, p in enumerate(PERSONAS, start=1):
-        if ONLY and p["id"] not in ONLY:
-            continue
-        print(f"▶ {p['id']} {p['nombre']}…", flush=True)
-        try:
-            r = run_persona(i, p)
-        except Exception as err:
-            print(f"   falló la simulación: {err}", flush=True)
-            continue
-        results.append(r)
-        print(f"   {r['verdict'].get('veredicto')} · {r['costo_bot']['llamadas']} llamadas del bot", flush=True)
-        (OUT_DIR / "datos.json").write_text(json.dumps(results, ensure_ascii=False, indent=1, default=str))
-        (OUT_DIR / "reporte.md").write_text(report(results))
+    data_file = OUT_DIR / "datos.json"
+    results: list[dict] = json.loads(data_file.read_text()) if data_file.exists() else []
+    done = {r["persona"]["id"] for r in results}
+    if done:
+        print(f"Retomando {OUT_DIR}: ya hay {len(done)} personas ({', '.join(sorted(done))})", flush=True)
+    lock = threading.Lock()
+    todo = [(i, p) for i, p in enumerate(PERSONAS, start=1)
+            if (not ONLY or p["id"] in ONLY) and p["id"] not in done]
+
+    def work(item: tuple[int, dict]) -> None:
+        i, p = item
+        for attempt in range(3):
+            print(f"▶ {p['id']} {p['nombre']}…", flush=True)
+            try:
+                r = run_persona(i, p)
+            except QuotaCut as cut:
+                print(f"   {p['id']}: {cut}", flush=True)
+                if not wait_for_quota():
+                    print(f"   {p['id']}: el cupo no volvió; queda para la próxima corrida", flush=True)
+                    return
+                continue
+            except Exception as err:
+                print(f"   {p['id']}: falló la simulación: {err}", flush=True)
+                return
+            with lock:
+                results.append(r)
+                results.sort(key=lambda x: x["persona"]["id"])
+                data_file.write_text(json.dumps(results, ensure_ascii=False, indent=1, default=str))
+                (OUT_DIR / "reporte.md").write_text(report(results))
+            print(f"   {p['id']}: {r['verdict'].get('veredicto')} · {r['costo_bot']['llamadas']} llamadas del bot", flush=True)
+            return
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        list(pool.map(work, todo))
     print(f"\nReporte: {OUT_DIR / 'reporte.md'}")
     return 0
 

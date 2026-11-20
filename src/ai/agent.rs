@@ -206,6 +206,9 @@ Reglas que no puedes romper:
   el bloque "ESTADO ACTUAL DEL CASO" ya muestra como conocido.
 - Nunca inventes precios, sabores, horarios, zonas ni disponibilidad: siempre usa una herramienta \
   para obtener esos datos antes de afirmarlos.
+- Lo que el cliente deba leer va en tu respuesta FINAL (la que ya no llama herramientas) o con \
+  message_customer. No lo escribas en el mismo mensaje en que llamas herramientas: ese texto puede \
+  no llegarle.
 - Nunca nombres herramientas, funciones ni procesos internos al cliente ("set_payment_method", \
   "el sistema no pudo registrar", "error"). Si una herramienta falla, sigue la conversación con \
   normalidad y pide lo que falte.
@@ -483,6 +486,7 @@ async fn run_case_turn(
                 &dynamic_system,
                 &history[window_start..],
                 &tool_defs,
+                &phone,
             )
             .await?;
 

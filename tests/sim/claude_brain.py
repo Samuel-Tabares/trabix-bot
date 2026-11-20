@@ -23,6 +23,9 @@ import uuid
 
 MODEL = os.environ.get("SIM_BRAIN_MODEL", "claude-sonnet-5")
 TIMEOUT_S = int(os.environ.get("SIM_BRAIN_TIMEOUT", "180"))
+# El bot se rinde a los 60 s, así que aquí solo se reintenta corto. Si se agotó
+# el cupo de la suscripción, quien espera y repite es run_ai_scenarios.py.
+WAITS_S = (0, 15)
 
 RESPONSE_SCHEMA = {
     "type": "object",
@@ -63,7 +66,7 @@ def _claude(system: str, prompt: str, schema: dict, model: str) -> dict:
     # La suscripción tiene límites por ventana de tiempo: un corte no debe
     # tumbar la corrida entera (pasó en la de Opus 5.5 del 2026-11-19).
     last = ""
-    for wait_s in (0, 30, 90, 240):
+    for wait_s in WAITS_S:
         if wait_s:
             time.sleep(wait_s)
         try:
@@ -165,3 +168,12 @@ def ask_json(system: str, prompt: str, schema: dict, model: str | None = None) -
     m = model or MODEL
     data = _claude(system, prompt, schema, m)
     return data.get("structured_output") or {}, _main_usage(data, m)
+
+
+def quota_ok(model: str = "claude-haiku-5-5") -> bool:
+    """¿Responde Claude Code ahora mismo? (para esperar a que vuelva el cupo)."""
+    try:
+        _claude("Responde ok.", "ok", {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}, model)
+        return True
+    except Exception:
+        return False

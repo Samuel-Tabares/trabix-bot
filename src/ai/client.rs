@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const DEFAULT_MODEL: &str = "claude-sonnet-5";
+pub const DEFAULT_MODEL: &str = "claude-sonnet-5-5";
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 
 /// `ANTHROPIC_API_URL` existe solo para pruebas locales contra un modelo falso
@@ -22,6 +22,13 @@ fn anthropic_api_url() -> &'static str {
     })
 }
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+
+/// Habilita `thinking.block_binding`. Desde Sonnet 5.5 los bloques de thinking
+/// quedan atados al historial exacto que los produjo, y este bot cambia el
+/// bloque de estado del caso en cada turno y recorta la memoria: sin esto, en
+/// una cuenta "enforced" cada turno sería un 400. Con `drop_block` la API
+/// descarta el thinking viejo y sigue. Sonnet 5 acepta el mismo cuerpo.
+const THINKING_BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
 // Sonnet 5 corre thinking adaptativo, y esos tokens cuentan contra `max_tokens`.
 // Con el tope de 1024 que traiamos de Sonnet 4.5 una respuesta larga se cortaba
 // a la mitad. 4096 deja aire para pensar y responder; el cobro es por tokens
@@ -125,6 +132,12 @@ struct SystemBlock<'a> {
 struct Thinking {
     #[serde(rename = "type")]
     kind: &'static str,
+    block_binding: BlockBinding,
+}
+
+#[derive(Debug, Serialize)]
+struct BlockBinding {
+    prefix_mismatch_behavior: &'static str,
 }
 
 /// `effort: low` mantiene el gasto de thinking corto y consolida las tool-calls.
@@ -166,7 +179,25 @@ pub struct MessagesResponse {
     pub stop_reason: Option<String>,
     #[serde(default)]
     pub usage: Usage,
+    /// Bloques de thinking que la API descartó (ver `THINKING_BINDING_BETA`).
+    #[serde(default)]
+    pub input_transformations: Vec<serde_json::Value>,
 }
+
+/// El modelo se negó a responder por una regla de seguridad (`stop_reason:
+/// "refusal"`, más frecuente desde Sonnet 5.5). Se trata como una falla del
+/// turno para que `engine::degrade_agent_failure` le escriba al cliente y
+/// avise al asesor, en vez de dejar al cliente sin respuesta.
+#[derive(Debug)]
+pub struct RefusalError(pub String);
+
+impl std::fmt::Display for RefusalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "el modelo se negó a responder (refusal: {})", self.0)
+    }
+}
+
+impl std::error::Error for RefusalError {}
 
 impl AnthropicClient {
     pub fn new(api_key: String) -> Self {
@@ -198,7 +229,8 @@ impl AnthropicClient {
         dynamic_system: &str,
         messages: &[Message],
         tools: &[ToolDefinition],
-    ) -> Result<MessagesResponse, reqwest::Error> {
+        case_phone: &str,
+    ) -> Result<MessagesResponse, Box<dyn std::error::Error + Send + Sync>> {
         let system = vec![
             SystemBlock {
                 kind: "text",
@@ -217,15 +249,25 @@ impl AnthropicClient {
             system,
             messages,
             tools,
-            thinking: Thinking { kind: "adaptive" },
+            thinking: Thinking {
+                kind: "adaptive",
+                block_binding: BlockBinding { prefix_mismatch_behavior: "drop_block" },
+            },
             output_config: OutputConfig { effort: "low" },
         };
 
-        let response = self
+        let mut http_request = self
             .http
             .post(anthropic_api_url())
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("anthropic-beta", THINKING_BINDING_BETA);
+        // Solo contra el simulador (`tests/sim/`), para que pueda atender
+        // varias conversaciones a la vez: el teléfono nunca viaja a Anthropic.
+        if anthropic_api_url() != ANTHROPIC_API_URL {
+            http_request = http_request.header("x-sim-case", case_phone);
+        }
+        let response = http_request
             .json(&request)
             .send()
             .await?
@@ -241,8 +283,15 @@ impl AnthropicClient {
             output_tokens = response.usage.output_tokens,
             cache_creation_input_tokens = response.usage.cache_creation_input_tokens,
             cache_read_input_tokens = response.usage.cache_read_input_tokens,
+            dropped_thinking_blocks = response.input_transformations.len(),
             "anthropic messages usage"
         );
+
+        if response.stop_reason.as_deref() == Some("refusal") {
+            return Err(Box::new(RefusalError(
+                response.stop_reason.clone().unwrap_or_default(),
+            )));
+        }
 
         Ok(response)
     }
