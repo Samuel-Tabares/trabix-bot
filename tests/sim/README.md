@@ -68,7 +68,19 @@ que usó el bot convertidos a lo que costarían en la API con Sonnet 5, Sonnet 5
 y Opus 5.5: es la forma de comparar modelos antes de cambiar el de producción
 (`SIM_BRAIN_MODEL=claude-opus-5-5` para correr la misma suite con Opus).
 
-Límites: Claude Code recibe las herramientas descritas en texto y responde JSON
-en vez de `tool_use` nativo, así que algún detalle de formato puede ser del
-puente y no del bot (p. ej. un `\n` literal). Tarda ~3–5 min por persona y
-consume el cupo de la suscripción. **Nunca** apuntar el bot de producción a esto.
+Corre `SIM_WORKERS` personas a la vez (3 por defecto; ~20 min las 12). El
+reporte queda en `docs/qa_ia/<modelo>/<fecha>/`: si la corrida se corta, al
+lanzarla otra vez el mismo día retoma donde iba. Si se agota el cupo del plan a
+mitad de una conversación, esa persona no se guarda: el corredor espera a que el
+cupo vuelva (sondea cada 5 min, hasta 5 h) y la repite. El cliente simulado usa
+`claude-haiku-5-5` (`SIM_CUSTOMER_MODEL`) para gastar menos cupo; el juez,
+`claude-opus-5-5` (`SIM_JUDGE_MODEL`).
+
+**Lo que esta suite no puede imitar**, por ir por Claude Code y no por la API:
+las herramientas le llegan al modelo descritas en texto y responde JSON, no
+`tool_use` nativo; y lo propio de la API de Sonnet 5.5 (thinking ligado al
+historial, texto entre herramientas devuelto como thinking oculto, `refusal`) no
+aparece. Eso lo cubre la suite con guion (S19, S20) y el código del cliente
+(`block_binding: drop_block`, manejo de `refusal`). Imitarlo del todo exige la
+API real: con una clave aparte y límite de gasto, ~USD 0,20 por persona.
+**Nunca** apuntar el bot de producción a este puente.
